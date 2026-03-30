@@ -40,6 +40,22 @@ const C = {
     hud: '#ffffff',
 };
 
+// === RESPONSIVE CANVAS ===
+function resizeCanvas() {
+    const ratio = W / H;
+    let cw = window.innerWidth;
+    let ch = window.innerHeight;
+    if (cw / ch > ratio) {
+        cw = ch * ratio;
+    } else {
+        ch = cw / ratio;
+    }
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
 // === INPUT ===
 const keys = {};
 let jumpWasPressed = false;
@@ -52,10 +68,39 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-function isLeft() { return keys['ArrowLeft'] || keys['KeyA']; }
-function isRight() { return keys['ArrowRight'] || keys['KeyD']; }
-function isJump() { return keys['ArrowUp'] || keys['KeyW'] || keys['Space']; }
-function isEnter() { return keys['Enter']; }
+// === MOBILE TOUCH CONTROLS ===
+const touchState = { left: false, right: false, jump: false, action: false };
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+if (isTouchDevice) {
+    const tc = document.getElementById('touch-controls');
+    if (tc) tc.style.display = 'block';
+
+    function bindTouch(id, stateKey) {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.addEventListener('touchstart', e => { e.preventDefault(); touchState[stateKey] = true; btn.classList.add('active'); }, { passive: false });
+        btn.addEventListener('touchend', e => { e.preventDefault(); touchState[stateKey] = false; btn.classList.remove('active'); }, { passive: false });
+        btn.addEventListener('touchcancel', e => { touchState[stateKey] = false; btn.classList.remove('active'); });
+    }
+    bindTouch('btn-left', 'left');
+    bindTouch('btn-right', 'right');
+    bindTouch('btn-jump', 'jump');
+    bindTouch('btn-action', 'action');
+
+    // Tap canvas to start/enter (for menus)
+    canvas.addEventListener('touchstart', e => {
+        e.preventDefault();
+        initAudio();
+        keys['Enter'] = true;
+        setTimeout(() => { keys['Enter'] = false; }, 100);
+    }, { passive: false });
+}
+
+function isLeft() { return keys['ArrowLeft'] || keys['KeyA'] || touchState.left; }
+function isRight() { return keys['ArrowRight'] || keys['KeyD'] || touchState.right; }
+function isJump() { return keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchState.jump; }
+function isEnter() { return keys['Enter'] || touchState.action; }
 function isEscape() { return keys['Escape']; }
 
 // === UTILITY ===
@@ -211,6 +256,34 @@ class Platform extends Entity {
     }
 }
 
+class MovingPlatform extends Platform {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed) {
+        super(x, y, w, h);
+        this.startX = x;
+        this.startY = y;
+        this.moveAxis = moveAxis; // 'x' or 'y'
+        this.moveRange = moveRange;
+        this.moveSpeed = moveSpeed;
+        this.moveTimer = 0;
+        this.prevX = x;
+        this.prevY = y;
+    }
+
+    update() {
+        this.prevX = this.x;
+        this.prevY = this.y;
+        this.moveTimer += this.moveSpeed;
+        if (this.moveAxis === 'x') {
+            this.x = this.startX + Math.sin(this.moveTimer) * this.moveRange;
+        } else {
+            this.y = this.startY + Math.sin(this.moveTimer) * this.moveRange;
+        }
+    }
+
+    getDeltaX() { return this.x - this.prevX; }
+    getDeltaY() { return this.y - this.prevY; }
+}
+
 class Player extends Entity {
     constructor(x, y) {
         super(x, y, 32, 32);
@@ -223,6 +296,8 @@ class Player extends Entity {
         this.spawnY = y;
         this.animFrame = 0;
         this.animTimer = 0;
+        this.hasDoubleJump = false;
+        this.canDoubleJump = false;
     }
 
     update() {
@@ -238,10 +313,17 @@ class Player extends Entity {
         }
 
         // jump (only on press, not hold)
-        if (isJump() && !jumpWasPressed && this.isGrounded) {
-            this.vy = PLAYER_JUMP;
-            this.isGrounded = false;
-            playSound('jump');
+        if (isJump() && !jumpWasPressed) {
+            if (this.isGrounded) {
+                this.vy = PLAYER_JUMP;
+                this.isGrounded = false;
+                this.canDoubleJump = this.hasDoubleJump;
+                playSound('jump');
+            } else if (this.canDoubleJump) {
+                this.vy = PLAYER_JUMP * 0.85;
+                this.canDoubleJump = false;
+                playSound('jump');
+            }
         }
         jumpWasPressed = isJump();
 
@@ -299,6 +381,11 @@ class Player extends Entity {
                     this.y = p.y - this.h;
                     this.vy = 0;
                     this.isGrounded = true;
+                    // Ride moving platforms
+                    if (p instanceof MovingPlatform) {
+                        this.x += p.getDeltaX();
+                        this.y += p.getDeltaY();
+                    }
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -311,6 +398,7 @@ class Player extends Entity {
         this.lives--;
         if (this.lives <= 0) {
             gameState = 'GAME_OVER';
+            stopBGM();
             playSound('gameover');
         } else {
             this.x = this.spawnX;
@@ -503,6 +591,109 @@ class Particle {
     }
 }
 
+// Sparkle particle for coin collection
+class SparkleParticle {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4 - 2;
+        this.timer = 20 + Math.random() * 10;
+        this.size = 2 + Math.random() * 3;
+        this.color = Math.random() > 0.5 ? '#ffcc00' : '#ffee88';
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.1;
+        this.timer--;
+        return this.timer > 0;
+    }
+
+    render() {
+        const alpha = Math.min(1, this.timer / 10);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+// === COIN CLASS ===
+class Coin extends Entity {
+    constructor(x, y) {
+        super(x, y, 16, 16);
+        this.collected = false;
+        this.bobTimer = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        this.bobTimer += 0.06;
+        return !this.collected;
+    }
+
+    render() {
+        if (this.collected) return;
+        const bobY = this.y + Math.sin(this.bobTimer) * 3;
+        // Outer circle
+        ctx.fillStyle = '#ffcc00';
+        ctx.beginPath();
+        ctx.arc(this.x + 8, bobY + 8, 8, 0, Math.PI * 2);
+        ctx.fill();
+        // Inner circle
+        ctx.fillStyle = '#ffee66';
+        ctx.beginPath();
+        ctx.arc(this.x + 7, bobY + 7, 4, 0, Math.PI * 2);
+        ctx.fill();
+        // Shine
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(this.x + 6, bobY + 5, 2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+// === POWER-UP: DOUBLE JUMP ===
+class DoubleJumpPowerUp extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 20);
+        this.collected = false;
+        this.bobTimer = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        this.bobTimer += 0.04;
+        return !this.collected;
+    }
+
+    render() {
+        if (this.collected) return;
+        const bobY = this.y + Math.sin(this.bobTimer) * 4;
+        // Wing icon
+        ctx.fillStyle = '#44eeff';
+        ctx.beginPath();
+        ctx.arc(this.x + 10, bobY + 10, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('W', this.x + 10, bobY + 15);
+        ctx.textAlign = 'left';
+        // Glow
+        ctx.save();
+        ctx.globalAlpha = 0.15 + Math.sin(this.bobTimer * 2) * 0.1;
+        ctx.fillStyle = '#44eeff';
+        ctx.beginPath();
+        ctx.arc(this.x + 10, bobY + 10, 15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
 // === LEVEL DATA ===
 const LEVELS = [
     {
@@ -518,6 +709,7 @@ const LEVELS = [
         ],
         marioSpeed: 1.5,
         playerSpawn: { x: 50, y: 400 },
+        coins: [{ x: 200, y: 340 }, { x: 550, y: 340 }, { x: 400, y: 430 }],
     },
     {
         // Level 2: More platforms, 3 Marios
@@ -535,6 +727,10 @@ const LEVELS = [
         ],
         marioSpeed: 1.8,
         playerSpawn: { x: 50, y: 400 },
+        coins: [{ x: 150, y: 340 }, { x: 400, y: 290 }, { x: 600, y: 340 }, { x: 300, y: 430 }],
+        movingPlatforms: [
+            { x: 350, y: 400, w: 80, h: 16, axis: 'x', range: 60, speed: 0.02 },
+        ],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -555,6 +751,12 @@ const LEVELS = [
         ],
         marioSpeed: 2.0,
         playerSpawn: { x: 50, y: 400 },
+        coins: [{ x: 120, y: 340 }, { x: 370, y: 300 }, { x: 620, y: 340 }, { x: 350, y: 190 }, { x: 450, y: 190 }],
+        doubleJump: { x: 380, y: 195 },
+        movingPlatforms: [
+            { x: 220, y: 430, w: 70, h: 16, axis: 'x', range: 50, speed: 0.025 },
+            { x: 550, y: 300, w: 80, h: 16, axis: 'y', range: 40, speed: 0.02 },
+        ],
     },
     {
         // Level 4: Complex layout
@@ -579,6 +781,12 @@ const LEVELS = [
         ],
         marioSpeed: 2.2,
         playerSpawn: { x: 30, y: 400 },
+        coins: [{ x: 80, y: 345 }, { x: 280, y: 310 }, { x: 480, y: 345 }, { x: 650, y: 310 }, { x: 250, y: 200 }, { x: 500, y: 200 }],
+        doubleJump: { x: 480, y: 205 },
+        movingPlatforms: [
+            { x: 160, y: 430, w: 70, h: 16, axis: 'x', range: 40, speed: 0.025 },
+            { x: 400, y: 290, w: 80, h: 16, axis: 'y', range: 50, speed: 0.02 },
+        ],
     },
     {
         // Level 5: The gauntlet
@@ -607,6 +815,8 @@ const LEVELS = [
         ],
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
+        coins: [{ x: 100, y: 350 }, { x: 300, y: 325 }, { x: 480, y: 350 }, { x: 660, y: 325 }, { x: 200, y: 230 }, { x: 420, y: 200 }, { x: 600, y: 230 }, { x: 370, y: 100 }],
+        doubleJump: { x: 400, y: 105 },
     },
 ];
 
@@ -617,12 +827,17 @@ let player = null;
 let marios = [];
 let platforms = [];
 let particles = [];
+let coins = [];
+let powerUps = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let enterWasPressed = false;
 let escapeWasPressed = false;
 let totalScore = 0;
-let highScore = 0;
+let highScore = parseInt(localStorage.getItem('mushroomRevenge_highScore')) || 0;
+let comboCount = 0;
+let comboTimer = 0;
+let sparkles = [];
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -693,6 +908,57 @@ function playSound(type) {
     }
 }
 
+// === BACKGROUND MUSIC ===
+let bgmPlaying = false;
+let bgmNodes = [];
+
+function startBGM() {
+    if (!audioCtx || bgmPlaying) return;
+    bgmPlaying = true;
+
+    // Simple chiptune loop using oscillators
+    const melody = [
+        // note frequency, duration in seconds
+        [262, 0.2], [330, 0.2], [392, 0.2], [523, 0.4],
+        [392, 0.2], [330, 0.2], [262, 0.4],
+        [294, 0.2], [349, 0.2], [440, 0.2], [523, 0.4],
+        [440, 0.2], [349, 0.2], [294, 0.4],
+    ];
+
+    const totalDuration = melody.reduce((sum, n) => sum + n[1], 0);
+
+    function playMelodyLoop() {
+        if (!bgmPlaying || !audioCtx) return;
+        let offset = audioCtx.currentTime + 0.05;
+
+        for (const [freq, dur] of melody) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(freq, offset);
+            gain.gain.setValueAtTime(0.04, offset);
+            gain.gain.linearRampToValueAtTime(0, offset + dur - 0.02);
+            osc.start(offset);
+            osc.stop(offset + dur);
+            bgmNodes.push(osc);
+            offset += dur;
+        }
+
+        // Schedule next loop
+        setTimeout(playMelodyLoop, totalDuration * 1000);
+    }
+
+    playMelodyLoop();
+}
+
+function stopBGM() {
+    bgmPlaying = false;
+    bgmNodes.forEach(n => { try { n.stop(); } catch(e) {} });
+    bgmNodes = [];
+}
+
 // === LEVEL MANAGEMENT ===
 function loadLevel(index) {
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
@@ -700,6 +966,13 @@ function loadLevel(index) {
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h));
+
+    // Add moving platforms
+    if (lvl.movingPlatforms) {
+        for (const mp of lvl.movingPlatforms) {
+            platforms.push(new MovingPlatform(mp.x, mp.y, mp.w, mp.h, mp.axis, mp.range, mp.speed));
+        }
+    }
 
     const speed = lvl.marioSpeed * speedMult;
     marios = lvl.marioSpawns.map(s => new Mario(s.x, s.y, speed));
@@ -713,6 +986,15 @@ function loadLevel(index) {
         }
     }
 
+    // Load coins
+    coins = (lvl.coins || []).map(c => new Coin(c.x, c.y));
+
+    // Load power-ups
+    powerUps = [];
+    if (lvl.doubleJump) {
+        powerUps.push(new DoubleJumpPowerUp(lvl.doubleJump.x, lvl.doubleJump.y));
+    }
+
     const sp = lvl.playerSpawn;
     if (player) {
         player.x = sp.x;
@@ -722,6 +1004,8 @@ function loadLevel(index) {
         player.vx = 0;
         player.vy = 0;
         player.invincibleTimer = 60;
+        player.hasDoubleJump = false;
+        player.canDoubleJump = false;
     } else {
         player = new Player(sp.x, sp.y);
     }
@@ -737,6 +1021,7 @@ function startGame() {
     player.lives = 3;
     player.score = 0;
     gameState = 'PLAYING';
+    startBGM();
 }
 
 // === COLLISION DETECTION ===
@@ -753,17 +1038,52 @@ function checkPlayerMarioCollisions() {
         const overlapY = playerBottom - marioTop;
 
         if (player.vy > 0 && overlapY < 15) {
-            // STOMP!
+            // STOMP with combo!
             mario.stomp();
             player.vy = STOMP_BOUNCE;
-            player.score += 100;
-            totalScore += 100;
-            particles.push(new Particle(mario.x, mario.y - 10, '+100'));
+            comboCount++;
+            comboTimer = 90; // 1.5 seconds to keep combo
+            const multiplier = Math.min(comboCount, 5);
+            const points = 100 * multiplier;
+            player.score += points;
+            totalScore += points;
+            const comboText = comboCount > 1 ? `+${points} x${comboCount} COMBO!` : '+100';
+            particles.push(new Particle(mario.x, mario.y - 10, comboText));
             shakeTimer = 6;
             shakeIntensity = 3;
         } else {
             // Side hit — damage
             player.die();
+        }
+    }
+}
+
+function checkCoinCollisions() {
+    for (const coin of coins) {
+        if (coin.collected) continue;
+        if (aabb(player, coin)) {
+            coin.collected = true;
+            player.score += 50;
+            totalScore += 50;
+            particles.push(new Particle(coin.x, coin.y - 10, '+50'));
+            // Sparkle effect
+            for (let i = 0; i < 8; i++) {
+                sparkles.push(new SparkleParticle(coin.x + 8, coin.y + 8));
+            }
+            playSound('stomp');
+        }
+    }
+}
+
+function checkPowerUpCollisions() {
+    for (const pu of powerUps) {
+        if (pu.collected) continue;
+        if (aabb(player, pu)) {
+            pu.collected = true;
+            player.hasDoubleJump = true;
+            player.canDoubleJump = true;
+            particles.push(new Particle(pu.x, pu.y - 10, 'DOUBLE JUMP!'));
+            playSound('levelup');
         }
     }
 }
@@ -795,11 +1115,12 @@ function drawBackground() {
     drawMountain(580, 460, 250, 190);
     drawMountain(750, 460, 180, 160);
 
-    // Clouds with 3D shadow
-    drawCloud3D(100, 60, 60);
-    drawCloud3D(350, 90, 45);
-    drawCloud3D(600, 50, 55);
-    drawCloud3D(750, 110, 35);
+    // Clouds with 3D shadow (animated)
+    const t = Date.now() / 1000;
+    drawCloud3D((100 + t * 8) % (W + 120) - 60, 60, 60);
+    drawCloud3D((350 + t * 5) % (W + 120) - 60, 90, 45);
+    drawCloud3D((600 + t * 10) % (W + 120) - 60, 50, 55);
+    drawCloud3D((750 + t * 6) % (W + 120) - 60, 110, 35);
 
     // Hills with 3D shading
     drawHill3D(100, 460, 160, 80, '#3a7c2f', '#2d6025');
@@ -906,6 +1227,26 @@ function drawHUD() {
         ctx.fillStyle = '#ffcc00';
         ctx.fillText(`HI: ${highScore}`, W / 2 - 40, 30);
     }
+
+    // Combo display
+    if (comboCount > 1) {
+        const comboAlpha = Math.min(1, comboTimer / 30);
+        ctx.save();
+        ctx.globalAlpha = comboAlpha;
+        ctx.font = 'bold 22px monospace';
+        ctx.fillStyle = '#000';
+        ctx.fillText(`COMBO x${comboCount}`, W / 2 - 48, 60);
+        ctx.fillStyle = '#ff6600';
+        ctx.fillText(`COMBO x${comboCount}`, W / 2 - 50, 58);
+        ctx.restore();
+    }
+
+    // Double jump indicator
+    if (player.hasDoubleJump) {
+        ctx.fillStyle = '#44eeff';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText('DOUBLE JUMP', 20, 75);
+    }
 }
 
 // === SCREEN RENDERS ===
@@ -932,8 +1273,13 @@ function renderMenu() {
     drawPixelSprite(sx, 240, px, MUSHROOM_SPRITE);
     ctx.restore();
 
-    drawTitle("ENTER — Начать", 400, 18, C.text);
-    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 430, 13, '#aaaaaa');
+    if (isTouchDevice) {
+        drawTitle("Нажми на экран — Начать", 400, 18, C.text);
+        drawTitle("Виртуальные кнопки для управления", 430, 13, '#aaaaaa');
+    } else {
+        drawTitle("ENTER — Начать", 400, 18, C.text);
+        drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 430, 13, '#aaaaaa');
+    }
 }
 
 function renderGameOver() {
@@ -970,10 +1316,24 @@ function update() {
             break;
 
         case 'PLAYING':
+            platforms.forEach(p => { if (p instanceof MovingPlatform) p.update(); });
             player.update();
             marios = marios.filter(m => m.update());
+            coins = coins.filter(c => c.update());
+            powerUps = powerUps.filter(p => p.update());
             particles = particles.filter(p => p.update());
+            sparkles = sparkles.filter(s => s.update());
             checkPlayerMarioCollisions();
+            checkCoinCollisions();
+            checkPowerUpCollisions();
+
+            // Combo timer
+            if (comboTimer > 0) {
+                comboTimer--;
+                if (comboTimer <= 0 || player.isGrounded) {
+                    comboCount = 0;
+                }
+            }
 
             if (shakeTimer > 0) shakeTimer--;
 
@@ -1000,7 +1360,10 @@ function update() {
 
         case 'GAME_OVER':
             if (isEnter() && !enterWasPressed) {
-                if (totalScore > highScore) highScore = totalScore;
+                if (totalScore > highScore) {
+                    highScore = totalScore;
+                    localStorage.setItem('mushroomRevenge_highScore', highScore);
+                }
                 startGame();
             }
             break;
@@ -1035,9 +1398,12 @@ function render() {
         case 'PLAYING':
             drawBackground();
             platforms.forEach(p => p.render());
+            coins.forEach(c => c.render());
+            powerUps.forEach(p => p.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
+            sparkles.forEach(s => s.render());
             drawHUD();
             break;
 
@@ -1052,6 +1418,8 @@ function render() {
         case 'PAUSED':
             drawBackground();
             platforms.forEach(p => p.render());
+            coins.forEach(c => c.render());
+            powerUps.forEach(p => p.render());
             marios.forEach(m => m.render());
             player.render();
             drawHUD();

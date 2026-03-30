@@ -19,11 +19,60 @@
             border-radius: 4px;
             image-rendering: pixelated;
             image-rendering: crisp-edges;
+            max-width: 100vw;
+            max-height: 100vh;
+            touch-action: none;
+        }
+        /* Mobile touch controls */
+        #touch-controls {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 140px;
+            pointer-events: none;
+            z-index: 10;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .touch-btn {
+            position: absolute;
+            pointer-events: auto;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.18);
+            border: 2px solid rgba(255,255,255,0.3);
+            color: rgba(255,255,255,0.7);
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 64px;
+            height: 64px;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .touch-btn:active, .touch-btn.active {
+            background: rgba(255,255,255,0.35);
+            border-color: rgba(255,255,255,0.6);
+        }
+        #btn-left { bottom: 20px; left: 20px; }
+        #btn-right { bottom: 20px; left: 100px; }
+        #btn-jump { bottom: 20px; right: 20px; width: 80px; height: 80px; font-size: 32px; }
+        #btn-action { bottom: 110px; right: 30px; width: 56px; height: 56px; font-size: 20px; }
+        @media (hover: hover) and (pointer: fine) {
+            #touch-controls { display: none !important; }
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas" width="800" height="500"></canvas>
+    <div id="touch-controls">
+        <div class="touch-btn" id="btn-left">&#9664;</div>
+        <div class="touch-btn" id="btn-right">&#9654;</div>
+        <div class="touch-btn" id="btn-jump">&#9650;</div>
+        <div class="touch-btn" id="btn-action">&#9654;&#9654;</div>
+    </div>
     <script src="game.js"></script>
 </body>
 </html>
