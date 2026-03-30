@@ -10,9 +10,10 @@ const H = 500;
 const GRAVITY = 0.5;
 const MAX_FALL = 10;
 const PLAYER_SPEED = 3.5;
-const PLAYER_JUMP = -10.5;
-const STOMP_BOUNCE = -7;
+const PLAYER_JUMP = -13.5;
+const STOMP_BOUNCE = -9;
 const TICK = 1 / 60;
+const DEPTH_3D = 12; // 3D extrusion depth for platforms
 
 // === COLORS ===
 const C = {
@@ -131,10 +132,37 @@ class Entity {
 
 class Platform extends Entity {
     render() {
+        const d = DEPTH_3D;
+
+        // 3D front face (bottom side)
+        ctx.fillStyle = '#1a5c24';
+        ctx.fillRect(this.x, this.y + this.h, this.w, d);
+
+        // 3D right face
+        ctx.fillStyle = '#1e6b2b';
+        ctx.beginPath();
+        ctx.moveTo(this.x + this.w, this.y);
+        ctx.lineTo(this.x + this.w + d * 0.5, this.y - d * 0.3);
+        ctx.lineTo(this.x + this.w + d * 0.5, this.y + this.h - d * 0.3);
+        ctx.lineTo(this.x + this.w, this.y + this.h);
+        ctx.closePath();
+        ctx.fill();
+
+        // 3D top highlight face (slight perspective)
+        ctx.fillStyle = '#3aad4e';
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x + d * 0.5, this.y - d * 0.3);
+        ctx.lineTo(this.x + this.w + d * 0.5, this.y - d * 0.3);
+        ctx.lineTo(this.x + this.w, this.y);
+        ctx.closePath();
+        ctx.fill();
+
+        // Main top face
         ctx.fillStyle = C.brick;
         ctx.fillRect(this.x, this.y, this.w, this.h);
-        ctx.fillStyle = C.brickLine;
-        // brick pattern
+
+        // Brick pattern on top face
         const bw = 24; const bh = 12;
         for (let row = 0; row < Math.ceil(this.h / bh); row++) {
             const offset = (row % 2 === 0) ? 0 : bw / 2;
@@ -153,6 +181,33 @@ class Platform extends Entity {
                 }
             }
         }
+
+        // Brick pattern on front face
+        for (let row = 0; row < Math.ceil(d / bh); row++) {
+            const offset = (row % 2 === 0) ? bw / 2 : 0;
+            for (let col = -1; col < Math.ceil(this.w / bw) + 1; col++) {
+                const bx = this.x + col * bw + offset;
+                const by = this.y + this.h + row * bh;
+                if (bx + bw > this.x && bx < this.x + this.w) {
+                    ctx.strokeStyle = '#145020';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(
+                        Math.max(bx, this.x),
+                        Math.max(by, this.y + this.h),
+                        Math.min(bw, this.x + this.w - Math.max(bx, this.x)),
+                        Math.min(bh, this.y + this.h + d - Math.max(by, this.y + this.h))
+                    );
+                }
+            }
+        }
+
+        // Top edge highlight
+        ctx.strokeStyle = '#5cd670';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y + 1);
+        ctx.lineTo(this.x + this.w, this.y + 1);
+        ctx.stroke();
     }
 }
 
@@ -270,6 +325,9 @@ class Player extends Entity {
     render() {
         // blink when invincible
         if (this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0) return;
+
+        // 3D shadow
+        drawShadow(this.x, this.y + this.h, this.w);
 
         ctx.save();
         const px = 2.5;
@@ -389,6 +447,11 @@ class Mario extends Entity {
     }
 
     render() {
+        // 3D shadow
+        if (this.isAlive) {
+            drawShadow(this.x, this.y + this.h, this.w);
+        }
+
         ctx.save();
         const px = 2.5;
         const spriteW = 12 * px;
@@ -446,8 +509,8 @@ const LEVELS = [
         // Level 1: Simple ground + 2 platforms
         platforms: [
             { x: 0, y: 460, w: 800, h: 40 },
-            { x: 150, y: 350, w: 150, h: 20 },
-            { x: 500, y: 350, w: 150, h: 20 },
+            { x: 150, y: 370, w: 150, h: 20 },
+            { x: 500, y: 370, w: 150, h: 20 },
         ],
         marioSpawns: [
             { x: 300, y: 420 },
@@ -461,14 +524,14 @@ const LEVELS = [
         platforms: [
             { x: 0, y: 460, w: 350, h: 40 },
             { x: 450, y: 460, w: 350, h: 40 },
-            { x: 100, y: 350, w: 180, h: 20 },
-            { x: 350, y: 300, w: 120, h: 20 },
-            { x: 550, y: 350, w: 180, h: 20 },
+            { x: 100, y: 370, w: 180, h: 20 },
+            { x: 350, y: 320, w: 120, h: 20 },
+            { x: 550, y: 370, w: 180, h: 20 },
         ],
         marioSpawns: [
             { x: 100, y: 420 },
             { x: 550, y: 420 },
-            { x: 370, y: 260 },
+            { x: 370, y: 280 },
         ],
         marioSpeed: 1.8,
         playerSpawn: { x: 50, y: 400 },
@@ -479,16 +542,16 @@ const LEVELS = [
             { x: 0, y: 460, w: 200, h: 40 },
             { x: 280, y: 460, w: 240, h: 40 },
             { x: 600, y: 460, w: 200, h: 40 },
-            { x: 80, y: 350, w: 150, h: 20 },
-            { x: 320, y: 310, w: 160, h: 20 },
-            { x: 570, y: 350, w: 150, h: 20 },
-            { x: 300, y: 190, w: 200, h: 20 },
+            { x: 80, y: 370, w: 150, h: 20 },
+            { x: 320, y: 330, w: 160, h: 20 },
+            { x: 570, y: 370, w: 150, h: 20 },
+            { x: 300, y: 220, w: 200, h: 20 },
         ],
         marioSpawns: [
             { x: 50, y: 420 },
             { x: 350, y: 420 },
             { x: 650, y: 420 },
-            { x: 350, y: 150 },
+            { x: 350, y: 180 },
         ],
         marioSpeed: 2.0,
         playerSpawn: { x: 50, y: 400 },
@@ -500,19 +563,19 @@ const LEVELS = [
             { x: 240, y: 460, w: 160, h: 40 },
             { x: 480, y: 460, w: 160, h: 40 },
             { x: 680, y: 460, w: 120, h: 40 },
-            { x: 50, y: 360, w: 120, h: 20 },
-            { x: 250, y: 320, w: 120, h: 20 },
-            { x: 440, y: 360, w: 120, h: 20 },
-            { x: 620, y: 320, w: 120, h: 20 },
-            { x: 200, y: 200, w: 160, h: 20 },
-            { x: 460, y: 200, w: 160, h: 20 },
+            { x: 50, y: 375, w: 120, h: 20 },
+            { x: 250, y: 340, w: 120, h: 20 },
+            { x: 440, y: 375, w: 120, h: 20 },
+            { x: 620, y: 340, w: 120, h: 20 },
+            { x: 200, y: 230, w: 160, h: 20 },
+            { x: 460, y: 230, w: 160, h: 20 },
         ],
         marioSpawns: [
             { x: 50, y: 420 },
             { x: 300, y: 420 },
             { x: 530, y: 420 },
-            { x: 220, y: 160 },
-            { x: 480, y: 160 },
+            { x: 220, y: 190 },
+            { x: 480, y: 190 },
         ],
         marioSpeed: 2.2,
         playerSpawn: { x: 30, y: 400 },
@@ -525,22 +588,22 @@ const LEVELS = [
             { x: 360, y: 460, w: 120, h: 40 },
             { x: 540, y: 460, w: 120, h: 40 },
             { x: 700, y: 460, w: 100, h: 40 },
-            { x: 80, y: 370, w: 100, h: 20 },
-            { x: 260, y: 340, w: 100, h: 20 },
-            { x: 440, y: 370, w: 100, h: 20 },
-            { x: 620, y: 340, w: 100, h: 20 },
-            { x: 160, y: 230, w: 140, h: 20 },
-            { x: 380, y: 200, w: 140, h: 20 },
-            { x: 560, y: 230, w: 140, h: 20 },
-            { x: 300, y: 100, w: 200, h: 20 },
+            { x: 80, y: 380, w: 100, h: 20 },
+            { x: 260, y: 355, w: 100, h: 20 },
+            { x: 440, y: 380, w: 100, h: 20 },
+            { x: 620, y: 355, w: 100, h: 20 },
+            { x: 160, y: 260, w: 140, h: 20 },
+            { x: 380, y: 230, w: 140, h: 20 },
+            { x: 560, y: 260, w: 140, h: 20 },
+            { x: 300, y: 130, w: 200, h: 20 },
         ],
         marioSpawns: [
             { x: 200, y: 420 },
             { x: 400, y: 420 },
             { x: 560, y: 420 },
-            { x: 180, y: 190 },
-            { x: 400, y: 160 },
-            { x: 350, y: 60 },
+            { x: 180, y: 220 },
+            { x: 400, y: 190 },
+            { x: 350, y: 90 },
         ],
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
@@ -705,41 +768,111 @@ function checkPlayerMarioCollisions() {
     }
 }
 
-// === BACKGROUND DRAWING ===
-function drawBackground() {
-    // Sky
-    ctx.fillStyle = C.sky;
-    ctx.fillRect(0, 0, W, H);
-
-    // Clouds
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    drawCloud(100, 60, 60);
-    drawCloud(350, 90, 45);
-    drawCloud(600, 50, 55);
-    drawCloud(750, 110, 35);
-
-    // Hills
-    ctx.fillStyle = C.hillFar;
-    drawHill(100, 460, 160, 80);
-    drawHill(500, 460, 200, 100);
-
-    ctx.fillStyle = C.hillNear;
-    drawHill(300, 460, 140, 60);
-    drawHill(700, 460, 120, 50);
+// === 3D HELPERS ===
+function drawShadow(x, y, w) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + 4, w * 0.6, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 }
 
-function drawCloud(x, y, size) {
+// === BACKGROUND DRAWING ===
+function drawBackground() {
+    // Sky gradient for 3D depth
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+    skyGrad.addColorStop(0, '#3060c0');
+    skyGrad.addColorStop(0.5, '#5c94fc');
+    skyGrad.addColorStop(1, '#88bbff');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Distant mountains (3D depth layer)
+    ctx.fillStyle = '#4a6fa0';
+    drawMountain(80, 460, 200, 180);
+    drawMountain(300, 460, 280, 220);
+    drawMountain(580, 460, 250, 190);
+    drawMountain(750, 460, 180, 160);
+
+    // Clouds with 3D shadow
+    drawCloud3D(100, 60, 60);
+    drawCloud3D(350, 90, 45);
+    drawCloud3D(600, 50, 55);
+    drawCloud3D(750, 110, 35);
+
+    // Hills with 3D shading
+    drawHill3D(100, 460, 160, 80, '#3a7c2f', '#2d6025');
+    drawHill3D(500, 460, 200, 100, '#3a7c2f', '#2d6025');
+    drawHill3D(300, 460, 140, 60, '#4a8c3f', '#3a7c2f');
+    drawHill3D(700, 460, 120, 50, '#4a8c3f', '#3a7c2f');
+}
+
+function drawCloud3D(x, y, size) {
+    // Cloud shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.beginPath();
+    ctx.arc(x + 3, y + 4, size * 0.4, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.3 + 3, y - size * 0.15 + 4, size * 0.35, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.6 + 3, y + 4, size * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Cloud body
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.beginPath();
     ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
     ctx.arc(x + size * 0.3, y - size * 0.15, size * 0.35, 0, Math.PI * 2);
     ctx.arc(x + size * 0.6, y, size * 0.3, 0, Math.PI * 2);
     ctx.fill();
+
+    // Cloud highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath();
+    ctx.arc(x + size * 0.15, y - size * 0.1, size * 0.2, 0, Math.PI * 2);
+    ctx.fill();
 }
 
-function drawHill(x, baseY, width, height) {
+function drawMountain(x, baseY, width, height) {
+    ctx.beginPath();
+    ctx.moveTo(x - width / 2, baseY);
+    ctx.lineTo(x - width * 0.05, baseY - height);
+    ctx.lineTo(x + width * 0.05, baseY - height * 0.9);
+    ctx.lineTo(x + width / 2, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Snow cap
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath();
+    ctx.moveTo(x - width * 0.08, baseY - height * 0.8);
+    ctx.lineTo(x - width * 0.05, baseY - height);
+    ctx.lineTo(x + width * 0.05, baseY - height * 0.9);
+    ctx.lineTo(x + width * 0.08, baseY - height * 0.75);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawHill3D(x, baseY, width, height, colorLight, colorDark) {
+    // Hill shadow (3D depth)
+    ctx.fillStyle = colorDark;
+    ctx.beginPath();
+    ctx.moveTo(x - width / 2 + 5, baseY);
+    ctx.quadraticCurveTo(x + 5, baseY - height + 5, x + width / 2 + 5, baseY);
+    ctx.fill();
+
+    // Hill body
+    ctx.fillStyle = colorLight;
     ctx.beginPath();
     ctx.moveTo(x - width / 2, baseY);
     ctx.quadraticCurveTo(x, baseY - height, x + width / 2, baseY);
+    ctx.fill();
+
+    // Hill highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath();
+    ctx.moveTo(x - width / 4, baseY);
+    ctx.quadraticCurveTo(x - width * 0.1, baseY - height * 0.7, x, baseY - height * 0.3);
+    ctx.quadraticCurveTo(x - width * 0.05, baseY, x - width / 4, baseY);
     ctx.fill();
 }
 
