@@ -348,15 +348,18 @@ class Player extends Entity {
         // Shield power-up
         this.shieldActive = false;
         this.shieldBreakTimer = 0;
+        // Speed boost power-up
+        this.speedBoostTimer = 0;
     }
 
     update() {
         // horizontal movement
+        const currentSpeed = this.speedBoostTimer > 0 ? PLAYER_SPEED * 2 : PLAYER_SPEED;
         if (isLeft()) {
-            this.vx = -PLAYER_SPEED;
+            this.vx = -currentSpeed;
             this.facingRight = false;
         } else if (isRight()) {
-            this.vx = PLAYER_SPEED;
+            this.vx = currentSpeed;
             this.facingRight = true;
         } else {
             this.vx = 0;
@@ -418,6 +421,8 @@ class Player extends Entity {
         if (this.invincibleTimer > 0) this.invincibleTimer--;
         // star power-up timer
         if (this.starTimer > 0) this.starTimer--;
+        // speed boost timer
+        if (this.speedBoostTimer > 0) this.speedBoostTimer--;
         // shield break animation timer
         if (this.shieldBreakTimer > 0) this.shieldBreakTimer--;
 
@@ -854,6 +859,7 @@ let coins = [];
 
 // === STAR POWER-UP ===
 const STAR_DURATION = 600; // 10 seconds at 60fps
+const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
 
 class Star {
     constructor(x, y) {
@@ -1145,6 +1151,71 @@ class SpringPad {
 }
 
 let springPads = [];
+
+// === SPEED BOOST POWER-UP ===
+class SpeedBoost {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 18;
+        this.h = 18;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.12) * 0.1;
+
+        ctx.save();
+        // Green glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0, 220, 80, ${0.28 * pulse})`;
+        ctx.fill();
+        // Body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#00bb44';
+        ctx.fill();
+        ctx.strokeStyle = '#88ffaa';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Shine
+        ctx.beginPath();
+        ctx.arc(cx - 2.5, cy - 2, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(200,255,220,0.5)';
+        ctx.fill();
+        // Lightning bolt
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('⚡', cx, cy + 4);
+        ctx.restore();
+    }
+}
+
+let speedBoosts = [];
+
+function checkSpeedBoostCollisions() {
+    for (const sb of speedBoosts) {
+        if (sb.collected) continue;
+        if (!aabb(player, sb)) continue;
+        sb.collected = true;
+        player.speedBoostTimer = SPEED_BOOST_DURATION;
+        particles.push(new Particle(sb.x, sb.y - 10, '⚡ УСКОРЕНИЕ!', '#00ff88'));
+        playSound('levelup');
+    }
+    speedBoosts = speedBoosts.filter(s => !s.collected);
+}
 
 function checkSpringCollisions() {
     if (!player) return;
@@ -1488,6 +1559,7 @@ const LEVELS = [
         shieldSpawns: [{ x: 620, y: 345 }],
         bombSpawns: [{ x: 150, y: 305 }],
         springSpawns: [{ x: 460, y: 446 }],
+        speedBoostSpawns: [{ x: 90, y: 435 }],
     },
     {
         // Level 4: Complex layout with moving platforms
@@ -1520,6 +1592,7 @@ const LEVELS = [
         starSpawns: [{ x: 530, y: 205 }],
         bombSpawns: [{ x: 660, y: 295 }],
         springSpawns: [{ x: 50, y: 446 }, { x: 700, y: 446 }],
+        speedBoostSpawns: [{ x: 470, y: 350 }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -1552,6 +1625,7 @@ const LEVELS = [
         shieldSpawns: [{ x: 90, y: 350 }],
         bombSpawns: [{ x: 640, y: 230 }],
         springSpawns: [{ x: 280, y: 446 }],
+        speedBoostSpawns: [{ x: 350, y: 105 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -1588,6 +1662,7 @@ const LEVELS = [
         starSpawns: [{ x: 440, y: 55 }],
         bombSpawns: [{ x: 230, y: 235 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 680, y: 446 }],
+        speedBoostSpawns: [{ x: 450, y: 375 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -1627,6 +1702,7 @@ const LEVELS = [
         starSpawns: [{ x: 460, y: 155 }, { x: 190, y: 175 }],
         bombSpawns: [{ x: 140, y: 375 }, { x: 500, y: 355 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
+        speedBoostSpawns: [{ x: 640, y: 165 }],
     },
 ];
 
@@ -1832,6 +1908,7 @@ function loadLevel(index) {
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
     springPads = (lvl.springSpawns || []).map(s => new SpringPad(s.x, s.y));
+    speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
     initWeather(index);
 }
 
@@ -2119,11 +2196,12 @@ function drawHUD() {
     ctx.fillStyle = C.hud;
     ctx.fillText(`SCORE: ${player.score}`, 20, 30);
 
-    // Lives
-    ctx.fillStyle = C.textShadow;
-    ctx.fillText(`LIVES: ${player.lives}`, 22, 57);
-    ctx.fillStyle = C.hud;
-    ctx.fillText(`LIVES: ${player.lives}`, 20, 55);
+    // Lives — heart icons
+    for (let i = 0; i < 3; i++) {
+        ctx.font = '20px monospace';
+        ctx.fillStyle = i < player.lives ? '#ff3333' : 'rgba(120,40,40,0.45)';
+        ctx.fillText('♥', 20 + i * 22, 57);
+    }
 
     // Level
     const lvlText = `LEVEL: ${currentLevel + 1}`;
@@ -2183,6 +2261,26 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff';
         ctx.fillText('⭐ ЗВЕЗДА', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Speed boost timer bar
+    if (player && player.speedBoostTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = player.starTimer > 0 ? 86 : 68;
+        const frac = player.speedBoostTimer / SPEED_BOOST_DURATION;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = '#00cc44';
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('⚡ УСКОР.', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -2505,6 +2603,8 @@ function update() {
             checkShieldCollisions();
             checkBombCollisions();
             checkSpringCollisions();
+            checkSpeedBoostCollisions();
+            speedBoosts = speedBoosts.filter(s => s.update());
             updateWeather();
             updateAchievementToasts();
 
@@ -2621,6 +2721,7 @@ function render() {
             stars.forEach(s => s.render());
             shields.forEach(s => s.render());
             springPads.forEach(sp => sp.render());
+            speedBoosts.forEach(sb => sb.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
             player.render();
