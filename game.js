@@ -472,6 +472,7 @@ class Player extends Entity {
                 highScore = totalScore;
                 localStorage.setItem('mushroomHighScore', String(highScore));
             }
+            submitScore(totalScore);
             gameState = 'GAME_OVER';
             playSound('gameover');
         } else {
@@ -1029,6 +1030,77 @@ const LEVELS = [
         playerSpawn: { x: 30, y: 400 },
         starSpawns: [{ x: 380, y: 185 }],
     },
+    {
+        // Level 6: Sky — lots of mid-air platforms, fast enemies
+        platforms: [
+            { x: 0, y: 460, w: 100, h: 40 },
+            { x: 700, y: 460, w: 100, h: 40 },
+            { x: 120, y: 400, w: 90, h: 20 },
+            { x: 280, y: 360, w: 90, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.8 },
+            { x: 450, y: 400, w: 90, h: 20 },
+            { x: 610, y: 360, w: 90, h: 20, moveAxis: 'x', moveRange: 50, moveSpeed: 2.0 },
+            { x: 60, y: 300, w: 100, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 1.2 },
+            { x: 220, y: 260, w: 100, h: 20 },
+            { x: 380, y: 290, w: 100, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.5 },
+            { x: 560, y: 250, w: 100, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.0 },
+            { x: 150, y: 170, w: 130, h: 20 },
+            { x: 410, y: 150, w: 130, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 2.2 },
+            { x: 280, y: 80, w: 240, h: 20 },
+        ],
+        marioSpawns: [
+            { x: 20, y: 420 },
+            { x: 730, y: 420 },
+            { x: 140, y: 360 },
+            { x: 460, y: 360 },
+            { x: 240, y: 220 },
+            { x: 430, y: 110 },
+        ],
+        marioSpeed: 2.7,
+        playerSpawn: { x: 30, y: 420 },
+        coinSpawns: [
+            { x: 150, y: 375 }, { x: 310, y: 335 }, { x: 480, y: 375 },
+            { x: 80, y: 275 }, { x: 250, y: 235 }, { x: 590, y: 225 },
+            { x: 180, y: 145 }, { x: 440, y: 125 }, { x: 360, y: 55 },
+        ],
+        starSpawns: [{ x: 440, y: 55 }],
+    },
+    {
+        // Level 7: Chaos — all enemy types + max moving platforms
+        platforms: [
+            { x: 0, y: 460, w: 80, h: 40 },
+            { x: 720, y: 460, w: 80, h: 40 },
+            { x: 100, y: 420, w: 80, h: 20, moveAxis: 'x', moveRange: 70, moveSpeed: 2.0 },
+            { x: 260, y: 380, w: 80, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 1.5 },
+            { x: 420, y: 420, w: 80, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 2.2 },
+            { x: 580, y: 380, w: 80, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.8 },
+            { x: 50, y: 320, w: 80, h: 20, moveAxis: 'y', moveRange: 60, moveSpeed: 1.3 },
+            { x: 200, y: 290, w: 80, h: 20, moveAxis: 'x', moveRange: 90, moveSpeed: 2.5 },
+            { x: 380, y: 310, w: 80, h: 20, moveAxis: 'y', moveRange: 45, moveSpeed: 1.6 },
+            { x: 560, y: 280, w: 80, h: 20, moveAxis: 'x', moveRange: 70, moveSpeed: 2.0 },
+            { x: 120, y: 200, w: 110, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.7 },
+            { x: 380, y: 180, w: 110, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.4 },
+            { x: 620, y: 190, w: 110, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 2.1 },
+            { x: 300, y: 90, w: 200, h: 20 },
+        ],
+        marioSpawns: [
+            { x: 20, y: 430 },
+            { x: 730, y: 430 },
+            { x: 130, y: 380 },
+            { x: 430, y: 380 },
+            { x: 210, y: 250 },
+            { x: 570, y: 240 },
+            { x: 350, y: 50 },
+        ],
+        marioSpeed: 3.0,
+        playerSpawn: { x: 20, y: 430 },
+        coinSpawns: [
+            { x: 120, y: 395 }, { x: 280, y: 355 }, { x: 440, y: 395 }, { x: 600, y: 355 },
+            { x: 70, y: 295 }, { x: 220, y: 265 }, { x: 400, y: 285 }, { x: 580, y: 255 },
+            { x: 150, y: 175 }, { x: 410, y: 155 }, { x: 650, y: 165 },
+            { x: 360, y: 65 },
+        ],
+        starSpawns: [{ x: 460, y: 155 }, { x: 190, y: 175 }],
+    },
 ];
 
 // === GAME STATE ===
@@ -1054,6 +1126,26 @@ let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
 let soundMuted = false;
+
+// === LEADERBOARD (top-3) ===
+function loadLeaderboard() {
+    try {
+        return JSON.parse(localStorage.getItem('mushroomLeaderboard') || '[]');
+    } catch { return []; }
+}
+
+function saveLeaderboard(board) {
+    localStorage.setItem('mushroomLeaderboard', JSON.stringify(board));
+}
+
+function submitScore(score) {
+    const board = loadLeaderboard();
+    board.push({ score, date: new Date().toLocaleDateString('ru-RU') });
+    board.sort((a, b) => b.score - a.score);
+    const top3 = board.slice(0, 3);
+    saveLeaderboard(top3);
+    return top3;
+}
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -1510,21 +1602,63 @@ function renderMenu() {
     ctx.restore();
 
     drawTitle("ENTER / Нажми — Начать", 400, 18, C.text);
-    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 430, 13, '#aaaaaa');
-    drawTitle("На мобильном: кнопки ◀ ▶ ▲", 455, 12, '#888888');
+    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 428, 12, '#aaaaaa');
+    drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 447, 11, '#888888');
+
+    // Mini leaderboard on menu
+    const board = loadLeaderboard();
+    if (board.length > 0) {
+        ctx.save();
+        const medals = ['🥇', '🥈', '🥉'];
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffdd44';
+        ctx.fillText('РЕКОРДЫ:', W / 2, 468);
+        board.forEach((entry, i) => {
+            ctx.font = '11px monospace';
+            ctx.fillStyle = i === 0 ? '#ffcc00' : '#aaaaaa';
+            ctx.fillText(`${medals[i]} ${entry.score}`, W / 2 - 80 + i * 80, 484);
+        });
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
 }
 
 function renderGameOver() {
     drawBackground();
 
-    drawTitle("GAME OVER", 170, 42, '#ff4444');
-    drawTitle(`Счёт: ${totalScore}`, 220, 22, '#ffcc00');
+    drawTitle("GAME OVER", 150, 42, '#ff4444');
+    drawTitle(`Счёт: ${totalScore}`, 200, 22, '#ffcc00');
 
     if (totalScore >= highScore && highScore > 0) {
-        drawTitle("НОВЫЙ РЕКОРД!", 255, 20, '#00ff00');
+        drawTitle("НОВЫЙ РЕКОРД!", 230, 20, '#00ff00');
     }
 
-    drawTitle("ENTER — Играть снова", 350, 18, C.text);
+    // Leaderboard top-3
+    const board = loadLeaderboard();
+    if (board.length > 0) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        ctx.roundRect(W / 2 - 130, 255, 260, board.length * 28 + 30, 10);
+        ctx.fill();
+
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffdd00';
+        ctx.fillText('🏆 ТАБЛИЦА РЕКОРДОВ', W / 2, 275);
+
+        const medals = ['🥇', '🥈', '🥉'];
+        board.forEach((entry, i) => {
+            ctx.font = '12px monospace';
+            ctx.fillStyle = i === 0 ? '#ffcc00' : i === 1 ? '#cccccc' : '#cd7f32';
+            ctx.fillText(`${medals[i] || (i + 1 + '.')} ${entry.score}   ${entry.date}`, W / 2, 298 + i * 26);
+        });
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    drawTitle("ENTER — Играть снова", H - 50, 18, C.text);
 }
 
 function renderLevelComplete() {
@@ -1540,12 +1674,13 @@ function renderLevelSelect() {
 
     drawTitle('ВЫБОР УРОВНЯ', 90, 30, '#ffcc00');
 
-    const boxW = 120;
-    const boxH = 110;
-    const gap = 16;
-    const totalW = LEVELS.length * boxW + (LEVELS.length - 1) * gap;
+    const n = LEVELS.length;
+    const gap = n > 5 ? 10 : 16;
+    const boxW = Math.min(120, Math.floor((W - 40 - gap * (n - 1)) / n));
+    const boxH = 100;
+    const totalW = n * boxW + (n - 1) * gap;
     const startX = (W - totalW) / 2;
-    const startY = 160;
+    const startY = 165;
 
     for (let i = 0; i < LEVELS.length; i++) {
         const bx = startX + i * (boxW + gap);
@@ -1607,7 +1742,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос'];
     if (selectedLevelIdx < unlockedLevels) {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
@@ -1635,7 +1770,7 @@ function update() {
             if (isLeft() && !leftWasPressed && selectedLevelIdx > 0) {
                 selectedLevelIdx--;
             }
-            if (isRight() && !rightWasPressed && selectedLevelIdx < LEVELS.length - 1) {
+            if (isRight() && !rightWasPressed && selectedLevelIdx < Math.min(LEVELS.length, unlockedLevels) - 1) {
                 selectedLevelIdx++;
             }
             if (isEnter() && !enterWasPressed) {
