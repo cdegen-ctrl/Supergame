@@ -548,17 +548,18 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy'
+    // type: 'normal' | 'fast' | 'jumpy' | 'armored'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.speed = type === 'fast' ? speed * 1.9 : speed;
+        this.speed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : speed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
         this.deathTimer = 0;
         this.squishScale = 1;
         this.animFrame = 0;
         this.animTimer = 0;
+        this.armor = type === 'armored' ? 1 : 0;
         // jumpy: timer until next jump
         this.jumpTimer = type === 'jumpy' ? 60 + Math.floor(Math.random() * 80) : 9999;
     }
@@ -652,12 +653,27 @@ class Mario extends Entity {
     }
 
     stomp() {
+        if (this.armor > 0) {
+            this.armor--;
+            spawnDeathParticles(this.x, this.y, this.w / 2, this.h / 2);
+            playSound('stomp');
+            return false; // survived — armor absorbed hit
+        }
         this.isAlive = false;
         this.deathTimer = 20;
         this.vx = 0;
         this.vy = 0;
         spawnDeathParticles(this.x, this.y, this.w, this.h);
         playSound('stomp');
+        // 50% chance to drop a coin
+        if (Math.random() < 0.5) {
+            const dc = new Coin(this.x + this.w / 2 - 8, this.y + 4);
+            dc.isDropped = true;
+            dc.vx = (Math.random() - 0.5) * 4;
+            dc.vy = -5 - Math.random() * 3;
+            coins.push(dc);
+        }
+        return true; // killed
     }
 
     render() {
@@ -718,10 +734,28 @@ class Coin {
         this.collected = false;
         this.animTimer = Math.random() * 60; // stagger animation
         this.bobOffset = Math.random() * Math.PI * 2;
+        this.isDropped = false;
+        this.vx = 0;
+        this.vy = 0;
     }
 
     update() {
         this.animTimer++;
+        if (this.isDropped) {
+            this.vy += 0.45;
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vx *= 0.96;
+            for (const p of platforms) {
+                if (aabb(this, p) && this.vy > 0) {
+                    this.y = p.y - this.h;
+                    this.vy = 0;
+                    this.vx = 0;
+                    this.isDropped = false;
+                }
+            }
+            if (this.y > H + 50) this.collected = true;
+        }
         return !this.collected;
     }
 
@@ -810,6 +844,85 @@ class Star {
 }
 
 let stars = [];
+
+// === WEATHER SYSTEM ===
+let weatherParticles = [];
+let currentWeatherType = null;
+
+function initWeather(levelIndex) {
+    weatherParticles = [];
+    currentWeatherType = levelIndex >= 6 ? 'snow' : levelIndex >= 4 ? 'rain' : null;
+    if (!currentWeatherType) return;
+    const count = currentWeatherType === 'rain' ? 80 : 50;
+    for (let i = 0; i < count; i++) {
+        weatherParticles.push(spawnWeatherParticle(true));
+    }
+}
+
+function spawnWeatherParticle(randomY = false) {
+    if (currentWeatherType === 'rain') {
+        return {
+            x: Math.random() * W,
+            y: randomY ? Math.random() * H : -10,
+            vy: 8 + Math.random() * 5,
+            vx: -1.5 - Math.random() * 1.5,
+            len: 10 + Math.random() * 8,
+            alpha: 0.25 + Math.random() * 0.3,
+        };
+    }
+    return {
+        x: Math.random() * W,
+        y: randomY ? Math.random() * H : -10,
+        vy: 1 + Math.random() * 1.5,
+        vx: (Math.random() - 0.5) * 0.8,
+        size: 2 + Math.random() * 3,
+        wobble: Math.random() * Math.PI * 2,
+        wobbleSpeed: 0.02 + Math.random() * 0.03,
+        alpha: 0.5 + Math.random() * 0.5,
+    };
+}
+
+function updateWeather() {
+    if (!currentWeatherType) return;
+    for (const p of weatherParticles) {
+        if (currentWeatherType === 'rain') {
+            p.x += p.vx;
+            p.y += p.vy;
+            if (p.y > H) { p.y = -10; p.x = Math.random() * W; }
+            if (p.x < 0) p.x = W;
+        } else {
+            p.wobble += p.wobbleSpeed;
+            p.x += p.vx + Math.sin(p.wobble) * 0.5;
+            p.y += p.vy;
+            if (p.y > H) { p.y = -10; p.x = Math.random() * W; }
+            if (p.x < 0) p.x = W;
+            if (p.x > W) p.x = 0;
+        }
+    }
+}
+
+function renderWeather() {
+    if (!currentWeatherType || weatherParticles.length === 0) return;
+    ctx.save();
+    for (const p of weatherParticles) {
+        ctx.globalAlpha = p.alpha;
+        if (currentWeatherType === 'rain') {
+            ctx.strokeStyle = '#aaddff';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p.x + p.vx * 1.5, p.y - p.len);
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = '#eeeeff';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+}
 
 function checkStarCollisions() {
     for (const star of stars) {
@@ -1275,6 +1388,7 @@ function loadLevel(index) {
     levelTimer = 0;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
+    initWeather(index);
 }
 
 function startGame() {
@@ -1340,20 +1454,27 @@ function checkPlayerMarioCollisions() {
 
         if (player.vy > 0 && overlapY < 15) {
             // STOMP!
-            mario.stomp();
+            const killed = mario.stomp();
             player.vy = STOMP_BOUNCE;
-            comboCount++;
-            const multiplier = comboCount;
-            const points = 100 * multiplier;
-            player.score += points;
-            totalScore += points;
-            comboDisplayTimer = 100;
-            const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
-            const pColor = comboColors[Math.min(comboCount - 1, 4)];
-            const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
-            particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
-            shakeTimer = Math.min(6 + comboCount, 12);
-            shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            if (killed) {
+                comboCount++;
+                const multiplier = comboCount;
+                const points = 100 * multiplier;
+                player.score += points;
+                totalScore += points;
+                comboDisplayTimer = 100;
+                const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
+                const pColor = comboColors[Math.min(comboCount - 1, 4)];
+                const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
+                particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+                shakeTimer = Math.min(6 + comboCount, 12);
+                shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            } else {
+                // Armor absorbed — no score, just a bounce
+                particles.push(new Particle(mario.x, mario.y - 10, 'БРОНЯ!', '#aaaaaa'));
+                shakeTimer = 4;
+                shakeIntensity = 3;
+            }
         } else {
             // Side hit — damage
             player.die();
@@ -1810,6 +1931,7 @@ function update() {
             checkPlayerMarioCollisions();
             checkCoinCollisions();
             checkStarCollisions();
+            updateWeather();
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
@@ -1910,6 +2032,7 @@ function render() {
 
         case 'PLAYING':
             drawBackground();
+            renderWeather();
             platforms.forEach(p => p.render());
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
