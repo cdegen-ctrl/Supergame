@@ -316,6 +316,63 @@ class MovingPlatform extends Platform {
     }
 }
 
+class Trampoline {
+    constructor(x, y, w) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = 12;
+        this.isTrampoline = true;
+        this.bounceTimer = 0;
+    }
+
+    bounce() { this.bounceTimer = 15; }
+
+    render() {
+        if (this.bounceTimer > 0) this.bounceTimer--;
+        const squish = this.bounceTimer > 0 ? Math.sin(this.bounceTimer / 15 * Math.PI) : 0;
+        const h = Math.max(3, this.h * (1 - squish * 0.55));
+        const yOff = this.h - h;
+
+        // Side posts
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(this.x, this.y + yOff, 5, h);
+        ctx.fillRect(this.x + this.w - 5, this.y + yOff, 5, h);
+
+        // Surface gradient
+        const grad = ctx.createLinearGradient(0, this.y + yOff, 0, this.y + yOff + h);
+        grad.addColorStop(0, squish > 0.3 ? '#ff6600' : '#FFE000');
+        grad.addColorStop(1, '#FF8C00');
+        ctx.fillStyle = grad;
+        ctx.fillRect(this.x + 5, this.y + yOff, this.w - 10, h);
+
+        // Spring lines
+        ctx.strokeStyle = 'rgba(139,69,19,0.45)';
+        ctx.lineWidth = 1;
+        const lines = Math.floor((this.w - 10) / 10);
+        for (let i = 1; i < lines; i++) {
+            const lx = this.x + 5 + i * 10;
+            ctx.beginPath();
+            ctx.moveTo(lx, this.y + yOff);
+            ctx.lineTo(lx, this.y + yOff + h);
+            ctx.stroke();
+        }
+
+        // Shine
+        ctx.fillStyle = 'rgba(255,255,200,0.45)';
+        ctx.fillRect(this.x + 5, this.y + yOff, this.w - 10, Math.max(2, h * 0.3));
+
+        // Label
+        if (this.w >= 60) {
+            ctx.font = 'bold 7px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#8B0000';
+            ctx.fillText('BOING', this.x + this.w / 2, this.y + yOff + h - 1);
+            ctx.textAlign = 'left';
+        }
+    }
+}
+
 class Player extends Entity {
     constructor(x, y) {
         super(x, y, 32, 32);
@@ -427,6 +484,7 @@ class Player extends Entity {
 
     resolveCollisionsX() {
         for (const p of platforms) {
+            if (p.isTrampoline) continue;
             if (aabb(this, p)) {
                 if (this.vx > 0) {
                     this.x = p.x - this.w;
@@ -443,15 +501,25 @@ class Player extends Entity {
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
-                    // Squash on hard landing
-                    if (this.vy > 4) {
-                        this.scaleX = 1.3;
-                        this.scaleY = 0.7;
+                    if (p.isTrampoline) {
+                        p.bounce();
+                        this.vy = PLAYER_JUMP * 1.7;
+                        this.doubleJumped = false;
+                        this.scaleX = 1.45;
+                        this.scaleY = 0.5;
+                        particles.push(new Particle(this.x + this.w / 2 - 25, p.y - 10, 'BOING!', '#FFE000'));
+                        playSound('jump');
+                    } else {
+                        // Squash on hard landing
+                        if (this.vy > 4) {
+                            this.scaleX = 1.3;
+                            this.scaleY = 0.7;
+                        }
+                        this.vy = 0;
+                        this.isGrounded = true;
+                        this.doubleJumped = false;
+                        if (comboCount > 0) comboCount = 0;
                     }
-                    this.vy = 0;
-                    this.isGrounded = true;
-                    this.doubleJumped = false;
-                    if (comboCount > 0) comboCount = 0;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -527,7 +595,7 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy'
+    // type: 'normal' | 'fast' | 'jumpy' | 'shielded'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
@@ -540,6 +608,8 @@ class Mario extends Entity {
         this.animTimer = 0;
         // jumpy: timer until next jump
         this.jumpTimer = type === 'jumpy' ? 60 + Math.floor(Math.random() * 80) : 9999;
+        // shielded
+        this.shielded = (type === 'shielded');
     }
 
     update() {
@@ -590,6 +660,7 @@ class Mario extends Entity {
 
     resolveCollisionsX() {
         for (const p of platforms) {
+            if (p.isTrampoline) continue;
             if (aabb(this, p)) {
                 if (this.vx > 0) {
                     this.x = p.x - this.w;
@@ -606,7 +677,12 @@ class Mario extends Entity {
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
-                    this.vy = 0;
+                    if (p.isTrampoline) {
+                        this.vy = -9;
+                        p.bounce();
+                    } else {
+                        this.vy = 0;
+                    }
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -630,13 +706,32 @@ class Mario extends Entity {
         }
     }
 
-    stomp() {
+    stomp(forceKill = false) {
+        if (this.shielded && !forceKill) {
+            this.shielded = false;
+            // Shield-break burst (blue sparkles)
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            for (let i = 0; i < 10; i++) {
+                const angle = (Math.PI * 2 * i) / 10;
+                const spd = 2.5 + Math.random() * 2;
+                particles.push(new DeathParticle(
+                    cx, cy,
+                    Math.cos(angle) * spd, Math.sin(angle) * spd - 1.5,
+                    i % 2 === 0 ? '#4488ff' : '#aaddff',
+                    3 + Math.floor(Math.random() * 3)
+                ));
+            }
+            playSound('shieldBreak');
+            return false; // not dead yet
+        }
         this.isAlive = false;
         this.deathTimer = 20;
         this.vx = 0;
         this.vy = 0;
         spawnDeathParticles(this.x, this.y, this.w, this.h);
         playSound('stomp');
+        return true; // dead
     }
 
     render() {
@@ -663,6 +758,22 @@ class Mario extends Entity {
         }
         ctx.restore();
 
+        // Shield ring
+        if (this.isAlive && this.shielded) {
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            const pulse = Math.abs(Math.sin(Date.now() * 0.004)) * 0.25 + 0.75;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(100,180,255,${pulse * 0.18})`;
+            ctx.fill();
+            ctx.strokeStyle = `rgba(80,160,255,${pulse})`;
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+            ctx.restore();
+        }
+
         // Type badge above head
         if (this.isAlive && this.type !== 'normal') {
             ctx.save();
@@ -680,6 +791,11 @@ class Mario extends Entity {
                 ctx.fillText('↑', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#44aaff';
                 ctx.fillText('↑', badgeX, badgeY);
+            } else if (this.type === 'shielded') {
+                ctx.fillStyle = '#000';
+                ctx.fillText(this.shielded ? '🛡' : '💀', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = this.shielded ? '#4488ff' : '#ff4444';
+                ctx.fillText(this.shielded ? '🛡' : '💀', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
             ctx.restore();
@@ -911,6 +1027,7 @@ const LEVELS = [
             { x: 155, y: 345 }, { x: 395, y: 295 }, { x: 605, y: 345 },
         ],
         starSpawns: [{ x: 390, y: 295 }],
+        trampolineSpawns: [{ x: 365, y: 470, w: 80 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -939,6 +1056,10 @@ const LEVELS = [
             { x: 370, y: 195 },
         ],
         starSpawns: [{ x: 390, y: 185 }],
+        trampolineSpawns: [
+            { x: 205, y: 470, w: 70 },
+            { x: 522, y: 470, w: 70 },
+        ],
     },
     {
         // Level 4: Complex layout
@@ -971,6 +1092,10 @@ const LEVELS = [
             { x: 260, y: 205 }, { x: 500, y: 205 },
         ],
         starSpawns: [{ x: 650, y: 305 }],
+        trampolineSpawns: [
+            { x: 165, y: 470, w: 70 },
+            { x: 405, y: 470, w: 70 },
+        ],
     },
     {
         // Level 5: The gauntlet
@@ -1002,6 +1127,11 @@ const LEVELS = [
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
         starSpawns: [{ x: 380, y: 110 }],
+        trampolineSpawns: [
+            { x: 122, y: 470, w: 56 },
+            { x: 302, y: 470, w: 56 },
+            { x: 662, y: 470, w: 36 },
+        ],
     },
 ];
 
@@ -1124,6 +1254,15 @@ function playSound(type) {
             osc.start(now);
             osc.stop(now + 0.15);
             break;
+        case 'shieldBreak':
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(900, now);
+            osc.frequency.linearRampToValueAtTime(350, now + 0.14);
+            gain.gain.setValueAtTime(0.14, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+            break;
     }
 }
 
@@ -1132,10 +1271,10 @@ function getMarioType(levelIndex, spawnIdx) {
     if (levelIndex < 2) return 'normal';
     if (levelIndex === 2) return spawnIdx === 0 ? 'fast' : 'normal';
     if (levelIndex === 3) {
-        const types = ['normal', 'fast', 'jumpy', 'normal', 'normal'];
+        const types = ['normal', 'fast', 'shielded', 'jumpy', 'normal'];
         return types[spawnIdx % types.length];
     }
-    const types = ['normal', 'fast', 'jumpy', 'fast', 'jumpy', 'fast'];
+    const types = ['shielded', 'fast', 'jumpy', 'shielded', 'jumpy', 'fast'];
     return types[spawnIdx % types.length];
 }
 
@@ -1148,7 +1287,8 @@ function loadLevel(index) {
     movingPlatforms = (lvl.movingPlatforms || []).map(
         p => new MovingPlatform(p.x, p.y, p.w, p.h, p.minX, p.maxX, p.speed)
     );
-    platforms = platforms.concat(movingPlatforms);
+    const trampolineObjects = (lvl.trampolineSpawns || []).map(t => new Trampoline(t.x, t.y, t.w));
+    platforms = platforms.concat(movingPlatforms).concat(trampolineObjects);
 
     const speed = lvl.marioSpeed * speedMult;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
@@ -1211,12 +1351,12 @@ function checkStarCollisions() {
     }
     starPowerups = starPowerups.filter(s => !s.collected);
 
-    // Star kills enemies on touch
+    // Star kills enemies on touch (bypasses shield)
     if (player.starTimer > 0) {
         for (const mario of marios) {
             if (!mario.isAlive) continue;
             if (aabb(player, mario)) {
-                mario.stomp();
+                mario.stomp(true);
                 comboCount++;
                 const points = 100 * comboCount;
                 player.score += points;
@@ -1256,20 +1396,27 @@ function checkPlayerMarioCollisions() {
 
         if (player.vy > 0 && overlapY < 15) {
             // STOMP!
-            mario.stomp();
+            const killed = mario.stomp();
             player.vy = STOMP_BOUNCE;
-            comboCount++;
-            const multiplier = comboCount;
-            const points = 100 * multiplier;
-            player.score += points;
-            totalScore += points;
-            comboDisplayTimer = 100;
-            const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
-            const pColor = comboColors[Math.min(comboCount - 1, 4)];
-            const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
-            particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
-            shakeTimer = Math.min(6 + comboCount, 12);
-            shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            if (killed) {
+                comboCount++;
+                const multiplier = comboCount;
+                const points = 100 * multiplier;
+                player.score += points;
+                totalScore += points;
+                comboDisplayTimer = 100;
+                const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
+                const pColor = comboColors[Math.min(comboCount - 1, 4)];
+                const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
+                particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+                shakeTimer = Math.min(6 + comboCount, 12);
+                shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            } else {
+                // Shield broken — small shake, no score
+                particles.push(new Particle(mario.x - 10, mario.y - 15, 'ЩИТ СЛОМАН!', '#4488ff'));
+                shakeTimer = 4;
+                shakeIntensity = 2;
+            }
         } else {
             // Side hit — damage
             player.die();
