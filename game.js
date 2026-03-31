@@ -288,6 +288,7 @@ class Player extends Entity {
         this.scaleX = 1;
         this.scaleY = 1;
         this.wasGrounded = false;
+        this.doubleJumped = false;
     }
 
     update() {
@@ -302,14 +303,34 @@ class Player extends Entity {
             this.vx = 0;
         }
 
-        // jump (only on press, not hold)
-        if (isJump() && !jumpWasPressed && this.isGrounded) {
-            this.vy = PLAYER_JUMP;
-            this.isGrounded = false;
-            // Stretch on jump
-            this.scaleX = 0.75;
-            this.scaleY = 1.3;
-            playSound('jump');
+        // jump (only on press, not hold) — supports double jump
+        if (isJump() && !jumpWasPressed) {
+            if (this.isGrounded) {
+                this.vy = PLAYER_JUMP;
+                this.isGrounded = false;
+                this.doubleJumped = false;
+                this.scaleX = 0.75;
+                this.scaleY = 1.3;
+                playSound('jump');
+            } else if (!this.doubleJumped) {
+                // Double jump — slightly weaker
+                this.vy = PLAYER_JUMP * 0.82;
+                this.doubleJumped = true;
+                this.scaleX = 0.7;
+                this.scaleY = 1.4;
+                // Spawn double-jump puff particles
+                for (let i = 0; i < 6; i++) {
+                    const angle = Math.PI * 0.5 + (Math.random() - 0.5) * 1.2;
+                    const spd = 1.5 + Math.random() * 2;
+                    particles.push(new DeathParticle(
+                        this.x + this.w / 2 + (Math.random() - 0.5) * 10,
+                        this.y + this.h,
+                        Math.cos(angle) * spd, Math.sin(angle) * spd,
+                        '#aaddff', 4 + Math.floor(Math.random() * 4)
+                    ));
+                }
+                playSound('jump');
+            }
         }
         jumpWasPressed = isJump();
 
@@ -382,6 +403,7 @@ class Player extends Entity {
                     }
                     this.vy = 0;
                     this.isGrounded = true;
+                    this.doubleJumped = false;
                     if (comboCount > 0) comboCount = 0;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
@@ -878,10 +900,12 @@ let enterWasPressed = false;
 let escapeWasPressed = false;
 let leftWasPressed = false;
 let rightWasPressed = false;
+let muteWasPressed = false;
 let totalScore = 0;
 let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
+let soundMuted = false;
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -893,7 +917,7 @@ function initAudio() {
 }
 
 function playSound(type) {
-    if (!audioCtx) return;
+    if (!audioCtx || soundMuted) return;
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
@@ -1232,6 +1256,18 @@ function drawHUD() {
         ctx.fillText(`HI: ${highScore}`, W / 2 - 40, 30);
     }
 
+    // Mute indicator
+    ctx.save();
+    ctx.font = '18px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = soundMuted ? '#ff6666' : '#aaffaa';
+    ctx.fillText(soundMuted ? '🔇' : '🔊', W - 10, 55);
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = '#888';
+    ctx.fillText('[V]', W - 12, 70);
+    ctx.textAlign = 'left';
+    ctx.restore();
+
     // Combo indicator
     if (comboCount >= 2 && comboDisplayTimer > 0) {
         const alpha = Math.min(1, comboDisplayTimer / 20);
@@ -1486,6 +1522,12 @@ function update() {
             keys['_mWas'] = keys['KeyM'];
             break;
     }
+
+    // V key — toggle mute (any state)
+    if (keys['KeyV'] && !muteWasPressed) {
+        soundMuted = !soundMuted;
+    }
+    muteWasPressed = !!keys['KeyV'];
 
     enterWasPressed = isEnter();
     escapeWasPressed = isEscape();
