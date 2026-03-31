@@ -345,6 +345,7 @@ class Player extends Entity {
                     this.y = p.y - this.h;
                     this.vy = 0;
                     this.isGrounded = true;
+                    if (comboCount > 0) comboCount = 0;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -368,6 +369,8 @@ class Player extends Entity {
             this.vx = 0;
             this.vy = 0;
             this.invincibleTimer = 120; // 2 seconds
+            comboCount = 0;
+            comboDisplayTimer = 0;
             playSound('hurt');
         }
     }
@@ -493,6 +496,7 @@ class Mario extends Entity {
         this.deathTimer = 20;
         this.vx = 0;
         this.vy = 0;
+        spawnDeathParticles(this.x, this.y, this.w, this.h);
         playSound('stomp');
     }
 
@@ -522,13 +526,62 @@ class Mario extends Entity {
     }
 }
 
-// === PARTICLES ===
+// === DEATH PARTICLES ===
+class DeathParticle {
+    constructor(x, y, vx, vy, color, size) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.size = size;
+        this.timer = 35 + Math.random() * 20;
+        this.maxTimer = this.timer;
+        this.gravity = 0.35;
+    }
+
+    update() {
+        this.vy += this.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vx *= 0.97;
+        this.timer--;
+        return this.timer > 0;
+    }
+
+    render() {
+        const alpha = this.timer / this.maxTimer;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+        ctx.restore();
+    }
+}
+
+function spawnDeathParticles(x, y, w, h) {
+    const colors = [C.marioHat, C.marioSkin, C.marioOveralls, C.marioShirt, C.marioShoe];
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    for (let i = 0; i < 14; i++) {
+        const angle = (Math.PI * 2 * i) / 14 + Math.random() * 0.4;
+        const speed = 2 + Math.random() * 3.5;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed - 2;
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const size = 3 + Math.floor(Math.random() * 4);
+        particles.push(new DeathParticle(cx, cy, vx, vy, color, size));
+    }
+}
+
+// === SCORE PARTICLES ===
 class Particle {
-    constructor(x, y, text) {
+    constructor(x, y, text, color = '#ffff00') {
         this.x = x;
         this.y = y;
         this.text = text;
-        this.timer = 40;
+        this.color = color;
+        this.timer = 50;
         this.vy = -2;
     }
 
@@ -544,7 +597,7 @@ class Particle {
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.font = 'bold 18px monospace';
-        ctx.fillStyle = '#ffff00';
+        ctx.fillStyle = this.color;
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 3;
         ctx.strokeText(this.text, this.x, this.y);
@@ -669,6 +722,8 @@ let platforms = [];
 let particles = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
+let comboCount = 0;
+let comboDisplayTimer = 0;
 let enterWasPressed = false;
 let escapeWasPressed = false;
 let totalScore = 0;
@@ -777,6 +832,8 @@ function loadLevel(index) {
     }
 
     particles = [];
+    comboCount = 0;
+    comboDisplayTimer = 0;
 }
 
 function startGame() {
@@ -806,11 +863,18 @@ function checkPlayerMarioCollisions() {
             // STOMP!
             mario.stomp();
             player.vy = STOMP_BOUNCE;
-            player.score += 100;
-            totalScore += 100;
-            particles.push(new Particle(mario.x, mario.y - 10, '+100'));
-            shakeTimer = 6;
-            shakeIntensity = 3;
+            comboCount++;
+            const multiplier = comboCount;
+            const points = 100 * multiplier;
+            player.score += points;
+            totalScore += points;
+            comboDisplayTimer = 100;
+            const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
+            const pColor = comboColors[Math.min(comboCount - 1, 4)];
+            const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
+            particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+            shakeTimer = Math.min(6 + comboCount, 12);
+            shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
         } else {
             // Side hit — damage
             player.die();
@@ -956,6 +1020,24 @@ function drawHUD() {
         ctx.fillStyle = '#ffcc00';
         ctx.fillText(`HI: ${highScore}`, W / 2 - 40, 30);
     }
+
+    // Combo indicator
+    if (comboCount >= 2 && comboDisplayTimer > 0) {
+        const alpha = Math.min(1, comboDisplayTimer / 20);
+        const pulse = 1 + Math.sin(comboDisplayTimer * 0.3) * 0.08;
+        const comboColors = ['', '', '#ffff00', '#ffaa00', '#ff6600', '#ff2200'];
+        const color = comboColors[Math.min(comboCount, 5)] || '#ff00ff';
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${Math.round(26 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#000';
+        ctx.fillText(`COMBO x${comboCount}!`, W / 2 + 2, H / 2 - 28);
+        ctx.fillStyle = color;
+        ctx.fillText(`COMBO x${comboCount}!`, W / 2, H / 2 - 30);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
 }
 
 // === SCREEN RENDERS ===
@@ -1027,6 +1109,7 @@ function update() {
             checkPlayerMarioCollisions();
 
             if (shakeTimer > 0) shakeTimer--;
+            if (comboDisplayTimer > 0) comboDisplayTimer--;
 
             // Check level complete
             if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0) {
