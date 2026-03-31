@@ -965,6 +965,208 @@ class Shield {
 
 let shields = [];
 
+// === BOMB POWER-UP ===
+class Bomb {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.15) * 0.15;
+        const fuse = t % 30; // fuse spark timing
+
+        ctx.save();
+        // Outer danger glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 80, 0, ${0.25 * pulse})`;
+        ctx.fill();
+
+        // Bomb body
+        ctx.beginPath();
+        ctx.arc(cx, cy + 2, 9 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#222222';
+        ctx.fill();
+        ctx.strokeStyle = '#555555';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Bomb shine
+        ctx.beginPath();
+        ctx.arc(cx - 2.5, cy - 1, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(180,180,180,0.35)';
+        ctx.fill();
+
+        // Fuse
+        ctx.strokeStyle = '#aa8833';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx + 1, cy - 7);
+        ctx.quadraticCurveTo(cx + 7, cy - 14, cx + 3, cy - 18);
+        ctx.stroke();
+
+        // Fuse spark
+        if (fuse < 8) {
+            const sparkAlpha = 1 - fuse / 8;
+            ctx.save();
+            ctx.globalAlpha = sparkAlpha;
+            ctx.fillStyle = fuse % 2 === 0 ? '#ffff00' : '#ff8800';
+            ctx.beginPath();
+            ctx.arc(cx + 3, cy - 18, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // Label
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff4400';
+        ctx.fillText('💣', cx, cy + 6);
+        ctx.restore();
+    }
+}
+
+let bombs = [];
+
+function spawnExplosionParticles(cx, cy) {
+    const colors = ['#ff6600', '#ff2200', '#ffcc00', '#ffffff', '#ff8800'];
+    for (let i = 0; i < 24; i++) {
+        const angle = (Math.PI * 2 * i) / 24 + Math.random() * 0.3;
+        const speed = 3 + Math.random() * 6;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed - 3;
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const size = 4 + Math.floor(Math.random() * 6);
+        particles.push(new DeathParticle(cx, cy, vx, vy, color, size));
+    }
+}
+
+function checkBombCollisions() {
+    for (const bomb of bombs) {
+        if (bomb.collected) continue;
+        if (!aabb(player, bomb)) continue;
+        bomb.collected = true;
+
+        // Kill all alive enemies instantly (ignoring armor)
+        let killCount = 0;
+        for (const mario of marios) {
+            if (!mario.isAlive) continue;
+            mario.armor = 0;
+            mario.stomp();
+            killCount++;
+        }
+
+        const pts = killCount * 100;
+        player.score += pts;
+        totalScore += pts;
+
+        // Explosion at center of screen
+        const cx = W / 2;
+        const cy = H / 2;
+        spawnExplosionParticles(cx, cy);
+        shakeTimer = 22;
+        shakeIntensity = 9;
+
+        const msg = killCount > 0 ? `💥 ВЗРЫВ! +${pts}` : '💥 ВЗРЫВ!';
+        particles.push(new Particle(W / 2 - 50, H / 2 - 50, msg, '#ff6600'));
+        playSound('bomb');
+    }
+    bombs = bombs.filter(b => !b.collected);
+}
+
+// === SPRING PAD ===
+class SpringPad {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 36;
+        this.h = 14;
+        this.animTimer = 0;
+        this.compressTimer = 0; // compressed animation after bounce
+    }
+
+    update() {
+        this.animTimer++;
+        if (this.compressTimer > 0) this.compressTimer--;
+    }
+
+    render() {
+        const compress = this.compressTimer > 0 ? (this.compressTimer / 18) : 0;
+        const h = this.h * (1 - compress * 0.55);
+        const yOff = this.h - h;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + yOff;
+
+        ctx.save();
+        // Base plate
+        ctx.fillStyle = '#884400';
+        ctx.fillRect(this.x + 2, this.y + this.h - 4, this.w - 4, 4);
+
+        // Spring coils
+        const coilCount = 3;
+        const coilH = h / coilCount;
+        for (let i = 0; i < coilCount; i++) {
+            const coilY = cy + i * coilH;
+            const bright = i % 2 === 0 ? '#ffcc00' : '#ddaa00';
+            ctx.fillStyle = bright;
+            ctx.fillRect(this.x + 5, coilY, this.w - 10, coilH * 0.55);
+        }
+
+        // Top pad
+        const padGrad = ctx.createLinearGradient(this.x, cy, this.x, cy + 5);
+        padGrad.addColorStop(0, '#ff8800');
+        padGrad.addColorStop(1, '#cc5500');
+        ctx.fillStyle = padGrad;
+        ctx.beginPath();
+        ctx.roundRect(this.x, cy, this.w, 6, 3);
+        ctx.fill();
+
+        // Shine on top pad
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = '#ffdd88';
+        ctx.fillRect(this.x + 4, cy + 1, this.w - 8, 2);
+
+        ctx.restore();
+    }
+}
+
+let springPads = [];
+
+function checkSpringCollisions() {
+    if (!player) return;
+    for (const sp of springPads) {
+        const playerBottom = player.y + player.h;
+        const overlapY = playerBottom - sp.y;
+        if (player.vy > 0 && overlapY >= 0 && overlapY <= 16 &&
+            player.x + player.w > sp.x + 4 && player.x < sp.x + sp.w - 4) {
+            player.y = sp.y - player.h;
+            player.vy = PLAYER_JUMP * 2.2; // super jump
+            player.isGrounded = false;
+            player.jumpCount = 0;
+            player.canDoubleJump = true;
+            player.scaleX = 0.6;
+            player.scaleY = 1.45;
+            sp.compressTimer = 18;
+            particles.push(new Particle(sp.x + sp.w / 2 - 20, sp.y - 15, '🌀 ПРУЖИНА!', '#ff8800'));
+            playSound('spring');
+        }
+    }
+}
+
 function checkShieldCollisions() {
     for (const sh of shields) {
         if (sh.collected) continue;
@@ -1256,6 +1458,7 @@ const LEVELS = [
             { x: 155, y: 345 }, { x: 395, y: 295 }, { x: 605, y: 345 },
         ],
         shieldSpawns: [{ x: 600, y: 435 }],
+        springSpawns: [{ x: 370, y: 446 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -1283,6 +1486,8 @@ const LEVELS = [
         ],
         starSpawns: [{ x: 380, y: 290 }],
         shieldSpawns: [{ x: 620, y: 345 }],
+        bombSpawns: [{ x: 150, y: 305 }],
+        springSpawns: [{ x: 460, y: 446 }],
     },
     {
         // Level 4: Complex layout with moving platforms
@@ -1313,6 +1518,8 @@ const LEVELS = [
             { x: 260, y: 205 }, { x: 500, y: 205 },
         ],
         starSpawns: [{ x: 530, y: 205 }],
+        bombSpawns: [{ x: 660, y: 295 }],
+        springSpawns: [{ x: 50, y: 446 }, { x: 700, y: 446 }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -1343,6 +1550,8 @@ const LEVELS = [
         playerSpawn: { x: 30, y: 400 },
         starSpawns: [{ x: 380, y: 185 }],
         shieldSpawns: [{ x: 90, y: 350 }],
+        bombSpawns: [{ x: 640, y: 230 }],
+        springSpawns: [{ x: 280, y: 446 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -1377,6 +1586,8 @@ const LEVELS = [
             { x: 180, y: 145 }, { x: 440, y: 125 }, { x: 360, y: 55 },
         ],
         starSpawns: [{ x: 440, y: 55 }],
+        bombSpawns: [{ x: 230, y: 235 }],
+        springSpawns: [{ x: 0, y: 446 }, { x: 680, y: 446 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -1414,6 +1625,8 @@ const LEVELS = [
             { x: 360, y: 65 },
         ],
         starSpawns: [{ x: 460, y: 155 }, { x: 190, y: 175 }],
+        bombSpawns: [{ x: 140, y: 375 }, { x: 500, y: 355 }],
+        springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
     },
 ];
 
@@ -1537,6 +1750,27 @@ function playSound(type) {
             osc.start(now);
             osc.stop(now + 0.15);
             break;
+        case 'bomb':
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.linearRampToValueAtTime(60, now + 0.15);
+            osc.frequency.linearRampToValueAtTime(30, now + 0.4);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.linearRampToValueAtTime(0.1, now + 0.2);
+            gain.gain.linearRampToValueAtTime(0, now + 0.55);
+            osc.start(now);
+            osc.stop(now + 0.55);
+            break;
+        case 'spring':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.linearRampToValueAtTime(900, now + 0.12);
+            osc.frequency.linearRampToValueAtTime(600, now + 0.2);
+            gain.gain.setValueAtTime(0.18, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.25);
+            osc.start(now);
+            osc.stop(now + 0.25);
+            break;
     }
 }
 
@@ -1596,6 +1830,8 @@ function loadLevel(index) {
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
+    bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
+    springPads = (lvl.springSpawns || []).map(s => new SpringPad(s.x, s.y));
     initWeather(index);
 }
 
@@ -2261,10 +2497,14 @@ function update() {
             coins = coins.filter(c => c.update());
             stars = stars.filter(s => s.update());
             shields = shields.filter(s => s.update());
+            bombs = bombs.filter(b => b.update());
+            springPads.forEach(sp => sp.update());
             checkPlayerMarioCollisions();
             checkCoinCollisions();
             checkStarCollisions();
             checkShieldCollisions();
+            checkBombCollisions();
+            checkSpringCollisions();
             updateWeather();
             updateAchievementToasts();
 
@@ -2380,6 +2620,8 @@ function render() {
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
             shields.forEach(s => s.render());
+            springPads.forEach(sp => sp.render());
+            bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
