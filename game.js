@@ -391,15 +391,18 @@ class Player extends Entity {
         this.wasGrounded = false;
         this.doubleJumped = false;
         this.starTimer = 0;
+        this.nextLifeScore = 1000;  // extra life milestone
+        this.speedBoostTimer = 0;   // speed boost power-up
     }
 
     update() {
         // horizontal movement
+        const spd = this.speedBoostTimer > 0 ? PLAYER_SPEED * 1.9 : PLAYER_SPEED;
         if (isLeft()) {
-            this.vx = -PLAYER_SPEED;
+            this.vx = -spd;
             this.facingRight = false;
         } else if (isRight()) {
-            this.vx = PLAYER_SPEED;
+            this.vx = spd;
             this.facingRight = true;
         } else {
             this.vx = 0;
@@ -470,6 +473,18 @@ class Player extends Entity {
         if (this.invincibleTimer > 0) this.invincibleTimer--;
         // star power
         if (this.starTimer > 0) this.starTimer--;
+        // speed boost
+        if (this.speedBoostTimer > 0) this.speedBoostTimer--;
+
+        // Extra life every 1000 points (max 5 lives)
+        if (totalScore >= this.nextLifeScore && this.lives < 5) {
+            this.lives++;
+            this.nextLifeScore += 1000;
+            particles.push(new Particle(this.x, this.y - 20, '1UP! +♥', '#ff44ff'));
+            playSound('levelup');
+        } else if (totalScore >= this.nextLifeScore) {
+            this.nextLifeScore += 1000; // advance milestone even if at max lives
+        }
 
         // Smooth squash/stretch recovery
         this.scaleX += (1 - this.scaleX) * 0.22;
@@ -556,6 +571,17 @@ class Player extends Entity {
 
         // 3D shadow
         drawShadow(this.x, this.y + this.h, this.w);
+
+        // Speed boost motion trail
+        if (this.speedBoostTimer > 0 && this.vx !== 0) {
+            const alpha = Math.min(1, this.speedBoostTimer / 30) * 0.45;
+            const trailX = this.x - this.vx * 3;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#ff6600';
+            ctx.fillRect(trailX + 4, this.y + 4, this.w - 8, this.h - 8);
+            ctx.restore();
+        }
 
         // Star power rainbow glow
         if (this.starTimer > 0) {
@@ -853,6 +879,55 @@ class Coin {
 
 let coins = [];
 let starPowerups = [];
+let speedBoosts = [];
+
+// === SPEED BOOST POWER-UP ===
+const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
+
+class SpeedBoost {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 18;
+        this.h = 18;
+        this.collected = false;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const bob = Math.sin(this.animTimer * 0.09) * 3;
+        const glow = Math.abs(Math.sin(this.animTimer * 0.07)) * 0.4 + 0.6;
+        const rx = this.x;
+        const ry = this.y + bob;
+
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(rx + 9, ry + 9, 14, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,100,0,${glow * 0.25})`;
+        ctx.fill();
+        // Body circle
+        ctx.beginPath();
+        ctx.arc(rx + 9, ry + 9, 9, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff4400';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(rx + 9, ry + 9, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff7700';
+        ctx.fill();
+        // Lightning bolt ⚡ text
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffee00';
+        ctx.fillText('⚡', rx + 9, ry + 13);
+        ctx.restore();
+    }
+}
 
 // === STAR POWER-UP ===
 const STAR_DURATION = 300; // 5 seconds at 60fps
@@ -1005,6 +1080,7 @@ const LEVELS = [
             { x: 195, y: 345 }, { x: 545, y: 345 },
         ],
         starSpawns: [{ x: 390, y: 430 }],
+        speedBoostSpawns: [{ x: 540, y: 345 }],
     },
     {
         // Level 2: More platforms, 3 Marios
@@ -1028,6 +1104,7 @@ const LEVELS = [
         ],
         starSpawns: [{ x: 390, y: 295 }],
         trampolineSpawns: [{ x: 365, y: 470, w: 80 }],
+        speedBoostSpawns: [{ x: 155, y: 345 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -1060,6 +1137,7 @@ const LEVELS = [
             { x: 205, y: 470, w: 70 },
             { x: 522, y: 470, w: 70 },
         ],
+        speedBoostSpawns: [{ x: 350, y: 195 }],
     },
     {
         // Level 4: Complex layout
@@ -1096,6 +1174,7 @@ const LEVELS = [
             { x: 165, y: 470, w: 70 },
             { x: 405, y: 470, w: 70 },
         ],
+        speedBoostSpawns: [{ x: 250, y: 205 }, { x: 470, y: 205 }],
     },
     {
         // Level 5: The gauntlet
@@ -1132,6 +1211,7 @@ const LEVELS = [
             { x: 302, y: 470, w: 56 },
             { x: 662, y: 470, w: 36 },
         ],
+        speedBoostSpawns: [{ x: 185, y: 240 }, { x: 565, y: 240 }],
     },
 ];
 
@@ -1321,6 +1401,7 @@ function loadLevel(index) {
     levelTimer = 0;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     starPowerups = (lvl.starSpawns || []).map(s => new StarPowerup(s.x, s.y));
+    speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
 }
 
 function startGame() {
@@ -1338,6 +1419,19 @@ function startGameFromLevel(level) {
 }
 
 // === COLLISION DETECTION ===
+function checkSpeedBoostCollisions() {
+    for (const sb of speedBoosts) {
+        if (sb.collected) continue;
+        if (aabb(player, sb)) {
+            sb.collected = true;
+            player.speedBoostTimer = SPEED_BOOST_DURATION;
+            particles.push(new Particle(sb.x - 10, sb.y - 10, '⚡ ТУРБО!', '#ff6600'));
+            playSound('coin');
+        }
+    }
+    speedBoosts = speedBoosts.filter(s => !s.collected);
+}
+
 function checkStarCollisions() {
     for (const star of starPowerups) {
         if (star.collected) continue;
@@ -1657,6 +1751,18 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Speed boost indicator
+    if (player.speedBoostTimer > 0) {
+        ctx.save();
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        const pulse = Math.abs(Math.sin(Date.now() * 0.008)) * 0.3 + 0.7;
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = '#ff6600';
+        ctx.fillText(`⚡ ТУРБО ${Math.ceil(player.speedBoostTimer / 60)}s`, W / 2, player.starTimer > 0 ? 73 : 55);
+        ctx.restore();
+    }
+
     // Mute indicator
     ctx.save();
     ctx.font = '18px monospace';
@@ -1896,7 +2002,9 @@ function update() {
             particles = particles.filter(p => p.update());
             coins = coins.filter(c => c.update());
             starPowerups = starPowerups.filter(s => s.update());
+            speedBoosts = speedBoosts.filter(s => s.update());
             checkStarCollisions();
+            checkSpeedBoostCollisions();
             checkPlayerMarioCollisions();
             checkCoinCollisions();
 
@@ -2009,6 +2117,7 @@ function render() {
             platforms.forEach(p => p.render());
             coins.forEach(c => c.render());
             starPowerups.forEach(s => s.render());
+            speedBoosts.forEach(s => s.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
