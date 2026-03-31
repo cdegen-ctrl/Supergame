@@ -393,6 +393,8 @@ class Player extends Entity {
         this.starTimer = 0;
         this.nextLifeScore = 1000;  // extra life milestone
         this.speedBoostTimer = 0;   // speed boost power-up
+        this.hasShield = false;     // player shield power-up
+        this.shieldPulse = 0;       // animation timer
     }
 
     update() {
@@ -475,6 +477,7 @@ class Player extends Entity {
         if (this.starTimer > 0) this.starTimer--;
         // speed boost
         if (this.speedBoostTimer > 0) this.speedBoostTimer--;
+        if (this.hasShield) this.shieldPulse++;
 
         // Extra life every 1000 points (max 5 lives)
         if (totalScore >= this.nextLifeScore && this.lives < 5) {
@@ -544,6 +547,14 @@ class Player extends Entity {
     }
 
     die() {
+        // Shield absorbs the hit
+        if (this.hasShield) {
+            this.hasShield = false;
+            this.invincibleTimer = 90; // brief invincibility after shield break
+            particles.push(new Particle(this.x, this.y - 10, '🛡 ЩИТ!', '#88ccff'));
+            playSound('shieldBreak');
+            return;
+        }
         this.lives--;
         if (this.lives <= 0) {
             if (totalScore > highScore) {
@@ -580,6 +591,28 @@ class Player extends Entity {
             ctx.globalAlpha = alpha;
             ctx.fillStyle = '#ff6600';
             ctx.fillRect(trailX + 4, this.y + 4, this.w - 8, this.h - 8);
+            ctx.restore();
+        }
+
+        // Player shield bubble
+        if (this.hasShield) {
+            const pulse = Math.sin(this.shieldPulse * 0.08) * 0.2 + 0.8;
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 22 * pulse, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(80,160,255,${0.15 * pulse})`;
+            ctx.fill();
+            ctx.strokeStyle = `rgba(140,210,255,${0.8 * pulse})`;
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+            // Inner shimmer
+            ctx.beginPath();
+            ctx.arc(cx - 6, cy - 6, 8 * pulse, 0, Math.PI);
+            ctx.strokeStyle = `rgba(200,230,255,${0.4 * pulse})`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
             ctx.restore();
         }
 
@@ -978,6 +1011,58 @@ class SpeedBoost {
     }
 }
 
+// === SHIELD PICKUP ===
+let shieldPickups = [];
+
+class ShieldPickup {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 20; this.h = 20;
+        this.collected = false;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const bob = Math.sin(this.animTimer * 0.07) * 3;
+        const pulse = Math.abs(Math.sin(this.animTimer * 0.06)) * 0.4 + 0.6;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(80,160,255,${pulse * 0.25})`;
+        ctx.fill();
+        // Shield shape
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 9);
+        ctx.lineTo(cx + 8, cy - 4);
+        ctx.lineTo(cx + 8, cy + 3);
+        ctx.quadraticCurveTo(cx + 8, cy + 9, cx, cy + 10);
+        ctx.quadraticCurveTo(cx - 8, cy + 9, cx - 8, cy + 3);
+        ctx.lineTo(cx - 8, cy - 4);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(60,140,240,${pulse * 0.9})`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(180,220,255,${pulse})`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Inner cross
+        ctx.strokeStyle = `rgba(200,230,255,${pulse * 0.7})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
+        ctx.moveTo(cx - 4, cy); ctx.lineTo(cx + 4, cy);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
 // === STAR POWER-UP ===
 const STAR_DURATION = 300; // 5 seconds at 60fps
 
@@ -1154,6 +1239,7 @@ const LEVELS = [
         starSpawns: [{ x: 390, y: 295 }],
         trampolineSpawns: [{ x: 365, y: 470, w: 80 }],
         speedBoostSpawns: [{ x: 155, y: 345 }],
+        shieldSpawns: [{ x: 605, y: 345 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -1187,6 +1273,7 @@ const LEVELS = [
             { x: 522, y: 470, w: 70 },
         ],
         speedBoostSpawns: [{ x: 350, y: 195 }],
+        shieldSpawns: [{ x: 110, y: 345 }],
     },
     {
         // Level 4: Complex layout
@@ -1224,6 +1311,7 @@ const LEVELS = [
             { x: 405, y: 470, w: 70 },
         ],
         speedBoostSpawns: [{ x: 250, y: 205 }, { x: 470, y: 205 }],
+        shieldSpawns: [{ x: 680, y: 305 }],
     },
     {
         // Level 5: The gauntlet
@@ -1261,8 +1349,195 @@ const LEVELS = [
             { x: 662, y: 470, w: 36 },
         ],
         speedBoostSpawns: [{ x: 185, y: 240 }, { x: 565, y: 240 }],
+        shieldSpawns: [{ x: 365, y: 90 }],
+    },
+    {
+        // Level 6: BOSS — Castle of King Mario
+        isBossLevel: true,
+        platforms: [
+            { x: 0, y: 460, w: 800, h: 40 },
+            { x: 80, y: 380, w: 120, h: 20 },
+            { x: 600, y: 380, w: 120, h: 20 },
+            { x: 250, y: 310, w: 120, h: 20 },
+            { x: 430, y: 310, w: 120, h: 20 },
+            { x: 340, y: 220, w: 120, h: 20 },
+        ],
+        marioSpawns: [],
+        bossSpawn: { x: 340, y: 200 },
+        marioSpeed: 2.0,
+        playerSpawn: { x: 50, y: 400 },
+        coinSpawns: [
+            { x: 120, y: 355 }, { x: 620, y: 355 },
+            { x: 280, y: 285 }, { x: 460, y: 285 },
+            { x: 370, y: 195 },
+        ],
+        starSpawns: [{ x: 360, y: 280 }],
     },
 ];
+
+// === BOSS ===
+let boss = null;
+
+class Boss {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 48; this.h = 52;
+        this.vx = 0; this.vy = 0;
+        this.maxHp = 3;
+        this.hp = 3;
+        this.direction = -1;
+        this.speed = 1.8;
+        this.isAlive = true;
+        this.invincibleTimer = 0;
+        this.deathTimer = 0;
+        this.animTimer = 0;
+        this.animFrame = 0;
+        this.jumpTimer = 120;
+        this.hurtFlash = 0;
+    }
+
+    update() {
+        if (!this.isAlive) {
+            this.deathTimer++;
+            return this.deathTimer < 90;
+        }
+        if (this.invincibleTimer > 0) this.invincibleTimer--;
+
+        // Speed up as HP decreases
+        const spd = this.speed * (1 + (this.maxHp - this.hp) * 0.5);
+        this.vx = spd * this.direction;
+
+        this.vy += GRAVITY;
+        if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+
+        this.animTimer++;
+        if (this.animTimer > 8) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+
+        this.x += this.vx;
+        // Platform collision X
+        for (const p of platforms) {
+            if (aabb(this, p)) {
+                if (this.vx > 0) this.x = p.x - this.w;
+                else if (this.vx < 0) this.x = p.x + p.w;
+                this.direction *= -1;
+            }
+        }
+
+        this.y += this.vy;
+        // Platform collision Y
+        for (const p of platforms) {
+            if (aabb(this, p)) {
+                if (this.vy > 0) { this.y = p.y - this.h; this.vy = 0; }
+                else if (this.vy < 0) { this.y = p.y + p.h; this.vy = 0; }
+            }
+        }
+
+        // Clamp to canvas
+        if (this.x < 0) { this.x = 0; this.direction = 1; }
+        if (this.x + this.w > W) { this.x = W - this.w; this.direction = -1; }
+
+        // Periodic jump
+        this.jumpTimer--;
+        if (this.jumpTimer <= 0 && this.vy === 0) {
+            this.vy = -12 - (this.maxHp - this.hp) * 1.5;
+            this.jumpTimer = 90 + Math.floor(Math.random() * 60);
+        }
+
+        if (this.hurtFlash > 0) this.hurtFlash--;
+        return true;
+    }
+
+    hit() {
+        if (this.invincibleTimer > 0) return false;
+        this.hp--;
+        this.invincibleTimer = 80;
+        this.hurtFlash = 20;
+        spawnDeathParticles(this.x, this.y, this.w, this.h);
+        playSound('stomp');
+        if (this.hp <= 0) {
+            this.isAlive = false;
+            this.deathTimer = 0;
+        }
+        return true;
+    }
+
+    render() {
+        if (!this.isAlive) {
+            if (this.deathTimer < 60) {
+                const alpha = 1 - this.deathTimer / 60;
+                const scaleY = 1 - this.deathTimer / 60 * 0.8;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(this.x + this.w / 2, this.y + this.h);
+                ctx.scale(1 + this.deathTimer / 60 * 0.5, scaleY);
+                ctx.translate(-(this.x + this.w / 2), -(this.y + this.h));
+                this._drawSprite();
+                ctx.restore();
+            }
+            return;
+        }
+
+        // Blink when invincible
+        if (this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 5) % 2 === 0) return;
+
+        // Shadow
+        drawShadow(this.x, this.y + this.h, this.w);
+
+        // Hurt flash
+        if (this.hurtFlash > 0) {
+            ctx.save();
+            ctx.globalAlpha = this.hurtFlash / 20 * 0.5;
+            ctx.fillStyle = '#ff0000';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            ctx.restore();
+        }
+
+        this._drawSprite();
+
+        // HP bar above boss
+        const barW = 80, barH = 10;
+        const barX = this.x + this.w / 2 - barW / 2;
+        const barY = this.y - 20;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        for (let i = 0; i < this.maxHp; i++) {
+            ctx.fillStyle = i < this.hp ? '#ff2222' : '#333';
+            ctx.fillRect(barX + i * (barW / this.maxHp) + 1, barY, barW / this.maxHp - 2, barH);
+        }
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('БОСС', this.x + this.w / 2, barY - 4);
+        ctx.textAlign = 'left';
+
+        // Crown
+        ctx.save();
+        ctx.fillStyle = '#ffd700';
+        ctx.font = '20px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('👑', this.x + this.w / 2, this.y - 22);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    _drawSprite() {
+        // Draw enlarged Mario sprite as the boss
+        const px = 4;
+        const spriteW = 12 * px;
+        const spriteH = 13 * px;
+        const drawX = this.x + (this.w - spriteW) / 2;
+        const drawY = this.y + this.h - spriteH;
+        ctx.save();
+        if (this.direction < 0) {
+            ctx.translate(drawX + spriteW, drawY);
+            ctx.scale(-1, 1);
+            drawPixelSprite(0, 0, px, MARIO_SPRITE);
+        } else {
+            drawPixelSprite(drawX, drawY, px, MARIO_SPRITE);
+        }
+        ctx.restore();
+    }
+}
 
 // === GAME STATE ===
 let gameState = 'MENU';
@@ -1455,6 +1730,9 @@ function loadLevel(index) {
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     starPowerups = (lvl.starSpawns || []).map(s => new StarPowerup(s.x, s.y));
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
+    shieldPickups = (lvl.shieldSpawns || []).map(s => new ShieldPickup(s.x, s.y));
+    // Boss level
+    boss = lvl.bossSpawn ? new Boss(lvl.bossSpawn.x, lvl.bossSpawn.y) : null;
     initWeather();
 }
 
@@ -1473,6 +1751,20 @@ function startGameFromLevel(level) {
 }
 
 // === COLLISION DETECTION ===
+function checkShieldPickupCollisions() {
+    for (const sp of shieldPickups) {
+        if (sp.collected) continue;
+        if (aabb(player, sp)) {
+            sp.collected = true;
+            player.hasShield = true;
+            player.shieldPulse = 0;
+            particles.push(new Particle(sp.x - 10, sp.y - 10, '🛡 ЩИТ!', '#88ccff'));
+            playSound('coin');
+        }
+    }
+    shieldPickups = shieldPickups.filter(s => !s.collected);
+}
+
 function checkSpeedBoostCollisions() {
     for (const sb of speedBoosts) {
         if (sb.collected) continue;
@@ -1678,6 +1970,8 @@ const LEVEL_THEMES = [
     { sky: ['#1a1a2e', '#2e3048', '#454060'], mountain: '#2a2a40', hill1: '#2a2a2a', hill2: '#1a1a1a', clouds: true },
     // Level 5: Volcano
     { sky: ['#1a0000', '#3d0a00', '#7a1a00'], mountain: '#5a1000', hill1: '#2a0a00', hill2: '#1a0500', clouds: false },
+    // Level 6: Boss castle — dark regal purple
+    { sky: ['#0a0020', '#1a0040', '#300060'], mountain: '#200040', hill1: '#1a0030', hill2: '#100020', clouds: false },
 ];
 
 // === BACKGROUND DRAWING ===
@@ -1901,6 +2195,16 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Shield icon in HUD (next to lives)
+    if (player.hasShield) {
+        const pulse = Math.sin(player.shieldPulse * 0.1) * 0.3 + 0.7;
+        ctx.save();
+        ctx.font = 'bold 16px monospace';
+        ctx.fillStyle = `rgba(140,210,255,${pulse})`;
+        ctx.fillText('🛡', 20, 80);
+        ctx.restore();
+    }
+
     // Mute indicator
     ctx.save();
     ctx.font = '18px monospace';
@@ -2092,7 +2396,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', '👑 БОСС'];
     if (selectedLevelIdx < unlockedLevels) {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
@@ -2141,18 +2445,50 @@ function update() {
             coins = coins.filter(c => c.update());
             starPowerups = starPowerups.filter(s => s.update());
             speedBoosts = speedBoosts.filter(s => s.update());
+            shieldPickups = shieldPickups.filter(s => s.update());
             checkStarCollisions();
             checkSpeedBoostCollisions();
+            checkShieldPickupCollisions();
             checkPlayerMarioCollisions();
             checkCoinCollisions();
             updateWeather();
+
+            // Boss update + collision
+            if (boss) {
+                const bossAlive = boss.update();
+                if (!bossAlive && !boss.isAlive && boss.deathTimer >= 90) {
+                    boss = null;
+                }
+                if (boss && boss.isAlive && player.invincibleTimer <= 0 && aabb(player, boss)) {
+                    const playerBottom = player.y + player.h;
+                    const bossTop = boss.y;
+                    const overlapY = playerBottom - bossTop;
+                    if (player.vy > 0 && overlapY < 20) {
+                        const hit = boss.hit();
+                        if (hit) {
+                            player.vy = STOMP_BOUNCE;
+                            const points = 300 * (4 - boss.hp);
+                            player.score += points;
+                            totalScore += points;
+                            comboDisplayTimer = 80;
+                            particles.push(new Particle(boss.x, boss.y - 15,
+                                boss.hp > 0 ? `💥 -1HP! +${points}` : `💀 ПОБЕДА! +${points}`, '#ff8800'));
+                            shakeTimer = 15; shakeIntensity = 6;
+                        }
+                    } else {
+                        player.die();
+                    }
+                }
+            }
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
             levelTimer++;
 
-            // Check level complete
-            if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0) {
+            // Check level complete (no marios + no boss alive)
+            const noMarios = marios.filter(m => m.isAlive).length === 0 && marios.length === 0;
+            const noBoss = !boss || !boss.isAlive;
+            if (noMarios && noBoss) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
                 const timeBonus = Math.max(0, Math.round(TIME_BONUS_MAX * (1 - elapsed / 60)));
@@ -2258,7 +2594,9 @@ function render() {
             coins.forEach(c => c.render());
             starPowerups.forEach(s => s.render());
             speedBoosts.forEach(s => s.render());
+            shieldPickups.forEach(s => s.render());
             marios.forEach(m => m.render());
+            if (boss) boss.render();
             player.render();
             particles.forEach(p => p.render());
             drawHUD();
