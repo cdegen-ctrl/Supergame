@@ -284,6 +284,10 @@ class Player extends Entity {
         this.spawnY = y;
         this.animFrame = 0;
         this.animTimer = 0;
+        // Squash & Stretch
+        this.scaleX = 1;
+        this.scaleY = 1;
+        this.wasGrounded = false;
     }
 
     update() {
@@ -302,6 +306,9 @@ class Player extends Entity {
         if (isJump() && !jumpWasPressed && this.isGrounded) {
             this.vy = PLAYER_JUMP;
             this.isGrounded = false;
+            // Stretch on jump
+            this.scaleX = 0.75;
+            this.scaleY = 1.3;
             playSound('jump');
         }
         jumpWasPressed = isJump();
@@ -338,6 +345,16 @@ class Player extends Entity {
 
         // invincibility
         if (this.invincibleTimer > 0) this.invincibleTimer--;
+
+        // Smooth squash/stretch recovery
+        this.scaleX += (1 - this.scaleX) * 0.22;
+        this.scaleY += (1 - this.scaleY) * 0.22;
+        // Stretch in air (falling fast)
+        if (!this.isGrounded && this.vy > 3) {
+            const stretch = Math.min(this.vy / MAX_FALL, 1) * 0.2;
+            this.scaleX = Math.min(this.scaleX, 1 - stretch * 0.5);
+            this.scaleY = Math.max(this.scaleY, 1 + stretch);
+        }
     }
 
     resolveCollisionsX() {
@@ -358,6 +375,11 @@ class Player extends Entity {
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
+                    // Squash on hard landing
+                    if (this.vy > 4) {
+                        this.scaleX = 1.3;
+                        this.scaleY = 0.7;
+                    }
                     this.vy = 0;
                     this.isGrounded = true;
                     if (comboCount > 0) comboCount = 0;
@@ -401,6 +423,13 @@ class Player extends Entity {
         const px = 2.5;
         const spriteW = 14 * px;
         const spriteH = 12 * px;
+        // Pivot from bottom-center for squash/stretch
+        const pivotX = this.x + this.w / 2;
+        const pivotY = this.y + this.h;
+        ctx.translate(pivotX, pivotY);
+        ctx.scale(this.scaleX, this.scaleY);
+        ctx.translate(-pivotX, -pivotY);
+
         const drawX = this.x + (this.w - spriteW) / 2;
         const drawY = this.y + (this.h - spriteH);
 
@@ -1445,6 +1474,16 @@ function update() {
             if (isEscape() && !escapeWasPressed) {
                 gameState = 'PLAYING';
             }
+            // R = restart, M = menu
+            if (keys['KeyR'] && !keys['_rWas']) {
+                startGame();
+            }
+            if (keys['KeyM'] && !keys['_mWas']) {
+                gameState = 'MENU';
+                player = null;
+            }
+            keys['_rWas'] = keys['KeyR'];
+            keys['_mWas'] = keys['KeyM'];
             break;
     }
 
@@ -1499,10 +1538,36 @@ function render() {
             player.render();
             drawHUD();
 
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
             ctx.fillRect(0, 0, W, H);
-            drawTitle("ПАУЗА", 230, 40, C.text);
-            drawTitle("ESC — Продолжить", 280, 18, '#aaaaaa');
+
+            // Pause panel
+            ctx.fillStyle = 'rgba(20,30,60,0.92)';
+            ctx.beginPath();
+            ctx.roundRect(W / 2 - 170, 150, 340, 220, 16);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(100,150,255,0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(W / 2 - 170, 150, 340, 220, 16);
+            ctx.stroke();
+
+            drawTitle('ПАУЗА', 205, 36, '#ffffff');
+            drawTitle(`Счёт: ${player.score}`, 242, 16, '#ffcc00');
+
+            // Buttons
+            const btnW = 220; const btnH = 38; const btnX = W / 2 - btnW / 2;
+            ctx.fillStyle = 'rgba(60,180,60,0.8)';
+            ctx.beginPath(); ctx.roundRect(btnX, 268, btnW, btnH, 8); ctx.fill();
+            drawTitle('ESC — Продолжить', 293, 15, '#ffffff');
+
+            ctx.fillStyle = 'rgba(200,120,30,0.8)';
+            ctx.beginPath(); ctx.roundRect(btnX, 316, btnW, btnH, 8); ctx.fill();
+            drawTitle('R — Рестарт', 341, 15, '#ffffff');
+
+            ctx.fillStyle = 'rgba(150,60,200,0.8)';
+            ctx.beginPath(); ctx.roundRect(btnX, 364, btnW - 2, btnH - 8, 8); ctx.fill();
+            drawTitle('M — В меню', 386, 15, '#ffffff');
             break;
     }
 
