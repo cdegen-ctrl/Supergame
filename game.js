@@ -83,6 +83,10 @@ function setupTouchControls() {
     bindBtn(btnJump,  'jump');
 
     // Tap on canvas to interact with menus
+    let touchStartX = 0;
+    canvas.addEventListener('touchstart', e => {
+        if (e.touches.length > 0) touchStartX = e.touches[0].clientX;
+    }, { passive: true });
     canvas.addEventListener('touchend', e => {
         e.preventDefault();
         if (gameState === 'MENU' || gameState === 'GAME_OVER') {
@@ -92,6 +96,17 @@ function setupTouchControls() {
         } else if (gameState === 'PAUSED') {
             keys['Escape'] = true;
             setTimeout(() => { keys['Escape'] = false; }, 120);
+        } else if (gameState === 'LEVEL_SELECT') {
+            const endX = e.changedTouches[0]?.clientX ?? touchStartX;
+            const dx = endX - touchStartX;
+            if (Math.abs(dx) > 30) {
+                const k = dx < 0 ? 'ArrowLeft' : 'ArrowRight';
+                keys[k] = true;
+                setTimeout(() => { keys[k] = false; }, 120);
+            } else {
+                keys['Enter'] = true;
+                setTimeout(() => { keys['Enter'] = false; }, 120);
+            }
         }
     }, { passive: false });
 }
@@ -761,8 +776,12 @@ let comboCount = 0;
 let comboDisplayTimer = 0;
 let enterWasPressed = false;
 let escapeWasPressed = false;
+let leftWasPressed = false;
+let rightWasPressed = false;
 let totalScore = 0;
 let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
+let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
+let selectedLevelIdx = 0;
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -883,10 +902,14 @@ function loadLevel(index) {
 }
 
 function startGame() {
-    currentLevel = 0;
+    startGameFromLevel(0);
+}
+
+function startGameFromLevel(level) {
+    currentLevel = level;
     totalScore = 0;
     player = null;
-    loadLevel(0);
+    loadLevel(level);
     player.lives = 3;
     player.score = 0;
     gameState = 'PLAYING';
@@ -1145,6 +1168,89 @@ function renderLevelComplete() {
     drawTitle(`Счёт: ${player.score}`, 245, 20, '#ffcc00');
 }
 
+function renderLevelSelect() {
+    drawBackground();
+
+    drawTitle('ВЫБОР УРОВНЯ', 90, 30, '#ffcc00');
+
+    const boxW = 120;
+    const boxH = 110;
+    const gap = 16;
+    const totalW = LEVELS.length * boxW + (LEVELS.length - 1) * gap;
+    const startX = (W - totalW) / 2;
+    const startY = 160;
+
+    for (let i = 0; i < LEVELS.length; i++) {
+        const bx = startX + i * (boxW + gap);
+        const by = startY;
+        const locked = i >= unlockedLevels;
+        const isSelected = i === selectedLevelIdx;
+
+        // Box shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.beginPath();
+        ctx.roundRect(bx + 3, by + 3, boxW, boxH, 10);
+        ctx.fill();
+
+        // Box background
+        if (locked) {
+            ctx.fillStyle = 'rgba(40,40,60,0.8)';
+        } else if (isSelected) {
+            ctx.fillStyle = 'rgba(80,180,80,0.85)';
+        } else {
+            ctx.fillStyle = 'rgba(60,120,200,0.75)';
+        }
+        ctx.beginPath();
+        ctx.roundRect(bx, by, boxW, boxH, 10);
+        ctx.fill();
+
+        // Selected border glow
+        if (isSelected && !locked) {
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.roundRect(bx, by, boxW, boxH, 10);
+            ctx.stroke();
+        }
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        if (locked) {
+            // Lock icon
+            ctx.font = 'bold 32px monospace';
+            ctx.fillStyle = '#888';
+            ctx.fillText('🔒', bx + boxW / 2, by + 52);
+            ctx.font = 'bold 13px monospace';
+            ctx.fillStyle = '#666';
+            ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 85);
+        } else {
+            // Level number
+            ctx.font = 'bold 40px monospace';
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`${i + 1}`, bx + boxW / 2, by + 55);
+            ctx.font = 'bold 13px monospace';
+            ctx.fillStyle = '#ddd';
+            ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 82);
+            // Stars for unlocked
+            ctx.font = '14px monospace';
+            ctx.fillStyle = '#ffdd00';
+            ctx.fillText('★ ★ ★', bx + boxW / 2, by + 102);
+        }
+        ctx.restore();
+    }
+
+    // Selected level name
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал'];
+    if (selectedLevelIdx < unlockedLevels) {
+        drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
+    }
+
+    drawTitle('← → — Выбор   ENTER — Играть   ESC — Назад', 380, 13, '#aaaaaa');
+    if (selectedLevelIdx >= unlockedLevels) {
+        drawTitle('Уровень заблокирован! Пройди предыдущий.', 405, 12, '#ff6666');
+    }
+}
+
 // === UPDATE ===
 let levelCompleteTimer = 0;
 
@@ -1153,7 +1259,25 @@ function update() {
         case 'MENU':
             if (isEnter() && !enterWasPressed) {
                 initAudio();
-                startGame();
+                selectedLevelIdx = 0;
+                gameState = 'LEVEL_SELECT';
+            }
+            break;
+
+        case 'LEVEL_SELECT':
+            if (isLeft() && !leftWasPressed && selectedLevelIdx > 0) {
+                selectedLevelIdx--;
+            }
+            if (isRight() && !rightWasPressed && selectedLevelIdx < LEVELS.length - 1) {
+                selectedLevelIdx++;
+            }
+            if (isEnter() && !enterWasPressed) {
+                if (selectedLevelIdx < unlockedLevels) {
+                    startGameFromLevel(selectedLevelIdx);
+                }
+            }
+            if (isEscape() && !escapeWasPressed) {
+                gameState = 'MENU';
             }
             break;
 
@@ -1182,6 +1306,11 @@ function update() {
             levelCompleteTimer--;
             if (levelCompleteTimer <= 0) {
                 currentLevel++;
+                // Unlock next level (up to LEVELS.length)
+                if (currentLevel < LEVELS.length && currentLevel >= unlockedLevels) {
+                    unlockedLevels = currentLevel + 1;
+                    localStorage.setItem('mushroomUnlockedLevels', String(unlockedLevels));
+                }
                 loadLevel(currentLevel);
                 gameState = 'PLAYING';
             }
@@ -1206,6 +1335,8 @@ function update() {
 
     enterWasPressed = isEnter();
     escapeWasPressed = isEscape();
+    leftWasPressed = isLeft();
+    rightWasPressed = isRight();
 }
 
 // === RENDER ===
@@ -1222,6 +1353,10 @@ function render() {
     switch (gameState) {
         case 'MENU':
             renderMenu();
+            break;
+
+        case 'LEVEL_SELECT':
+            renderLevelSelect();
             break;
 
         case 'PLAYING':
