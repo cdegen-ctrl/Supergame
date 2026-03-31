@@ -621,11 +621,11 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy' | 'shielded'
+    // type: 'normal' | 'fast' | 'jumpy' | 'shielded' | 'flying'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.speed = type === 'fast' ? speed * 1.9 : speed;
+        this.speed = type === 'fast' ? speed * 1.9 : (type === 'flying' ? speed * 1.3 : speed);
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
         this.deathTimer = 0;
@@ -636,6 +636,9 @@ class Mario extends Entity {
         this.jumpTimer = type === 'jumpy' ? 60 + Math.floor(Math.random() * 80) : 9999;
         // shielded
         this.shielded = (type === 'shielded');
+        // flying: sine wave offset
+        this.flyTimer = Math.random() * Math.PI * 2;
+        this.flyBaseY = y; // anchor Y for sine wave
     }
 
     update() {
@@ -643,6 +646,21 @@ class Mario extends Entity {
             this.deathTimer--;
             this.squishScale = Math.max(0.1, this.deathTimer / 20);
             return this.deathTimer > 0;
+        }
+
+        // Flying type: no gravity, sine wave movement
+        if (this.type === 'flying') {
+            this.flyTimer += 0.04;
+            this.vx = this.speed * this.direction;
+            this.x += this.vx;
+            this.y = this.flyBaseY + Math.sin(this.flyTimer) * 40;
+            this.animTimer++;
+            if (this.animTimer > 8) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+            if (this.x <= 0 || this.x + this.w >= W) {
+                this.direction *= -1;
+                this.x = Math.max(0, Math.min(this.x, W - this.w));
+            }
+            return true;
         }
 
         this.vx = this.speed * this.direction;
@@ -800,6 +818,32 @@ class Mario extends Entity {
             ctx.restore();
         }
 
+        // Flying type: draw animated wings
+        if (this.isAlive && this.type === 'flying') {
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h * 0.4;
+            const flapAngle = Math.sin(this.flyTimer * 2.5) * 0.4;
+            ctx.save();
+            ctx.strokeStyle = '#88bbff';
+            ctx.lineWidth = 2;
+            ctx.fillStyle = 'rgba(120,180,255,0.65)';
+            // Left wing
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.quadraticCurveTo(cx - 20, cy - 16 + flapAngle * 20, cx - 32, cy + flapAngle * 10);
+            ctx.quadraticCurveTo(cx - 18, cy + 4, cx, cy);
+            ctx.fill();
+            ctx.stroke();
+            // Right wing
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.quadraticCurveTo(cx + 20, cy - 16 + flapAngle * 20, cx + 32, cy + flapAngle * 10);
+            ctx.quadraticCurveTo(cx + 18, cy + 4, cx, cy);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
+
         // Type badge above head
         if (this.isAlive && this.type !== 'normal') {
             ctx.save();
@@ -822,6 +866,11 @@ class Mario extends Entity {
                 ctx.fillText(this.shielded ? '🛡' : '💀', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = this.shielded ? '#4488ff' : '#ff4444';
                 ctx.fillText(this.shielded ? '🛡' : '💀', badgeX, badgeY);
+            } else if (this.type === 'flying') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('✈', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#aaddff';
+                ctx.fillText('✈', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
             ctx.restore();
@@ -1351,10 +1400,14 @@ function getMarioType(levelIndex, spawnIdx) {
     if (levelIndex < 2) return 'normal';
     if (levelIndex === 2) return spawnIdx === 0 ? 'fast' : 'normal';
     if (levelIndex === 3) {
-        const types = ['normal', 'fast', 'shielded', 'jumpy', 'normal'];
+        const types = ['normal', 'fast', 'shielded', 'jumpy', 'flying'];
         return types[spawnIdx % types.length];
     }
-    const types = ['shielded', 'fast', 'jumpy', 'shielded', 'jumpy', 'fast'];
+    if (levelIndex === 4) {
+        const types = ['shielded', 'fast', 'jumpy', 'flying', 'jumpy', 'fast'];
+        return types[spawnIdx % types.length];
+    }
+    const types = ['shielded', 'fast', 'flying', 'jumpy', 'shielded', 'flying'];
     return types[spawnIdx % types.length];
 }
 
@@ -1402,6 +1455,7 @@ function loadLevel(index) {
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     starPowerups = (lvl.starSpawns || []).map(s => new StarPowerup(s.x, s.y));
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
+    initWeather();
 }
 
 function startGame() {
@@ -1525,6 +1579,90 @@ function drawShadow(x, y, w) {
     ctx.beginPath();
     ctx.ellipse(x + w / 2, y + 4, w * 0.6, 5, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+}
+
+// === WEATHER SYSTEM ===
+let weatherParticles = [];
+
+function getWeatherType(level) {
+    const themeIdx = Math.min(level, 4);
+    if (themeIdx === 3) return 'rain';   // storm level
+    if (themeIdx === 2) return 'snow';   // night level
+    if (themeIdx === 4) return 'ember';  // volcano level
+    return null;
+}
+
+function initWeather() {
+    weatherParticles = [];
+    const type = getWeatherType(currentLevel);
+    if (!type) return;
+    const count = type === 'rain' ? 60 : type === 'snow' ? 40 : 25;
+    for (let i = 0; i < count; i++) {
+        weatherParticles.push(makeWeatherParticle(type, true));
+    }
+}
+
+function makeWeatherParticle(type, randomY = false) {
+    if (type === 'rain') {
+        return { type, x: Math.random() * W, y: randomY ? Math.random() * H : -10,
+            len: 8 + Math.random() * 8, speed: 9 + Math.random() * 5, alpha: 0.2 + Math.random() * 0.3 };
+    } else if (type === 'snow') {
+        return { type, x: Math.random() * W, y: randomY ? Math.random() * H : -10,
+            r: 2 + Math.random() * 3, speed: 0.8 + Math.random() * 1.2,
+            drift: (Math.random() - 0.5) * 0.5, driftTimer: Math.random() * 60,
+            alpha: 0.4 + Math.random() * 0.5 };
+    } else { // ember
+        return { type, x: Math.random() * W, y: randomY ? Math.random() * H : H + 10,
+            r: 1 + Math.random() * 2, speed: 0.8 + Math.random() * 1.5,
+            drift: (Math.random() - 0.5) * 1.5, alpha: 0.5 + Math.random() * 0.5,
+            hue: 10 + Math.floor(Math.random() * 40) };
+    }
+}
+
+function updateWeather() {
+    const type = getWeatherType(currentLevel);
+    if (!type || weatherParticles.length === 0) return;
+    for (const p of weatherParticles) {
+        if (type === 'rain') {
+            p.y += p.speed; p.x -= p.speed * 0.25;
+            if (p.y > H + 20 || p.x < -20) { p.y = -10; p.x = Math.random() * (W + 40); }
+        } else if (type === 'snow') {
+            p.driftTimer++;
+            p.drift = Math.sin(p.driftTimer * 0.03) * 0.8;
+            p.x += p.drift; p.y += p.speed;
+            if (p.y > H + 10) { p.y = -10; p.x = Math.random() * W; }
+        } else { // ember rises
+            p.x += p.drift; p.y -= p.speed;
+            if (p.y < -10) { p.y = H + 5; p.x = Math.random() * W; }
+        }
+    }
+}
+
+function drawWeather() {
+    if (weatherParticles.length === 0) return;
+    const type = getWeatherType(currentLevel);
+    ctx.save();
+    for (const p of weatherParticles) {
+        if (type === 'rain') {
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p.x - p.len * 0.25, p.y + p.len);
+            ctx.strokeStyle = `rgba(160,210,255,${p.alpha})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        } else if (type === 'snow') {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(230,240,255,${p.alpha})`;
+            ctx.fill();
+        } else { // ember
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${p.hue},100%,65%,${p.alpha})`;
+            ctx.fill();
+        }
+    }
     ctx.restore();
 }
 
@@ -2007,6 +2145,7 @@ function update() {
             checkSpeedBoostCollisions();
             checkPlayerMarioCollisions();
             checkCoinCollisions();
+            updateWeather();
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
@@ -2114,6 +2253,7 @@ function render() {
 
         case 'PLAYING':
             drawBackground();
+            drawWeather();
             platforms.forEach(p => p.render());
             coins.forEach(c => c.render());
             starPowerups.forEach(s => s.render());
