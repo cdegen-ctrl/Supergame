@@ -1426,6 +1426,7 @@ let platforms = [];
 let particles = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
+let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
 let comboDisplayTimer = 0;
 let levelTimer = 0;       // frames elapsed in current level
@@ -1591,6 +1592,7 @@ function loadLevel(index) {
     comboCount = 0;
     comboDisplayTimer = 0;
     levelTimer = 0;
+    levelTotalMarios = marios.length;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
@@ -1720,35 +1722,87 @@ function prlx(factor) {
 }
 
 function drawBackground() {
-    // Sky gradient for 3D depth
+    // Sky gradient — changes based on level
     const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-    skyGrad.addColorStop(0, '#3060c0');
-    skyGrad.addColorStop(0.5, '#5c94fc');
-    skyGrad.addColorStop(1, '#88bbff');
+    let mountainColor, hillColorLight, hillColorDark, cloudAlpha;
+
+    if (gameState === 'PLAYING' && currentLevel >= 6) {
+        // Level 7: Night sky with stars
+        skyGrad.addColorStop(0, '#05051a');
+        skyGrad.addColorStop(0.5, '#0d0d2e');
+        skyGrad.addColorStop(1, '#161630');
+        mountainColor = '#1a1a3a';
+        hillColorLight = '#0f2010';
+        hillColorDark  = '#0a150b';
+        cloudAlpha = 0.15;
+    } else if (gameState === 'PLAYING' && currentLevel >= 4) {
+        // Levels 5-6: Dusk/Twilight
+        skyGrad.addColorStop(0, '#1a0530');
+        skyGrad.addColorStop(0.5, '#3d1060');
+        skyGrad.addColorStop(1, '#7a2060');
+        mountainColor = '#3a2060';
+        hillColorLight = '#2a1a40';
+        hillColorDark  = '#1e1030';
+        cloudAlpha = 0.25;
+    } else {
+        // Levels 1-4: Day sky
+        skyGrad.addColorStop(0, '#3060c0');
+        skyGrad.addColorStop(0.5, '#5c94fc');
+        skyGrad.addColorStop(1, '#88bbff');
+        mountainColor = '#4a6fa0';
+        hillColorLight = '#3a7c2f';
+        hillColorDark  = '#2d6025';
+        cloudAlpha = 0.85;
+    }
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, W, H);
 
+    // Night stars (level 7 only)
+    if (gameState === 'PLAYING' && currentLevel >= 6) {
+        ctx.save();
+        const starSeed = 42; // deterministic
+        for (let i = 0; i < 60; i++) {
+            const sx = ((i * 137.508 + starSeed) % W);
+            const sy = ((i * 97.31 + starSeed * 0.5) % (H * 0.65));
+            const sr = 0.5 + (i % 3) * 0.5;
+            const twinkle = 0.4 + Math.abs(Math.sin(Date.now() * 0.002 + i)) * 0.6;
+            ctx.globalAlpha = twinkle;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+
     // Distant mountains (layer 1 — slowest parallax)
     const mo = prlx(-0.04);
-    ctx.fillStyle = '#4a6fa0';
+    ctx.fillStyle = mountainColor;
     drawMountain(80 + mo, 460, 200, 180);
     drawMountain(300 + mo, 460, 280, 220);
     drawMountain(580 + mo, 460, 250, 190);
     drawMountain(750 + mo, 460, 180, 160);
 
-    // Clouds (layer 2 — medium parallax)
+    // Clouds (layer 2 — medium parallax) — dimmed at night/dusk
     const co = prlx(-0.08);
+    ctx.save();
+    ctx.globalAlpha = cloudAlpha;
     drawCloud3D(100 + co, 60, 60);
     drawCloud3D(350 + co, 90, 45);
     drawCloud3D(600 + co, 50, 55);
     drawCloud3D(750 + co, 110, 35);
+    ctx.restore();
 
     // Hills (layer 3 — fastest parallax)
     const ho = prlx(-0.14);
-    drawHill3D(100 + ho, 460, 160, 80, '#3a7c2f', '#2d6025');
-    drawHill3D(500 + ho, 460, 200, 100, '#3a7c2f', '#2d6025');
-    drawHill3D(300 + ho, 460, 140, 60, '#4a8c3f', '#3a7c2f');
-    drawHill3D(700 + ho, 460, 120, 50, '#4a8c3f', '#3a7c2f');
+    drawHill3D(100 + ho, 460, 160, 80, hillColorLight, hillColorDark);
+    drawHill3D(500 + ho, 460, 200, 100, hillColorLight, hillColorDark);
+    drawHill3D(300 + ho, 460, 140, 60,
+        gameState === 'PLAYING' && currentLevel >= 4 ? hillColorDark : '#4a8c3f',
+        gameState === 'PLAYING' && currentLevel >= 4 ? '#0a0a18'     : '#3a7c2f');
+    drawHill3D(700 + ho, 460, 120, 50,
+        gameState === 'PLAYING' && currentLevel >= 4 ? hillColorDark : '#4a8c3f',
+        gameState === 'PLAYING' && currentLevel >= 4 ? '#0a0a18'     : '#3a7c2f');
 }
 
 function drawCloud3D(x, y, size) {
@@ -1894,6 +1948,21 @@ function drawHUD() {
         ctx.fillStyle = '#fff';
         ctx.fillText('⭐ ЗВЕЗДА', W / 2, barY - 4);
         ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Enemy counter (bottom-left area)
+    if (levelTotalMarios > 0) {
+        const aliveCount = marios.filter(m => m.isAlive).length;
+        const isLast = aliveCount === 1;
+        const enemyColor = isLast ? '#ff4444' : '#ffffff';
+        const pulse = isLast ? 1 + Math.sin(Date.now() * 0.008) * 0.12 : 1;
+        ctx.save();
+        ctx.font = `bold ${Math.round(13 * pulse)}px monospace`;
+        ctx.fillStyle = '#000';
+        ctx.fillText(`ВРАГИ: ${aliveCount}/${levelTotalMarios}`, 22, H - 15);
+        ctx.fillStyle = enemyColor;
+        ctx.fillText(`ВРАГИ: ${aliveCount}/${levelTotalMarios}`, 20, H - 17);
         ctx.restore();
     }
 
