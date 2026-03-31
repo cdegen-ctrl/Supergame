@@ -576,6 +576,56 @@ class Mario extends Entity {
     }
 }
 
+// === COINS ===
+class Coin {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 16;
+        this.h = 16;
+        this.collected = false;
+        this.animTimer = Math.random() * 60; // stagger animation
+        this.bobOffset = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const bob = Math.sin(this.animTimer * 0.07 + this.bobOffset) * 3;
+        const rx = this.x;
+        const ry = this.y + bob;
+        const glow = Math.abs(Math.sin(this.animTimer * 0.05)) * 0.4 + 0.6;
+
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(rx + 8, ry + 8, 10, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 220, 0, ${glow * 0.25})`;
+        ctx.fill();
+        // Coin body
+        ctx.beginPath();
+        ctx.arc(rx + 8, ry + 8, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffcc00';
+        ctx.fill();
+        // Shine
+        ctx.beginPath();
+        ctx.arc(rx + 6, ry + 5, 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,200,0.7)';
+        ctx.fill();
+        // Dollar sign
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#b8860b';
+        ctx.fillText('$', rx + 8, ry + 12);
+        ctx.restore();
+    }
+}
+
+let coins = [];
+
 // === DEATH PARTICLES ===
 class DeathParticle {
     constructor(x, y, vx, vy, color, size) {
@@ -671,6 +721,10 @@ const LEVELS = [
         ],
         marioSpeed: 1.5,
         playerSpawn: { x: 50, y: 400 },
+        coinSpawns: [
+            { x: 230, y: 435 }, { x: 400, y: 435 }, { x: 570, y: 435 },
+            { x: 195, y: 345 }, { x: 545, y: 345 },
+        ],
     },
     {
         // Level 2: More platforms, 3 Marios
@@ -688,6 +742,10 @@ const LEVELS = [
         ],
         marioSpeed: 1.8,
         playerSpawn: { x: 50, y: 400 },
+        coinSpawns: [
+            { x: 140, y: 435 }, { x: 220, y: 435 }, { x: 490, y: 435 },
+            { x: 155, y: 345 }, { x: 395, y: 295 }, { x: 605, y: 345 },
+        ],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -708,6 +766,11 @@ const LEVELS = [
         ],
         marioSpeed: 2.0,
         playerSpawn: { x: 50, y: 400 },
+        coinSpawns: [
+            { x: 80, y: 435 }, { x: 360, y: 435 }, { x: 670, y: 435 },
+            { x: 120, y: 345 }, { x: 370, y: 305 }, { x: 620, y: 345 },
+            { x: 370, y: 195 },
+        ],
     },
     {
         // Level 4: Complex layout
@@ -732,6 +795,11 @@ const LEVELS = [
         ],
         marioSpeed: 2.2,
         playerSpawn: { x: 30, y: 400 },
+        coinSpawns: [
+            { x: 100, y: 435 }, { x: 340, y: 435 }, { x: 570, y: 435 },
+            { x: 90, y: 350 }, { x: 290, y: 315 }, { x: 470, y: 350 }, { x: 660, y: 315 },
+            { x: 260, y: 205 }, { x: 500, y: 205 },
+        ],
     },
     {
         // Level 5: The gauntlet
@@ -774,6 +842,9 @@ let shakeTimer = 0;
 let shakeIntensity = 0;
 let comboCount = 0;
 let comboDisplayTimer = 0;
+let levelTimer = 0;       // frames elapsed in current level
+const TIME_BONUS_MAX = 3000; // max bonus at 0 seconds
+const TIME_PER_FRAME = 1 / 60;
 let enterWasPressed = false;
 let escapeWasPressed = false;
 let leftWasPressed = false;
@@ -849,6 +920,15 @@ function playSound(type) {
             osc.start(now);
             osc.stop(now + 0.5);
             break;
+        case 'coin':
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, now);
+            osc.frequency.linearRampToValueAtTime(1200, now + 0.08);
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.15);
+            osc.start(now);
+            osc.stop(now + 0.15);
+            break;
     }
 }
 
@@ -899,6 +979,8 @@ function loadLevel(index) {
     particles = [];
     comboCount = 0;
     comboDisplayTimer = 0;
+    levelTimer = 0;
+    coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
 }
 
 function startGame() {
@@ -916,6 +998,20 @@ function startGameFromLevel(level) {
 }
 
 // === COLLISION DETECTION ===
+function checkCoinCollisions() {
+    for (const coin of coins) {
+        if (coin.collected) continue;
+        if (aabb(player, coin)) {
+            coin.collected = true;
+            player.score += 50;
+            totalScore += 50;
+            particles.push(new Particle(coin.x, coin.y - 5, '+50', '#ffcc00'));
+            playSound('coin');
+        }
+    }
+    coins = coins.filter(c => !c.collected);
+}
+
 function checkPlayerMarioCollisions() {
     if (player.invincibleTimer > 0) return;
 
@@ -1090,6 +1186,14 @@ function drawHUD() {
     ctx.fillText(lvlText, W - 152, 32);
     ctx.fillStyle = C.hud;
     ctx.fillText(lvlText, W - 150, 30);
+
+    // Timer
+    const secs = Math.floor(levelTimer / 60);
+    const timerColor = secs >= 50 ? '#ff4444' : secs >= 35 ? '#ffaa00' : '#ffffff';
+    ctx.fillStyle = C.textShadow;
+    ctx.fillText(`T: ${secs}s`, W - 152, 57);
+    ctx.fillStyle = timerColor;
+    ctx.fillText(`T: ${secs}s`, W - 150, 55);
 
     // High score
     if (highScore > 0) {
@@ -1285,15 +1389,26 @@ function update() {
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
+            coins = coins.filter(c => c.update());
             checkPlayerMarioCollisions();
+            checkCoinCollisions();
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
+            levelTimer++;
 
             // Check level complete
             if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0) {
+                // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
+                const elapsed = levelTimer / 60;
+                const timeBonus = Math.max(0, Math.round(TIME_BONUS_MAX * (1 - elapsed / 60)));
+                if (timeBonus > 0) {
+                    player.score += timeBonus;
+                    totalScore += timeBonus;
+                    particles.push(new Particle(W / 2 - 60, H / 2 - 60, `ВРЕМЯ +${timeBonus}`, '#00ffcc'));
+                }
                 gameState = 'LEVEL_COMPLETE';
-                levelCompleteTimer = 90;
+                levelCompleteTimer = 120;
                 playSound('levelup');
             }
 
@@ -1362,6 +1477,7 @@ function render() {
         case 'PLAYING':
             drawBackground();
             platforms.forEach(p => p.render());
+            coins.forEach(c => c.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
