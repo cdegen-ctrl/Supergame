@@ -1704,6 +1704,50 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
         speedBoostSpawns: [{ x: 640, y: 165 }],
     },
+    {
+        // Level 8: Nightmare — extreme difficulty, maximum chaos
+        platforms: [
+            { x: 0,   y: 460, w: 60,  h: 40 },
+            { x: 740, y: 460, w: 60,  h: 40 },
+            { x: 80,  y: 430, w: 60,  h: 20, moveAxis: 'x', moveRange: 80,  moveSpeed: 2.5 },
+            { x: 220, y: 400, w: 60,  h: 20, moveAxis: 'y', moveRange: 50,  moveSpeed: 2.0 },
+            { x: 360, y: 430, w: 60,  h: 20, moveAxis: 'x', moveRange: 90,  moveSpeed: 2.8 },
+            { x: 500, y: 400, w: 60,  h: 20, moveAxis: 'y', moveRange: 60,  moveSpeed: 2.2 },
+            { x: 640, y: 430, w: 60,  h: 20, moveAxis: 'x', moveRange: 70,  moveSpeed: 2.6 },
+            { x: 30,  y: 340, w: 70,  h: 20, moveAxis: 'y', moveRange: 70,  moveSpeed: 1.8 },
+            { x: 160, y: 310, w: 70,  h: 20, moveAxis: 'x', moveRange: 100, moveSpeed: 2.8 },
+            { x: 320, y: 330, w: 70,  h: 20, moveAxis: 'y', moveRange: 55,  moveSpeed: 2.0 },
+            { x: 480, y: 300, w: 70,  h: 20, moveAxis: 'x', moveRange: 80,  moveSpeed: 3.0 },
+            { x: 630, y: 330, w: 70,  h: 20, moveAxis: 'y', moveRange: 65,  moveSpeed: 2.3 },
+            { x: 80,  y: 220, w: 80,  h: 20, moveAxis: 'x', moveRange: 90,  moveSpeed: 2.5 },
+            { x: 320, y: 200, w: 80,  h: 20, moveAxis: 'y', moveRange: 50,  moveSpeed: 2.0 },
+            { x: 555, y: 215, w: 80,  h: 20, moveAxis: 'x', moveRange: 80,  moveSpeed: 2.7 },
+            { x: 250, y: 110, w: 300, h: 20 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 },
+            { x: 750, y: 430 },
+            { x: 100, y: 390 },
+            { x: 370, y: 390 },
+            { x: 650, y: 390 },
+            { x: 170, y: 270 },
+            { x: 490, y: 260 },
+            { x: 330, y: 165 },
+            { x: 510, y: 165 },
+        ],
+        marioSpeed: 3.5,
+        playerSpawn: { x: 10, y: 430 },
+        coinSpawns: [
+            { x: 100, y: 405 }, { x: 240, y: 375 }, { x: 380, y: 405 }, { x: 520, y: 375 },
+            { x: 50,  y: 315 }, { x: 180, y: 285 }, { x: 340, y: 305 }, { x: 500, y: 275 },
+            { x: 100, y: 195 }, { x: 340, y: 175 }, { x: 580, y: 190 },
+            { x: 310, y: 85  }, { x: 450, y: 85  },
+        ],
+        starSpawns: [{ x: 350, y: 85 }, { x: 600, y: 190 }],
+        bombSpawns: [{ x: 200, y: 285 }, { x: 555, y: 270 }],
+        springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
+        speedBoostSpawns: [{ x: 360, y: 175 }],
+    },
 ];
 
 // === GAME STATE ===
@@ -1727,6 +1771,7 @@ let leftWasPressed = false;
 let rightWasPressed = false;
 let totalScore = 0;
 let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
+let hudScoreDisplay = 0; // animated score counter
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
 let soundMuted = false;
@@ -1862,6 +1907,10 @@ function getMarioType(levelIndex, spawnIdx) {
         const types = ['armored', 'fast', 'jumpy', 'armored', 'fast', 'jumpy'];
         return types[spawnIdx % types.length];
     }
+    if (levelIndex >= 7) {
+        const types = ['armored', 'armored', 'fast', 'jumpy', 'armored', 'fast', 'jumpy', 'armored', 'fast'];
+        return types[spawnIdx % types.length];
+    }
     const types = ['armored', 'fast', 'jumpy', 'fast', 'armored', 'fast'];
     return types[spawnIdx % types.length];
 }
@@ -1902,6 +1951,7 @@ function loadLevel(index) {
     comboCount = 0;
     comboDisplayTimer = 0;
     levelTimer = 0;
+    hudScoreDisplay = 0;
     levelTotalMarios = marios.length;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
@@ -2040,7 +2090,7 @@ function drawBackground() {
     let mountainColor, hillColorLight, hillColorDark, cloudAlpha;
 
     if (gameState === 'PLAYING' && currentLevel >= 6) {
-        // Level 7: Night sky with stars
+        // Level 7-8: Night sky with stars
         skyGrad.addColorStop(0, '#05051a');
         skyGrad.addColorStop(0.5, '#0d0d2e');
         skyGrad.addColorStop(1, '#161630');
@@ -2190,11 +2240,12 @@ function drawHill3D(x, baseY, width, height, colorLight, colorDark) {
 function drawHUD() {
     ctx.font = 'bold 16px monospace';
 
-    // Score
+    // Score (animated display)
+    const scoreShown = Math.floor(hudScoreDisplay);
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(`SCORE: ${player.score}`, 22, 32);
+    ctx.fillText(`SCORE: ${scoreShown}`, 22, 32);
     ctx.fillStyle = C.hud;
-    ctx.fillText(`SCORE: ${player.score}`, 20, 30);
+    ctx.fillText(`SCORE: ${scoreShown}`, 20, 30);
 
     // Lives — heart icons
     for (let i = 0; i < 3; i++) {
@@ -2486,7 +2537,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар'];
     if (selectedLevelIdx < unlockedLevels) {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
@@ -2533,7 +2584,7 @@ function renderLevelTransition() {
         ctx.save();
         ctx.globalAlpha = alpha;
         drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
-        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос'];
+        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар'];
         const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
         drawTitle(name, H / 2 + 50, 20, '#aaffaa');
         ctx.restore();
@@ -2611,6 +2662,10 @@ function update() {
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
             levelTimer++;
+            // Animate HUD score display
+            if (hudScoreDisplay < player.score) {
+                hudScoreDisplay = Math.min(player.score, hudScoreDisplay + Math.max(1, (player.score - hudScoreDisplay) * 0.18));
+            }
 
             // Mute toggle with M key (only when not paused)
             if (keys['KeyM'] && !keys['_muteWas']) {
