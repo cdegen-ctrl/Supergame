@@ -571,12 +571,20 @@ class Player extends Entity {
         const drawX = this.x + (this.w - spriteW) / 2;
         const drawY = this.y + (this.h - spriteH);
 
+        // Build a color-customized sprite copy
+        const mc = getMushroomColors();
+        const coloredSprite = MUSHROOM_SPRITE.map(row => row.map(cell => {
+            if (cell === C.mushroomCap) return mc.cap;
+            if (cell === C.mushroomCapLight) return mc.capLight;
+            return cell;
+        }));
+
         if (!this.facingRight) {
             ctx.translate(drawX + spriteW, drawY);
             ctx.scale(-1, 1);
-            drawPixelSprite(0, 0, px, MUSHROOM_SPRITE);
+            drawPixelSprite(0, 0, px, coloredSprite);
         } else {
-            drawPixelSprite(drawX, drawY, px, MUSHROOM_SPRITE);
+            drawPixelSprite(drawX, drawY, px, coloredSprite);
         }
         ctx.restore();
     }
@@ -1424,6 +1432,12 @@ class Particle {
     }
 }
 
+// === RUN STATISTICS ===
+let runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0 };
+function resetRunStats() {
+    runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0 };
+}
+
 // === ACHIEVEMENT SYSTEM ===
 const achievementDefs = [
     { id: 'firstStomp',   label: '🦶 Первый стомп!',       desc: 'Раздавь первого Марио' },
@@ -1776,6 +1790,17 @@ let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || 
 let selectedLevelIdx = 0;
 let soundMuted = false;
 
+// === MUSHROOM COLOR CUSTOMIZATION ===
+const MUSHROOM_COLORS = [
+    { name: 'Красный',   cap: '#e02020', capLight: '#ff4444' },
+    { name: 'Синий',     cap: '#2060e0', capLight: '#4488ff' },
+    { name: 'Зелёный',   cap: '#20a030', capLight: '#44cc55' },
+    { name: 'Жёлтый',    cap: '#ccaa00', capLight: '#ffdd22' },
+    { name: 'Фиолетовый',cap: '#9020c0', capLight: '#cc55ee' },
+];
+let mushroomColorIdx = parseInt(localStorage.getItem('mushroomColorIdx') || '0');
+function getMushroomColors() { return MUSHROOM_COLORS[mushroomColorIdx % MUSHROOM_COLORS.length]; }
+
 // === LEADERBOARD (top-3) ===
 function loadLeaderboard() {
     try {
@@ -1964,6 +1989,7 @@ function loadLevel(index) {
 
 function startGame() {
     resetAchievements();
+    resetRunStats();
     startGameFromLevel(0);
 }
 
@@ -1987,6 +2013,7 @@ function checkCoinCollisions() {
             player.score += 50;
             totalScore += 50;
             totalCoinsCollectedRun++;
+            runStats.coinsCollected++;
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
             particles.push(new Particle(coin.x, coin.y - 5, '+50', '#ffcc00'));
             playSound('coin');
@@ -2031,8 +2058,10 @@ function checkPlayerMarioCollisions() {
             const killed = mario.stomp();
             player.vy = STOMP_BOUNCE;
             if (killed) {
+                runStats.enemiesKilled++;
                 unlockAchievement('firstStomp');
                 comboCount++;
+                if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
                 if (comboCount >= 5) unlockAchievement('comboMaster');
                 const multiplier = comboCount;
                 const points = 100 * multiplier;
@@ -2453,7 +2482,38 @@ function renderGameOver() {
         ctx.restore();
     }
 
-    drawTitle("ENTER — Играть снова", H - 50, 18, C.text);
+    // Run statistics panel
+    ctx.save();
+    const panelX = W / 2 - 160;
+    const panelY = board.length > 0 ? 255 + board.length * 28 + 40 : 260;
+    const statData = [
+        ['⚔️', 'Убито врагов', runStats.enemiesKilled],
+        ['💰', 'Монет собрано', runStats.coinsCollected],
+        ['🔥', 'Макс. комбо',   runStats.maxCombo],
+        ['🏁', 'Уровней пройдено', runStats.levelsCleared],
+    ];
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, 320, statData.length * 24 + 24, 10);
+    ctx.fill();
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#aaddff';
+    ctx.fillText('📊 СТАТИСТИКА', W / 2, panelY + 16);
+    statData.forEach(([icon, label, val], i) => {
+        const sy = panelY + 16 + (i + 1) * 24;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#cccccc';
+        ctx.fillText(`${icon} ${label}:`, panelX + 12, sy);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#ffee88';
+        ctx.fillText(String(val), panelX + 308, sy);
+    });
+    ctx.textAlign = 'left';
+    ctx.restore();
+
+    drawTitle("ENTER — Играть снова", H - 20, 18, C.text);
 }
 
 function renderLevelComplete() {
@@ -2546,6 +2606,42 @@ function renderLevelSelect() {
     if (selectedLevelIdx >= unlockedLevels) {
         drawTitle('Уровень заблокирован! Пройди предыдущий.', 405, 12, '#ff6666');
     }
+
+    // Mushroom color selector
+    ctx.save();
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('ЦВЕТ ГРИБА:', W / 2, 430);
+    const dotR = 14;
+    const dotSpacing = 36;
+    const dotsStartX = W / 2 - (MUSHROOM_COLORS.length - 1) * dotSpacing / 2;
+    MUSHROOM_COLORS.forEach((col, i) => {
+        const dx = dotsStartX + i * dotSpacing;
+        const dy = 448;
+        // Selected ring
+        if (i === mushroomColorIdx) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(dx, dy, dotR + 3, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.fillStyle = col.cap;
+        ctx.beginPath();
+        ctx.arc(dx, dy, dotR, 0, Math.PI * 2);
+        ctx.fill();
+        // Dot highlight
+        ctx.fillStyle = col.capLight;
+        ctx.beginPath();
+        ctx.arc(dx - 4, dy - 4, 4, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#888888';
+    ctx.fillText('Z / X — смена цвета', W / 2, 475);
+    ctx.textAlign = 'left';
+    ctx.restore();
 }
 
 // === LEVEL TRANSITION ===
@@ -2619,6 +2715,17 @@ function update() {
             if (isEscape() && !escapeWasPressed) {
                 gameState = 'MENU';
             }
+            // Z / X — cycle mushroom color
+            if (keys['KeyZ'] && !keys['_zWas']) {
+                mushroomColorIdx = (mushroomColorIdx - 1 + MUSHROOM_COLORS.length) % MUSHROOM_COLORS.length;
+                localStorage.setItem('mushroomColorIdx', String(mushroomColorIdx));
+            }
+            if (keys['KeyX'] && !keys['_xWas']) {
+                mushroomColorIdx = (mushroomColorIdx + 1) % MUSHROOM_COLORS.length;
+                localStorage.setItem('mushroomColorIdx', String(mushroomColorIdx));
+            }
+            keys['_zWas'] = keys['KeyZ'];
+            keys['_xWas'] = keys['KeyX'];
             break;
 
         case 'PLAYING':
@@ -2696,6 +2803,7 @@ function update() {
         case 'LEVEL_COMPLETE':
             levelCompleteTimer--;
             if (levelCompleteTimer <= 0) {
+                runStats.levelsCleared++;
                 currentLevel++;
                 // Unlock next level (up to LEVELS.length)
                 if (currentLevel < LEVELS.length && currentLevel >= unlockedLevels) {
