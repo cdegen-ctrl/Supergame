@@ -1063,6 +1063,7 @@ function checkStarCollisions() {
         if (aabb(player, star)) {
             star.collected = true;
             player.starTimer = STAR_DURATION;
+            unlockAchievement('starPower');
             particles.push(new Particle(star.x, star.y - 10, '⭐ ЗВЕЗДА!', '#ffff00'));
             playSound('levelup');
         }
@@ -1148,6 +1149,70 @@ class Particle {
         ctx.fillText(this.text, this.x, this.y);
         ctx.restore();
     }
+}
+
+// === ACHIEVEMENT SYSTEM ===
+const achievementDefs = [
+    { id: 'firstStomp',   label: '🦶 Первый стомп!',       desc: 'Раздавь первого Марио' },
+    { id: 'starPower',    label: '⭐ Звёздная мощь!',      desc: 'Подбери звезду' },
+    { id: 'comboMaster',  label: '🔥 Комбо-мастер!',       desc: 'Combo x5' },
+    { id: 'coinCollector',label: '💰 Коллекционер!',       desc: 'Собери 10 монет за игру' },
+    { id: 'shieldUser',   label: '🛡 Непробиваемый!',      desc: 'Щит поглотил удар' },
+];
+
+const achievementUnlocked = {};
+let achievementToasts = []; // { label, timer }
+let totalCoinsCollectedRun = 0;
+
+function resetAchievements() {
+    Object.keys(achievementUnlocked).forEach(k => delete achievementUnlocked[k]);
+    achievementToasts = [];
+    totalCoinsCollectedRun = 0;
+}
+
+function unlockAchievement(id) {
+    if (achievementUnlocked[id]) return;
+    achievementUnlocked[id] = true;
+    const def = achievementDefs.find(d => d.id === id);
+    if (def) {
+        achievementToasts.push({ label: def.label, timer: 180 });
+        playSound('levelup');
+    }
+}
+
+function updateAchievementToasts() {
+    achievementToasts = achievementToasts.filter(t => {
+        t.timer--;
+        return t.timer > 0;
+    });
+}
+
+function renderAchievementToasts() {
+    if (achievementToasts.length === 0) return;
+    ctx.save();
+    achievementToasts.forEach((toast, i) => {
+        const alpha = toast.timer < 40 ? toast.timer / 40 : toast.timer > 160 ? (180 - toast.timer) / 20 : 1;
+        const y = 85 + i * 38;
+        const tw = 220;
+        const tx = W / 2 - tw / 2;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = 'rgba(10, 20, 40, 0.88)';
+        ctx.beginPath();
+        ctx.roundRect(tx, y, tw, 30, 8);
+        ctx.fill();
+        ctx.strokeStyle = '#ffcc44';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(tx, y, tw, 30, 8);
+        ctx.stroke();
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffee88';
+        ctx.fillText(toast.label, W / 2, y + 20);
+        ctx.textAlign = 'left';
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore();
 }
 
 // === LEVEL DATA ===
@@ -1533,6 +1598,7 @@ function loadLevel(index) {
 }
 
 function startGame() {
+    resetAchievements();
     startGameFromLevel(0);
 }
 
@@ -1555,6 +1621,8 @@ function checkCoinCollisions() {
             coin.collected = true;
             player.score += 50;
             totalScore += 50;
+            totalCoinsCollectedRun++;
+            if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
             particles.push(new Particle(coin.x, coin.y - 5, '+50', '#ffcc00'));
             playSound('coin');
         }
@@ -1598,7 +1666,9 @@ function checkPlayerMarioCollisions() {
             const killed = mario.stomp();
             player.vy = STOMP_BOUNCE;
             if (killed) {
+                unlockAchievement('firstStomp');
                 comboCount++;
+                if (comboCount >= 5) unlockAchievement('comboMaster');
                 const multiplier = comboCount;
                 const points = 100 * multiplier;
                 player.score += points;
@@ -1622,6 +1692,7 @@ function checkPlayerMarioCollisions() {
                 player.shieldActive = false;
                 player.shieldBreakTimer = 20;
                 player.invincibleTimer = 60;
+                unlockAchievement('shieldUser');
                 particles.push(new Particle(player.x, player.y - 10, '🛡 ЩИТ!', '#4488ff'));
                 playSound('hurt');
             } else {
@@ -2023,6 +2094,49 @@ function renderLevelSelect() {
     }
 }
 
+// === LEVEL TRANSITION ===
+let levelTransitionTimer = 0;
+const TRANSITION_HALF = 40; // frames for curtain to close / open
+const TRANSITION_HOLD = 30; // frames to hold "УРОВЕНЬ X" text
+const TRANSITION_TOTAL = TRANSITION_HALF * 2 + TRANSITION_HOLD;
+
+function renderLevelTransition() {
+    // Draw frozen gameplay beneath
+    drawBackground();
+    renderWeather();
+    platforms.forEach(p => p.render());
+    marios.forEach(m => m.render());
+    if (player) player.render();
+
+    const t = levelTransitionTimer;
+    let curtain; // 0 = open, 1 = fully closed
+    if (t <= TRANSITION_HALF) {
+        curtain = t / TRANSITION_HALF;
+    } else if (t <= TRANSITION_HALF + TRANSITION_HOLD) {
+        curtain = 1;
+    } else {
+        curtain = 1 - (t - TRANSITION_HALF - TRANSITION_HOLD) / TRANSITION_HALF;
+    }
+
+    // Draw curtain bars (top half sweeps down, bottom half sweeps up)
+    const barH = H / 2 * curtain;
+    ctx.fillStyle = '#0a0a18';
+    ctx.fillRect(0, 0, W, barH);
+    ctx.fillRect(0, H - barH, W, barH);
+
+    // Level label appears only when curtain is fully closed
+    if (curtain > 0.95) {
+        const alpha = Math.min((curtain - 0.95) / 0.05, 1);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
+        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос'];
+        const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
+        drawTitle(name, H / 2 + 50, 20, '#aaffaa');
+        ctx.restore();
+    }
+}
+
 // === UPDATE ===
 let levelCompleteTimer = 0;
 
@@ -2083,6 +2197,7 @@ function update() {
             checkStarCollisions();
             checkShieldCollisions();
             updateWeather();
+            updateAchievementToasts();
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
@@ -2105,7 +2220,7 @@ function update() {
                     particles.push(new Particle(W / 2 - 60, H / 2 - 60, `ВРЕМЯ +${timeBonus}`, '#00ffcc'));
                 }
                 gameState = 'LEVEL_COMPLETE';
-                levelCompleteTimer = 120;
+                levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
             }
 
@@ -2124,6 +2239,14 @@ function update() {
                     localStorage.setItem('mushroomUnlockedLevels', String(unlockedLevels));
                 }
                 loadLevel(currentLevel);
+                gameState = 'LEVEL_TRANSITION';
+                levelTransitionTimer = 0;
+            }
+            break;
+
+        case 'LEVEL_TRANSITION':
+            levelTransitionTimer++;
+            if (levelTransitionTimer >= TRANSITION_TOTAL) {
                 gameState = 'PLAYING';
             }
             break;
@@ -2192,10 +2315,15 @@ function render() {
             player.render();
             particles.forEach(p => p.render());
             drawHUD();
+            renderAchievementToasts();
             break;
 
         case 'LEVEL_COMPLETE':
             renderLevelComplete();
+            break;
+
+        case 'LEVEL_TRANSITION':
+            renderLevelTransition();
             break;
 
         case 'GAME_OVER':
