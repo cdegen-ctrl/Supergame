@@ -204,6 +204,33 @@ class Entity {
 }
 
 class Platform extends Entity {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed) {
+        super(x, y, w, h);
+        // Moving platform support
+        this.moveAxis = moveAxis || null;   // 'x' | 'y' | null
+        this.moveRange = moveRange || 0;
+        this.moveSpeed = moveSpeed || 0;
+        this.moveOrigin = moveAxis === 'x' ? x : y;
+        this.moveDir = 1;
+        this._prevX = x;
+        this._prevY = y;
+    }
+
+    update() {
+        if (!this.moveAxis) return;
+        this._prevX = this.x;
+        this._prevY = this.y;
+        if (this.moveAxis === 'x') {
+            this.x += this.moveSpeed * this.moveDir;
+            if (this.x > this.moveOrigin + this.moveRange) { this.x = this.moveOrigin + this.moveRange; this.moveDir = -1; }
+            if (this.x < this.moveOrigin - this.moveRange) { this.x = this.moveOrigin - this.moveRange; this.moveDir = 1; }
+        } else {
+            this.y += this.moveSpeed * this.moveDir;
+            if (this.y > this.moveOrigin + this.moveRange) { this.y = this.moveOrigin + this.moveRange; this.moveDir = -1; }
+            if (this.y < this.moveOrigin - this.moveRange) { this.y = this.moveOrigin - this.moveRange; this.moveDir = 1; }
+        }
+    }
+
     render() {
         const d = DEPTH_3D;
 
@@ -281,6 +308,18 @@ class Platform extends Entity {
         ctx.moveTo(this.x, this.y + 1);
         ctx.lineTo(this.x + this.w, this.y + 1);
         ctx.stroke();
+
+        // Moving platform indicator (glowing arrows)
+        if (this.moveAxis) {
+            ctx.save();
+            ctx.globalAlpha = 0.75;
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffee55';
+            const label = this.moveAxis === 'x' ? '↔' : '↕';
+            ctx.fillText(label, this.x + this.w / 2, this.y + this.h / 2 + 4);
+            ctx.restore();
+        }
     }
 }
 
@@ -304,6 +343,8 @@ class Player extends Entity {
         this.jumpCount = 0;
         this.canDoubleJump = false;
         this.doubleJumpFlash = 0;
+        // Star power-up
+        this.starTimer = 0;
     }
 
     update() {
@@ -372,6 +413,8 @@ class Player extends Entity {
 
         // invincibility
         if (this.invincibleTimer > 0) this.invincibleTimer--;
+        // star power-up timer
+        if (this.starTimer > 0) this.starTimer--;
 
         // Smooth squash/stretch recovery
         this.scaleX += (1 - this.scaleX) * 0.22;
@@ -446,6 +489,20 @@ class Player extends Entity {
     render() {
         // blink when invincible
         if (this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0) return;
+
+        // Star power rainbow aura
+        if (this.starTimer > 0) {
+            const hue = (this.starTimer * 6) % 360;
+            const alpha = this.starTimer < 120 ? (this.starTimer / 120) * 0.8 : 0.8;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = `hsl(${hue}, 100%, 65%)`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2, this.w * 0.7, this.h * 0.7, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
 
         // Double jump ring flash
         if (this.doubleJumpFlash > 0) {
@@ -700,6 +757,72 @@ class Coin {
 
 let coins = [];
 
+// === STAR POWER-UP ===
+const STAR_DURATION = 600; // 10 seconds at 60fps
+
+class Star {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.collected = false;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.8 + Math.sin(t * 0.12) * 0.2;
+        const hue = (t * 3) % 360;
+
+        ctx.save();
+        // Rainbow glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${hue}, 100%, 60%, 0.3)`;
+        ctx.fill();
+        // Draw 5-pointed star
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+            const angle = (Math.PI / 5) * i - Math.PI / 2;
+            const r = i % 2 === 0 ? 9 * pulse : 4.5 * pulse;
+            const px = cx + Math.cos(angle) * r;
+            const py = cy + Math.sin(angle) * r;
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fillStyle = `hsl(${hue}, 100%, 70%)`;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+let stars = [];
+
+function checkStarCollisions() {
+    for (const star of stars) {
+        if (star.collected) continue;
+        if (aabb(player, star)) {
+            star.collected = true;
+            player.starTimer = STAR_DURATION;
+            particles.push(new Particle(star.x, star.y - 10, '⭐ ЗВЕЗДА!', '#ffff00'));
+            playSound('levelup');
+        }
+    }
+    stars = stars.filter(s => !s.collected);
+}
+
 // === DEATH PARTICLES ===
 class DeathParticle {
     constructor(x, y, vx, vy, color, size) {
@@ -845,19 +968,20 @@ const LEVELS = [
             { x: 120, y: 345 }, { x: 370, y: 305 }, { x: 620, y: 345 },
             { x: 370, y: 195 },
         ],
+        starSpawns: [{ x: 380, y: 290 }],
     },
     {
-        // Level 4: Complex layout
+        // Level 4: Complex layout with moving platforms
         platforms: [
             { x: 0, y: 460, w: 160, h: 40 },
             { x: 240, y: 460, w: 160, h: 40 },
             { x: 480, y: 460, w: 160, h: 40 },
             { x: 680, y: 460, w: 120, h: 40 },
             { x: 50, y: 375, w: 120, h: 20 },
-            { x: 250, y: 340, w: 120, h: 20 },
+            { x: 250, y: 340, w: 120, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.2 },
             { x: 440, y: 375, w: 120, h: 20 },
-            { x: 620, y: 340, w: 120, h: 20 },
-            { x: 200, y: 230, w: 160, h: 20 },
+            { x: 620, y: 340, w: 120, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.5 },
+            { x: 200, y: 230, w: 160, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 0.8 },
             { x: 460, y: 230, w: 160, h: 20 },
         ],
         marioSpawns: [
@@ -874,22 +998,23 @@ const LEVELS = [
             { x: 90, y: 350 }, { x: 290, y: 315 }, { x: 470, y: 350 }, { x: 660, y: 315 },
             { x: 260, y: 205 }, { x: 500, y: 205 },
         ],
+        starSpawns: [{ x: 530, y: 205 }],
     },
     {
-        // Level 5: The gauntlet
+        // Level 5: The gauntlet with moving platforms
         platforms: [
             { x: 0, y: 460, w: 120, h: 40 },
             { x: 180, y: 460, w: 120, h: 40 },
             { x: 360, y: 460, w: 120, h: 40 },
             { x: 540, y: 460, w: 120, h: 40 },
             { x: 700, y: 460, w: 100, h: 40 },
-            { x: 80, y: 380, w: 100, h: 20 },
+            { x: 80, y: 380, w: 100, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.4 },
             { x: 260, y: 355, w: 100, h: 20 },
-            { x: 440, y: 380, w: 100, h: 20 },
+            { x: 440, y: 380, w: 100, h: 20, moveAxis: 'x', moveRange: 70, moveSpeed: 1.6 },
             { x: 620, y: 355, w: 100, h: 20 },
-            { x: 160, y: 260, w: 140, h: 20 },
-            { x: 380, y: 230, w: 140, h: 20 },
-            { x: 560, y: 260, w: 140, h: 20 },
+            { x: 160, y: 260, w: 140, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.0 },
+            { x: 380, y: 230, w: 140, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.3 },
+            { x: 560, y: 260, w: 140, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 0.9 },
             { x: 300, y: 130, w: 200, h: 20 },
         ],
         marioSpawns: [
@@ -902,6 +1027,7 @@ const LEVELS = [
         ],
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
+        starSpawns: [{ x: 380, y: 185 }],
     },
 ];
 
@@ -1024,7 +1150,7 @@ function loadLevel(index) {
     const lvl = LEVELS[lvlIndex];
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed));
 
     const speed = lvl.marioSpeed * speedMult;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
@@ -1056,6 +1182,7 @@ function loadLevel(index) {
     comboDisplayTimer = 0;
     levelTimer = 0;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
+    stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
 }
 
 function startGame() {
@@ -1066,6 +1193,7 @@ function startGameFromLevel(level) {
     currentLevel = level;
     totalScore = 0;
     player = null;
+    stars = [];
     loadLevel(level);
     player.lives = 3;
     player.score = 0;
@@ -1088,11 +1216,30 @@ function checkCoinCollisions() {
 }
 
 function checkPlayerMarioCollisions() {
-    if (player.invincibleTimer > 0) return;
+    if (player.invincibleTimer > 0 && player.starTimer <= 0) return;
 
     for (const mario of marios) {
         if (!mario.isAlive) continue;
         if (!aabb(player, mario)) continue;
+
+        // Star power: kill on any contact
+        if (player.starTimer > 0) {
+            mario.stomp();
+            comboCount++;
+            const points = 100 * comboCount;
+            player.score += points;
+            totalScore += points;
+            comboDisplayTimer = 100;
+            const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
+            const pColor = comboColors[Math.min(comboCount - 1, 4)];
+            const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
+            particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+            shakeTimer = Math.min(6 + comboCount, 12);
+            shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            continue;
+        }
+
+        if (player.invincibleTimer > 0) continue;
 
         // Stomp: player is falling and above mario
         const playerBottom = player.y + player.h;
@@ -1296,6 +1443,27 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Star power-up timer bar
+    if (player && player.starTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68;
+        const frac = player.starTimer / STAR_DURATION;
+        const hue = (player.starTimer * 6) % 360;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `hsl(${hue}, 100%, 55%)`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('⭐ ЗВЕЗДА', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Mute icon (bottom-right, clickable area)
     ctx.save();
     ctx.font = '18px monospace';
@@ -1481,12 +1649,32 @@ function update() {
             break;
 
         case 'PLAYING':
+            // Update moving platforms before entities so positions are current
+            platforms.forEach(p => p.update());
+            // Carry player on moving platform
+            for (const p of platforms) {
+                if (!p.moveAxis) continue;
+                const dx = p.x - p._prevX;
+                const dy = p.y - p._prevY;
+                if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+                    // Check if player is standing on this platform
+                    const feet = player.y + player.h;
+                    const onTop = feet >= p.y - 2 && feet <= p.y + 4 &&
+                                  player.x + player.w > p.x && player.x < p.x + p.w;
+                    if (onTop) {
+                        player.x += dx;
+                        player.y += dy;
+                    }
+                }
+            }
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
             coins = coins.filter(c => c.update());
+            stars = stars.filter(s => s.update());
             checkPlayerMarioCollisions();
             checkCoinCollisions();
+            checkStarCollisions();
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
@@ -1589,6 +1777,7 @@ function render() {
             drawBackground();
             platforms.forEach(p => p.render());
             coins.forEach(c => c.render());
+            stars.forEach(s => s.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
