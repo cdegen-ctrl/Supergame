@@ -333,6 +333,7 @@ class Player extends Entity {
         this.scaleY = 1;
         this.wasGrounded = false;
         this.doubleJumped = false;
+        this.starTimer = 0;
     }
 
     update() {
@@ -410,6 +411,8 @@ class Player extends Entity {
 
         // invincibility
         if (this.invincibleTimer > 0) this.invincibleTimer--;
+        // star power
+        if (this.starTimer > 0) this.starTimer--;
 
         // Smooth squash/stretch recovery
         this.scaleX += (1 - this.scaleX) * 0.22;
@@ -480,11 +483,23 @@ class Player extends Entity {
     }
 
     render() {
-        // blink when invincible
-        if (this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0) return;
+        // blink when invincible (but not during star — star has its own effect)
+        if (this.invincibleTimer > 0 && this.starTimer <= 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0) return;
 
         // 3D shadow
         drawShadow(this.x, this.y + this.h, this.w);
+
+        // Star power rainbow glow
+        if (this.starTimer > 0) {
+            const hue = (Date.now() / 8) % 360;
+            const alpha = Math.min(1, this.starTimer / 30) * 0.65;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(this.x + this.w / 2, this.y + this.h / 2, this.w * 0.9, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${hue},100%,60%,${alpha})`;
+            ctx.fill();
+            ctx.restore();
+        }
 
         ctx.save();
         const px = 2.5;
@@ -721,6 +736,58 @@ class Coin {
 }
 
 let coins = [];
+let starPowerups = [];
+
+// === STAR POWER-UP ===
+const STAR_DURATION = 300; // 5 seconds at 60fps
+
+class StarPowerup {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.collected = false;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const bob = Math.sin(this.animTimer * 0.08) * 4;
+        const glow = Math.abs(Math.sin(this.animTimer * 0.06)) * 0.5 + 0.5;
+        const rx = this.x;
+        const ry = this.y + bob;
+
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(rx + 10, ry + 10, 16, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,230,0,${glow * 0.3})`;
+        ctx.fill();
+
+        // Draw 5-point star
+        ctx.beginPath();
+        const cx2 = rx + 10, cy2 = ry + 10;
+        const outerR = 10, innerR = 4;
+        for (let i = 0; i < 10; i++) {
+            const angle = (i * Math.PI / 5) - Math.PI / 2 + this.animTimer * 0.03;
+            const r = i % 2 === 0 ? outerR : innerR;
+            if (i === 0) ctx.moveTo(cx2 + r * Math.cos(angle), cy2 + r * Math.sin(angle));
+            else ctx.lineTo(cx2 + r * Math.cos(angle), cy2 + r * Math.sin(angle));
+        }
+        ctx.closePath();
+        ctx.fillStyle = '#ffe000';
+        ctx.fill();
+        ctx.strokeStyle = '#ffaa00';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+    }
+}
 
 // === DEATH PARTICLES ===
 class DeathParticle {
@@ -821,6 +888,7 @@ const LEVELS = [
             { x: 230, y: 435 }, { x: 400, y: 435 }, { x: 570, y: 435 },
             { x: 195, y: 345 }, { x: 545, y: 345 },
         ],
+        starSpawns: [{ x: 390, y: 430 }],
     },
     {
         // Level 2: More platforms, 3 Marios
@@ -842,6 +910,7 @@ const LEVELS = [
             { x: 140, y: 435 }, { x: 220, y: 435 }, { x: 490, y: 435 },
             { x: 155, y: 345 }, { x: 395, y: 295 }, { x: 605, y: 345 },
         ],
+        starSpawns: [{ x: 390, y: 295 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -869,6 +938,7 @@ const LEVELS = [
             { x: 120, y: 345 }, { x: 370, y: 305 }, { x: 620, y: 345 },
             { x: 370, y: 195 },
         ],
+        starSpawns: [{ x: 390, y: 185 }],
     },
     {
         // Level 4: Complex layout
@@ -900,6 +970,7 @@ const LEVELS = [
             { x: 90, y: 350 }, { x: 290, y: 315 }, { x: 470, y: 350 }, { x: 660, y: 315 },
             { x: 260, y: 205 }, { x: 500, y: 205 },
         ],
+        starSpawns: [{ x: 650, y: 305 }],
     },
     {
         // Level 5: The gauntlet
@@ -930,6 +1001,7 @@ const LEVELS = [
         ],
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
+        starSpawns: [{ x: 380, y: 110 }],
     },
 ];
 
@@ -1108,6 +1180,7 @@ function loadLevel(index) {
     comboDisplayTimer = 0;
     levelTimer = 0;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
+    starPowerups = (lvl.starSpawns || []).map(s => new StarPowerup(s.x, s.y));
 }
 
 function startGame() {
@@ -1125,6 +1198,36 @@ function startGameFromLevel(level) {
 }
 
 // === COLLISION DETECTION ===
+function checkStarCollisions() {
+    for (const star of starPowerups) {
+        if (star.collected) continue;
+        if (aabb(player, star)) {
+            star.collected = true;
+            player.starTimer = STAR_DURATION;
+            player.invincibleTimer = STAR_DURATION;
+            particles.push(new Particle(star.x - 10, star.y - 10, '⭐ НЕУЯЗВИМОСТЬ!', '#ffe000'));
+            playSound('levelup');
+        }
+    }
+    starPowerups = starPowerups.filter(s => !s.collected);
+
+    // Star kills enemies on touch
+    if (player.starTimer > 0) {
+        for (const mario of marios) {
+            if (!mario.isAlive) continue;
+            if (aabb(player, mario)) {
+                mario.stomp();
+                comboCount++;
+                const points = 100 * comboCount;
+                player.score += points;
+                totalScore += points;
+                comboDisplayTimer = 100;
+                particles.push(new Particle(mario.x, mario.y - 10, `⭐ +${points}`, '#ffe000'));
+            }
+        }
+    }
+}
+
 function checkCoinCollisions() {
     for (const coin of coins) {
         if (coin.collected) continue;
@@ -1184,6 +1287,20 @@ function drawShadow(x, y, w) {
     ctx.restore();
 }
 
+// === BACKGROUND THEMES ===
+const LEVEL_THEMES = [
+    // Level 1: Classic day
+    { sky: ['#3060c0', '#5c94fc', '#88bbff'], mountain: '#4a6fa0', hill1: '#3a7c2f', hill2: '#2d6025', clouds: true },
+    // Level 2: Sunset
+    { sky: ['#9b3a00', '#e87030', '#ffc080'], mountain: '#8b3020', hill1: '#5a4020', hill2: '#3a2010', clouds: true },
+    // Level 3: Night
+    { sky: ['#05091a', '#0a1540', '#0d1e5e'], mountain: '#1a2050', hill1: '#1a3a1a', hill2: '#102810', clouds: false },
+    // Level 4: Storm
+    { sky: ['#1a1a2e', '#2e3048', '#454060'], mountain: '#2a2a40', hill1: '#2a2a2a', hill2: '#1a1a1a', clouds: true },
+    // Level 5: Volcano
+    { sky: ['#1a0000', '#3d0a00', '#7a1a00'], mountain: '#5a1000', hill1: '#2a0a00', hill2: '#1a0500', clouds: false },
+];
+
 // === BACKGROUND DRAWING ===
 // Parallax offset based on player position
 function prlx(factor) {
@@ -1192,35 +1309,87 @@ function prlx(factor) {
 }
 
 function drawBackground() {
-    // Sky gradient for 3D depth
+    const themeIdx = Math.min(currentLevel, LEVEL_THEMES.length - 1);
+    const theme = LEVEL_THEMES[themeIdx];
+
+    // Sky gradient
     const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-    skyGrad.addColorStop(0, '#3060c0');
-    skyGrad.addColorStop(0.5, '#5c94fc');
-    skyGrad.addColorStop(1, '#88bbff');
+    skyGrad.addColorStop(0, theme.sky[0]);
+    skyGrad.addColorStop(0.5, theme.sky[1]);
+    skyGrad.addColorStop(1, theme.sky[2]);
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, W, H);
 
-    // Distant mountains (layer 1 — slowest parallax)
+    // Night: draw moon
+    if (!theme.clouds) {
+        const mo2 = prlx(-0.02);
+        if (themeIdx === 2) {
+            // Night moon
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(650 + mo2, 80, 35, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffc0';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(665 + mo2, 72, 30, 0, Math.PI * 2);
+            ctx.fillStyle = theme.sky[1];
+            ctx.fill();
+            ctx.restore();
+            // Stars (static)
+            ctx.save();
+            ctx.fillStyle = 'rgba(255,255,200,0.8)';
+            const starPositions = [[50,30],[120,70],[250,20],[400,50],[550,30],[700,60],[760,20],[80,120],[320,100]];
+            for (const [sx, sy] of starPositions) {
+                ctx.beginPath();
+                ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        } else if (themeIdx === 4) {
+            // Volcano: lava glow at bottom + embers
+            const lavaGrad = ctx.createLinearGradient(0, 380, 0, H);
+            lavaGrad.addColorStop(0, 'rgba(200,50,0,0)');
+            lavaGrad.addColorStop(1, 'rgba(255,120,0,0.35)');
+            ctx.fillStyle = lavaGrad;
+            ctx.fillRect(0, 380, W, H - 380);
+        }
+    }
+
+    // Distant mountains
     const mo = prlx(-0.04);
-    ctx.fillStyle = '#4a6fa0';
+    ctx.fillStyle = theme.mountain;
     drawMountain(80 + mo, 460, 200, 180);
     drawMountain(300 + mo, 460, 280, 220);
     drawMountain(580 + mo, 460, 250, 190);
     drawMountain(750 + mo, 460, 180, 160);
 
-    // Clouds (layer 2 — medium parallax)
-    const co = prlx(-0.08);
-    drawCloud3D(100 + co, 60, 60);
-    drawCloud3D(350 + co, 90, 45);
-    drawCloud3D(600 + co, 50, 55);
-    drawCloud3D(750 + co, 110, 35);
+    // Clouds (skip for night/volcano)
+    if (theme.clouds) {
+        const co = prlx(-0.08);
+        const cloudAlpha = themeIdx === 3 ? 0.4 : 0.85; // darker for storm
+        ctx.save();
+        ctx.globalAlpha = cloudAlpha;
+        drawCloud3D(100 + co, 60, 60);
+        drawCloud3D(350 + co, 90, 45);
+        drawCloud3D(600 + co, 50, 55);
+        drawCloud3D(750 + co, 110, 35);
+        ctx.restore();
 
-    // Hills (layer 3 — fastest parallax)
+        // Storm: lightning flash
+        if (themeIdx === 3 && Math.random() < 0.002) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(200,200,255,0.15)';
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+        }
+    }
+
+    // Hills
     const ho = prlx(-0.14);
-    drawHill3D(100 + ho, 460, 160, 80, '#3a7c2f', '#2d6025');
-    drawHill3D(500 + ho, 460, 200, 100, '#3a7c2f', '#2d6025');
-    drawHill3D(300 + ho, 460, 140, 60, '#4a8c3f', '#3a7c2f');
-    drawHill3D(700 + ho, 460, 120, 50, '#4a8c3f', '#3a7c2f');
+    drawHill3D(100 + ho, 460, 160, 80, theme.hill1, theme.hill2);
+    drawHill3D(500 + ho, 460, 200, 100, theme.hill1, theme.hill2);
+    drawHill3D(300 + ho, 460, 140, 60, theme.hill1, theme.hill2);
+    drawHill3D(700 + ho, 460, 120, 50, theme.hill1, theme.hill2);
 }
 
 function drawCloud3D(x, y, size) {
@@ -1328,6 +1497,17 @@ function drawHUD() {
         ctx.fillText(`HI: ${highScore}`, W / 2 - 38, 32);
         ctx.fillStyle = '#ffcc00';
         ctx.fillText(`HI: ${highScore}`, W / 2 - 40, 30);
+    }
+
+    // Star power indicator
+    if (player.starTimer > 0) {
+        const hue = (Date.now() / 8) % 360;
+        ctx.save();
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `hsl(${hue},100%,60%)`;
+        ctx.fillText(`⭐ ${Math.ceil(player.starTimer / 60)}s`, W / 2, 55);
+        ctx.restore();
     }
 
     // Mute indicator
@@ -1568,6 +1748,8 @@ function update() {
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
             coins = coins.filter(c => c.update());
+            starPowerups = starPowerups.filter(s => s.update());
+            checkStarCollisions();
             checkPlayerMarioCollisions();
             checkCoinCollisions();
 
@@ -1679,6 +1861,7 @@ function render() {
             drawBackground();
             platforms.forEach(p => p.render());
             coins.forEach(c => c.render());
+            starPowerups.forEach(s => s.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
