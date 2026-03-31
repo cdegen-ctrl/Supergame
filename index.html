@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mushroom's Revenge</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+        }
+        canvas {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            border: 3px solid #333;
+            border-radius: 4px;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #mobile-controls {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: none;
+            pointer-events: none;
+        }
+        .ctrl-btn {
+            position: absolute;
+            width: 13%;
+            aspect-ratio: 1;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 5vw;
+            color: rgba(255, 255, 255, 0.75);
+            pointer-events: all;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            transition: background 0.08s;
+        }
+        .ctrl-btn.pressed {
+            background: rgba(255, 255, 255, 0.38);
+        }
+        #btn-left  { bottom: 4%; left: 3%; }
+        #btn-right { bottom: 4%; left: 18%; }
+        #btn-jump  {
+            bottom: 4%; right: 3%;
+            width: 15%;
+            background: rgba(80, 180, 255, 0.18);
+            border-color: rgba(80, 180, 255, 0.45);
+            color: rgba(80, 200, 255, 0.9);
+        }
+        #btn-jump.pressed { background: rgba(80, 180, 255, 0.42); }
+
+        @media (pointer: coarse) {
+            #mobile-controls { display: block; }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div id="mobile-controls">
+            <div id="btn-left"  class="ctrl-btn">&#9664;</div>
+            <div id="btn-right" class="ctrl-btn">&#9654;</div>
+            <div id="btn-jump"  class="ctrl-btn">&#9650;</div>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
