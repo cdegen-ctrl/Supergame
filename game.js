@@ -345,6 +345,9 @@ class Player extends Entity {
         this.doubleJumpFlash = 0;
         // Star power-up
         this.starTimer = 0;
+        // Shield power-up
+        this.shieldActive = false;
+        this.shieldBreakTimer = 0;
     }
 
     update() {
@@ -415,6 +418,8 @@ class Player extends Entity {
         if (this.invincibleTimer > 0) this.invincibleTimer--;
         // star power-up timer
         if (this.starTimer > 0) this.starTimer--;
+        // shield break animation timer
+        if (this.shieldBreakTimer > 0) this.shieldBreakTimer--;
 
         // Smooth squash/stretch recovery
         this.scaleX += (1 - this.scaleX) * 0.22;
@@ -501,6 +506,31 @@ class Player extends Entity {
             ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2, this.w * 0.7, this.h * 0.7, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // Shield glow
+        if (this.shieldActive) {
+            const pulse = 0.85 + Math.sin(Date.now() * 0.006) * 0.15;
+            ctx.save();
+            ctx.strokeStyle = `rgba(80, 140, 255, ${0.7 * pulse})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2, this.w * 0.65 * pulse, this.h * 0.65 * pulse, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+        // Shield break flash
+        if (this.shieldBreakTimer > 0) {
+            const alpha = this.shieldBreakTimer / 20;
+            const r = (1 - alpha) * 40 + 16;
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.8;
+            ctx.strokeStyle = '#4488ff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r, 0, Math.PI * 2);
             ctx.stroke();
             ctx.restore();
         }
@@ -700,6 +730,31 @@ class Mario extends Entity {
         }
         ctx.restore();
 
+        // Armored overlay: grey helmet drawn over sprite
+        if (this.isAlive && this.armor > 0) {
+            ctx.save();
+            ctx.globalAlpha = 0.7;
+            const helmetX = this.x + this.w * 0.1;
+            const helmetY = this.y;
+            const helmetW = this.w * 0.8;
+            const helmetH = this.h * 0.45;
+            // Helmet dome
+            ctx.fillStyle = '#888899';
+            ctx.beginPath();
+            ctx.ellipse(helmetX + helmetW / 2, helmetY + helmetH * 0.55, helmetW / 2, helmetH * 0.55, 0, Math.PI, 0);
+            ctx.fill();
+            // Helmet visor
+            ctx.fillStyle = '#445566';
+            ctx.fillRect(helmetX + helmetW * 0.1, helmetY + helmetH * 0.45, helmetW * 0.8, helmetH * 0.25);
+            // Highlight
+            ctx.globalAlpha = 0.35;
+            ctx.fillStyle = '#ccddff';
+            ctx.beginPath();
+            ctx.ellipse(helmetX + helmetW * 0.38, helmetY + helmetH * 0.2, helmetW * 0.2, helmetH * 0.15, -0.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
         // Type badge above head
         if (this.isAlive && this.type !== 'normal') {
             ctx.save();
@@ -717,6 +772,11 @@ class Mario extends Entity {
                 ctx.fillText('↑', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#44aaff';
                 ctx.fillText('↑', badgeX, badgeY);
+            } else if (this.type === 'armored') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('🛡', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#aabbcc';
+                ctx.fillText('🛡', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
             ctx.restore();
@@ -844,6 +904,79 @@ class Star {
 }
 
 let stars = [];
+
+// === SHIELD POWER-UP ===
+class Shield {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 18;
+        this.h = 20;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.1) * 0.1;
+
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(60, 120, 255, 0.3)';
+        ctx.fill();
+        // Shield body (hexagonal)
+        ctx.fillStyle = '#3366ff';
+        ctx.strokeStyle = '#88aaff';
+        ctx.lineWidth = 2;
+        const r = 9 * pulse;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - r);
+        ctx.lineTo(cx + r * 0.75, cy - r * 0.5);
+        ctx.lineTo(cx + r * 0.75, cy + r * 0.5);
+        ctx.lineTo(cx, cy + r);
+        ctx.lineTo(cx - r * 0.75, cy + r * 0.5);
+        ctx.lineTo(cx - r * 0.75, cy - r * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // Shine
+        ctx.fillStyle = 'rgba(180, 210, 255, 0.5)';
+        ctx.beginPath();
+        ctx.ellipse(cx - 2, cy - 2, 2.5, 4, -0.3, 0, Math.PI * 2);
+        ctx.fill();
+        // Label
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('🛡', cx, cy + 3);
+        ctx.restore();
+    }
+}
+
+let shields = [];
+
+function checkShieldCollisions() {
+    for (const sh of shields) {
+        if (sh.collected) continue;
+        if (aabb(player, sh)) {
+            sh.collected = true;
+            player.shieldActive = true;
+            particles.push(new Particle(sh.x, sh.y - 10, '🛡 ЩИТ!', '#4488ff'));
+            playSound('levelup');
+        }
+    }
+    shields = shields.filter(s => !s.collected);
+}
 
 // === WEATHER SYSTEM ===
 let weatherParticles = [];
@@ -1057,6 +1190,7 @@ const LEVELS = [
             { x: 140, y: 435 }, { x: 220, y: 435 }, { x: 490, y: 435 },
             { x: 155, y: 345 }, { x: 395, y: 295 }, { x: 605, y: 345 },
         ],
+        shieldSpawns: [{ x: 600, y: 435 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -1083,6 +1217,7 @@ const LEVELS = [
             { x: 370, y: 195 },
         ],
         starSpawns: [{ x: 380, y: 290 }],
+        shieldSpawns: [{ x: 620, y: 345 }],
     },
     {
         // Level 4: Complex layout with moving platforms
@@ -1142,6 +1277,7 @@ const LEVELS = [
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
         starSpawns: [{ x: 380, y: 185 }],
+        shieldSpawns: [{ x: 90, y: 350 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -1343,10 +1479,14 @@ function getMarioType(levelIndex, spawnIdx) {
     if (levelIndex < 2) return 'normal';
     if (levelIndex === 2) return spawnIdx === 0 ? 'fast' : 'normal';
     if (levelIndex === 3) {
-        const types = ['normal', 'fast', 'jumpy', 'normal', 'normal'];
+        const types = ['normal', 'fast', 'jumpy', 'armored', 'normal'];
         return types[spawnIdx % types.length];
     }
-    const types = ['normal', 'fast', 'jumpy', 'fast', 'jumpy', 'fast'];
+    if (levelIndex === 4) {
+        const types = ['armored', 'fast', 'jumpy', 'armored', 'fast', 'jumpy'];
+        return types[spawnIdx % types.length];
+    }
+    const types = ['armored', 'fast', 'jumpy', 'fast', 'armored', 'fast'];
     return types[spawnIdx % types.length];
 }
 
@@ -1388,6 +1528,7 @@ function loadLevel(index) {
     levelTimer = 0;
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
+    shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     initWeather(index);
 }
 
@@ -1476,8 +1617,16 @@ function checkPlayerMarioCollisions() {
                 shakeIntensity = 3;
             }
         } else {
-            // Side hit — damage
-            player.die();
+            // Side hit
+            if (player.shieldActive) {
+                player.shieldActive = false;
+                player.shieldBreakTimer = 20;
+                player.invincibleTimer = 60;
+                particles.push(new Particle(player.x, player.y - 10, '🛡 ЩИТ!', '#4488ff'));
+                playSound('hurt');
+            } else {
+                player.die();
+            }
         }
     }
 }
@@ -1928,9 +2077,11 @@ function update() {
             particles = particles.filter(p => p.update());
             coins = coins.filter(c => c.update());
             stars = stars.filter(s => s.update());
+            shields = shields.filter(s => s.update());
             checkPlayerMarioCollisions();
             checkCoinCollisions();
             checkStarCollisions();
+            checkShieldCollisions();
             updateWeather();
 
             if (shakeTimer > 0) shakeTimer--;
@@ -2036,6 +2187,7 @@ function render() {
             platforms.forEach(p => p.render());
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
+            shields.forEach(s => s.render());
             marios.forEach(m => m.render());
             player.render();
             particles.forEach(p => p.render());
