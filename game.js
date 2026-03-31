@@ -401,15 +401,19 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    constructor(x, y, speed) {
+    // type: 'normal' | 'fast' | 'jumpy'
+    constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
-        this.speed = speed;
+        this.type = type;
+        this.speed = type === 'fast' ? speed * 1.9 : speed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
         this.deathTimer = 0;
         this.squishScale = 1;
         this.animFrame = 0;
         this.animTimer = 0;
+        // jumpy: timer until next jump
+        this.jumpTimer = type === 'jumpy' ? 60 + Math.floor(Math.random() * 80) : 9999;
     }
 
     update() {
@@ -439,6 +443,15 @@ class Mario extends Entity {
 
         // check edge - reverse direction if about to walk off a platform
         this.checkEdge();
+
+        // jumpy type: periodic jump
+        if (this.type === 'jumpy') {
+            this.jumpTimer--;
+            if (this.jumpTimer <= 0 && this.vy >= 0 && this.vy <= GRAVITY * 2) {
+                this.vy = -11;
+                this.jumpTimer = 90 + Math.floor(Math.random() * 80);
+            }
+        }
 
         // reverse if hitting canvas bounds
         if (this.x <= 0 || this.x + this.w >= W) {
@@ -523,6 +536,28 @@ class Mario extends Entity {
             drawPixelSprite(0, 0, px, MARIO_SPRITE);
         }
         ctx.restore();
+
+        // Type badge above head
+        if (this.isAlive && this.type !== 'normal') {
+            ctx.save();
+            ctx.font = 'bold 12px monospace';
+            ctx.textAlign = 'center';
+            const badgeX = this.x + this.w / 2;
+            const badgeY = this.y - 4;
+            if (this.type === 'fast') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('⚡', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#ff6600';
+                ctx.fillText('⚡', badgeX, badgeY);
+            } else if (this.type === 'jumpy') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('↑', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#44aaff';
+                ctx.fillText('↑', badgeX, badgeY);
+            }
+            ctx.textAlign = 'left';
+            ctx.restore();
+        }
     }
 }
 
@@ -799,6 +834,17 @@ function playSound(type) {
 }
 
 // === LEVEL MANAGEMENT ===
+function getMarioType(levelIndex, spawnIdx) {
+    if (levelIndex < 2) return 'normal';
+    if (levelIndex === 2) return spawnIdx === 0 ? 'fast' : 'normal';
+    if (levelIndex === 3) {
+        const types = ['normal', 'fast', 'jumpy', 'normal', 'normal'];
+        return types[spawnIdx % types.length];
+    }
+    const types = ['normal', 'fast', 'jumpy', 'fast', 'jumpy', 'fast'];
+    return types[spawnIdx % types.length];
+}
+
 function loadLevel(index) {
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
     const lvl = LEVELS[lvlIndex];
@@ -807,14 +853,14 @@ function loadLevel(index) {
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h));
 
     const speed = lvl.marioSpeed * speedMult;
-    marios = lvl.marioSpawns.map(s => new Mario(s.x, s.y, speed));
+    marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
 
     // Extra Marios for levels beyond 5
     if (index >= LEVELS.length) {
         const extraCount = Math.floor((index - LEVELS.length) / 2);
         for (let i = 0; i < extraCount; i++) {
             const spawn = lvl.marioSpawns[i % lvl.marioSpawns.length];
-            marios.push(new Mario(spawn.x + 40, spawn.y, speed * 1.1));
+            marios.push(new Mario(spawn.x + 40, spawn.y, speed * 1.1, 'fast'));
         }
     }
 
@@ -893,6 +939,12 @@ function drawShadow(x, y, w) {
 }
 
 // === BACKGROUND DRAWING ===
+// Parallax offset based on player position
+function prlx(factor) {
+    if (!player) return 0;
+    return (player.x - W / 2) * factor;
+}
+
 function drawBackground() {
     // Sky gradient for 3D depth
     const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
@@ -902,24 +954,27 @@ function drawBackground() {
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, W, H);
 
-    // Distant mountains (3D depth layer)
+    // Distant mountains (layer 1 — slowest parallax)
+    const mo = prlx(-0.04);
     ctx.fillStyle = '#4a6fa0';
-    drawMountain(80, 460, 200, 180);
-    drawMountain(300, 460, 280, 220);
-    drawMountain(580, 460, 250, 190);
-    drawMountain(750, 460, 180, 160);
+    drawMountain(80 + mo, 460, 200, 180);
+    drawMountain(300 + mo, 460, 280, 220);
+    drawMountain(580 + mo, 460, 250, 190);
+    drawMountain(750 + mo, 460, 180, 160);
 
-    // Clouds with 3D shadow
-    drawCloud3D(100, 60, 60);
-    drawCloud3D(350, 90, 45);
-    drawCloud3D(600, 50, 55);
-    drawCloud3D(750, 110, 35);
+    // Clouds (layer 2 — medium parallax)
+    const co = prlx(-0.08);
+    drawCloud3D(100 + co, 60, 60);
+    drawCloud3D(350 + co, 90, 45);
+    drawCloud3D(600 + co, 50, 55);
+    drawCloud3D(750 + co, 110, 35);
 
-    // Hills with 3D shading
-    drawHill3D(100, 460, 160, 80, '#3a7c2f', '#2d6025');
-    drawHill3D(500, 460, 200, 100, '#3a7c2f', '#2d6025');
-    drawHill3D(300, 460, 140, 60, '#4a8c3f', '#3a7c2f');
-    drawHill3D(700, 460, 120, 50, '#4a8c3f', '#3a7c2f');
+    // Hills (layer 3 — fastest parallax)
+    const ho = prlx(-0.14);
+    drawHill3D(100 + ho, 460, 160, 80, '#3a7c2f', '#2d6025');
+    drawHill3D(500 + ho, 460, 200, 100, '#3a7c2f', '#2d6025');
+    drawHill3D(300 + ho, 460, 140, 60, '#4a8c3f', '#3a7c2f');
+    drawHill3D(700 + ho, 460, 120, 50, '#4a8c3f', '#3a7c2f');
 }
 
 function drawCloud3D(x, y, size) {
