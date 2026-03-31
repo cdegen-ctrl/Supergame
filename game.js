@@ -191,7 +191,11 @@ class Entity {
     }
 }
 
+// Moving platform helper — finds platform under entity feet and carries it
+let movingPlatforms = [];
+
 class Platform extends Entity {
+    update() { /* static — nothing */ }
     render() {
         const d = DEPTH_3D;
 
@@ -269,6 +273,46 @@ class Platform extends Entity {
         ctx.moveTo(this.x, this.y + 1);
         ctx.lineTo(this.x + this.w, this.y + 1);
         ctx.stroke();
+    }
+}
+
+class MovingPlatform extends Platform {
+    constructor(x, y, w, h, minX, maxX, speed) {
+        super(x, y, w, h);
+        this.minX = minX;
+        this.maxX = maxX;
+        this.speed = speed;
+        this.direction = 1;
+    }
+
+    update() {
+        const prevX = this.x;
+        this.x += this.speed * this.direction;
+        if (this.x <= this.minX) { this.x = this.minX; this.direction = 1; }
+        if (this.x + this.w >= this.maxX) { this.x = this.maxX - this.w; this.direction = -1; }
+        const dx = this.x - prevX;
+
+        // Carry player if standing on this platform
+        if (player && player.isGrounded) {
+            const playerBottom = player.y + player.h;
+            const onTop = playerBottom >= this.y - 2 && playerBottom <= this.y + 4;
+            const overlapX = player.x + player.w > this.x && player.x < this.x + this.w;
+            if (onTop && overlapX) {
+                player.x += dx;
+                player.x = Math.max(0, Math.min(player.x, W - player.w));
+            }
+        }
+    }
+
+    render() {
+        super.render();
+        // Arrow indicator showing movement direction
+        ctx.save();
+        ctx.fillStyle = 'rgba(255,255,100,0.75)';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(this.direction > 0 ? '→' : '←', this.x + this.w / 2, this.y - 5);
+        ctx.restore();
     }
 }
 
@@ -421,6 +465,7 @@ class Player extends Entity {
                 localStorage.setItem('mushroomHighScore', String(highScore));
             }
             gameState = 'GAME_OVER';
+            submitScore(totalScore);
             playSound('gameover');
         } else {
             this.x = this.spawnX;
@@ -805,9 +850,11 @@ const LEVELS = [
             { x: 280, y: 460, w: 240, h: 40 },
             { x: 600, y: 460, w: 200, h: 40 },
             { x: 80, y: 370, w: 150, h: 20 },
-            { x: 320, y: 330, w: 160, h: 20 },
             { x: 570, y: 370, w: 150, h: 20 },
             { x: 300, y: 220, w: 200, h: 20 },
+        ],
+        movingPlatforms: [
+            { x: 280, y: 330, w: 130, h: 20, minX: 200, maxX: 570, speed: 1.2 },
         ],
         marioSpawns: [
             { x: 50, y: 420 },
@@ -831,11 +878,13 @@ const LEVELS = [
             { x: 480, y: 460, w: 160, h: 40 },
             { x: 680, y: 460, w: 120, h: 40 },
             { x: 50, y: 375, w: 120, h: 20 },
-            { x: 250, y: 340, w: 120, h: 20 },
             { x: 440, y: 375, w: 120, h: 20 },
             { x: 620, y: 340, w: 120, h: 20 },
             { x: 200, y: 230, w: 160, h: 20 },
             { x: 460, y: 230, w: 160, h: 20 },
+        ],
+        movingPlatforms: [
+            { x: 220, y: 340, w: 120, h: 20, minX: 160, maxX: 440, speed: 1.5 },
         ],
         marioSpawns: [
             { x: 50, y: 420 },
@@ -861,13 +910,15 @@ const LEVELS = [
             { x: 540, y: 460, w: 120, h: 40 },
             { x: 700, y: 460, w: 100, h: 40 },
             { x: 80, y: 380, w: 100, h: 20 },
-            { x: 260, y: 355, w: 100, h: 20 },
             { x: 440, y: 380, w: 100, h: 20 },
-            { x: 620, y: 355, w: 100, h: 20 },
             { x: 160, y: 260, w: 140, h: 20 },
-            { x: 380, y: 230, w: 140, h: 20 },
             { x: 560, y: 260, w: 140, h: 20 },
             { x: 300, y: 130, w: 200, h: 20 },
+        ],
+        movingPlatforms: [
+            { x: 240, y: 355, w: 100, h: 20, minX: 180, maxX: 440, speed: 1.8 },
+            { x: 580, y: 355, w: 100, h: 20, minX: 440, maxX: 720, speed: 1.8 },
+            { x: 340, y: 230, w: 120, h: 20, minX: 160, maxX: 560, speed: 2.0 },
         ],
         marioSpawns: [
             { x: 200, y: 420 },
@@ -906,6 +957,25 @@ let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
 let soundMuted = false;
+
+// Top-5 leaderboard
+function loadLeaderboard() {
+    try {
+        return JSON.parse(localStorage.getItem('mushroomLeaderboard') || '[]');
+    } catch { return []; }
+}
+function saveLeaderboard(scores) {
+    localStorage.setItem('mushroomLeaderboard', JSON.stringify(scores));
+}
+function submitScore(score) {
+    if (score <= 0) return;
+    const scores = loadLeaderboard();
+    scores.push(score);
+    scores.sort((a, b) => b - a);
+    const top5 = scores.slice(0, 5);
+    saveLeaderboard(top5);
+    return top5;
+}
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -1003,6 +1073,10 @@ function loadLevel(index) {
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h));
+    movingPlatforms = (lvl.movingPlatforms || []).map(
+        p => new MovingPlatform(p.x, p.y, p.w, p.h, p.minX, p.maxX, p.speed)
+    );
+    platforms = platforms.concat(movingPlatforms);
 
     const speed = lvl.marioSpeed * speedMult;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
@@ -1319,14 +1393,52 @@ function renderMenu() {
 function renderGameOver() {
     drawBackground();
 
-    drawTitle("GAME OVER", 170, 42, '#ff4444');
-    drawTitle(`Счёт: ${totalScore}`, 220, 22, '#ffcc00');
+    drawTitle("GAME OVER", 155, 42, '#ff4444');
+    drawTitle(`Счёт: ${totalScore}`, 200, 22, '#ffcc00');
 
-    if (totalScore >= highScore && highScore > 0) {
-        drawTitle("НОВЫЙ РЕКОРД!", 255, 20, '#00ff00');
+    const leaderboard = loadLeaderboard();
+    const isNewRecord = leaderboard.length > 0 && leaderboard[0] === totalScore && totalScore > 0;
+    if (isNewRecord) {
+        drawTitle("🏆 НОВЫЙ РЕКОРД!", 230, 20, '#00ff00');
     }
 
-    drawTitle("ENTER — Играть снова", 350, 18, C.text);
+    // Leaderboard panel
+    const panelX = W / 2 - 130;
+    const panelY = 250;
+    const panelW = 260;
+    const panelH = 160;
+    ctx.fillStyle = 'rgba(10,20,50,0.82)';
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, panelW, panelH, 12);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,220,0,0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, panelW, panelH, 12);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffcc00';
+    ctx.fillText('ТОП-5 РЕКОРДОВ', W / 2, panelY + 22);
+
+    ctx.font = '13px monospace';
+    const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
+    if (leaderboard.length === 0) {
+        ctx.fillStyle = '#888';
+        ctx.fillText('Нет записей', W / 2, panelY + 55);
+    } else {
+        for (let i = 0; i < Math.min(leaderboard.length, 5); i++) {
+            const y = panelY + 42 + i * 22;
+            const isCurrentScore = leaderboard[i] === totalScore && i === leaderboard.indexOf(totalScore);
+            ctx.fillStyle = isCurrentScore ? '#00ff88' : '#dddddd';
+            ctx.fillText(`${medals[i]}  ${leaderboard[i]}`, W / 2, y);
+        }
+    }
+    ctx.restore();
+
+    drawTitle("ENTER — Играть снова  |  ESC — Меню", 425, 14, C.text);
 }
 
 function renderLevelComplete() {
@@ -1451,6 +1563,7 @@ function update() {
             break;
 
         case 'PLAYING':
+            movingPlatforms.forEach(p => p.update());
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
@@ -1503,6 +1616,13 @@ function update() {
                     localStorage.setItem('mushroomHighScore', String(highScore));
                 }
                 startGame();
+            }
+            if (isEscape() && !escapeWasPressed) {
+                if (totalScore > highScore) {
+                    highScore = totalScore;
+                    localStorage.setItem('mushroomHighScore', String(highScore));
+                }
+                gameState = 'MENU';
             }
             break;
 
