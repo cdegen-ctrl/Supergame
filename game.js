@@ -52,10 +52,56 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-function isLeft() { return keys['ArrowLeft'] || keys['KeyA']; }
-function isRight() { return keys['ArrowRight'] || keys['KeyD']; }
-function isJump() { return keys['ArrowUp'] || keys['KeyW'] || keys['Space']; }
-function isEnter() { return keys['Enter']; }
+// === TOUCH INPUT ===
+const touchKeys = { left: false, right: false, jump: false };
+
+function setupTouchControls() {
+    const btnLeft  = document.getElementById('btn-left');
+    const btnRight = document.getElementById('btn-right');
+    const btnJump  = document.getElementById('btn-jump');
+    if (!btnLeft || !btnRight || !btnJump) return;
+
+    function bindBtn(btn, key) {
+        btn.addEventListener('touchstart', e => {
+            e.preventDefault();
+            touchKeys[key] = true;
+            btn.classList.add('pressed');
+        }, { passive: false });
+        btn.addEventListener('touchend', e => {
+            e.preventDefault();
+            touchKeys[key] = false;
+            btn.classList.remove('pressed');
+        }, { passive: false });
+        btn.addEventListener('touchcancel', () => {
+            touchKeys[key] = false;
+            btn.classList.remove('pressed');
+        });
+    }
+
+    bindBtn(btnLeft,  'left');
+    bindBtn(btnRight, 'right');
+    bindBtn(btnJump,  'jump');
+
+    // Tap on canvas to interact with menus
+    canvas.addEventListener('touchend', e => {
+        e.preventDefault();
+        if (gameState === 'MENU' || gameState === 'GAME_OVER') {
+            initAudio();
+            keys['Enter'] = true;
+            setTimeout(() => { keys['Enter'] = false; }, 120);
+        } else if (gameState === 'PAUSED') {
+            keys['Escape'] = true;
+            setTimeout(() => { keys['Escape'] = false; }, 120);
+        }
+    }, { passive: false });
+}
+
+window.addEventListener('DOMContentLoaded', setupTouchControls);
+
+function isLeft()   { return keys['ArrowLeft']  || keys['KeyA'] || touchKeys.left; }
+function isRight()  { return keys['ArrowRight'] || keys['KeyD'] || touchKeys.right; }
+function isJump()   { return keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchKeys.jump; }
+function isEnter()  { return keys['Enter']; }
 function isEscape() { return keys['Escape']; }
 
 // === UTILITY ===
@@ -310,6 +356,10 @@ class Player extends Entity {
     die() {
         this.lives--;
         if (this.lives <= 0) {
+            if (totalScore > highScore) {
+                highScore = totalScore;
+                localStorage.setItem('mushroomHighScore', String(highScore));
+            }
             gameState = 'GAME_OVER';
             playSound('gameover');
         } else {
@@ -622,7 +672,7 @@ let shakeIntensity = 0;
 let enterWasPressed = false;
 let escapeWasPressed = false;
 let totalScore = 0;
-let highScore = 0;
+let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -932,8 +982,9 @@ function renderMenu() {
     drawPixelSprite(sx, 240, px, MUSHROOM_SPRITE);
     ctx.restore();
 
-    drawTitle("ENTER — Начать", 400, 18, C.text);
+    drawTitle("ENTER / Нажми — Начать", 400, 18, C.text);
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 430, 13, '#aaaaaa');
+    drawTitle("На мобильном: кнопки ◀ ▶ ▲", 455, 12, '#888888');
 }
 
 function renderGameOver() {
@@ -1000,7 +1051,10 @@ function update() {
 
         case 'GAME_OVER':
             if (isEnter() && !enterWasPressed) {
-                if (totalScore > highScore) highScore = totalScore;
+                if (totalScore > highScore) {
+                    highScore = totalScore;
+                    localStorage.setItem('mushroomHighScore', String(highScore));
+                }
                 startGame();
             }
             break;
