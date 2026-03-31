@@ -113,6 +113,18 @@ function setupTouchControls() {
 
 window.addEventListener('DOMContentLoaded', setupTouchControls);
 
+// Canvas click for mute icon (bottom-right corner ~40x30 area in canvas coordinates)
+canvas.addEventListener('click', e => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    if (cx > W - 50 && cy > H - 35 && gameState === 'PLAYING') {
+        soundMuted = !soundMuted;
+    }
+});
+
 function isLeft()   { return keys['ArrowLeft']  || keys['KeyA'] || touchKeys.left; }
 function isRight()  { return keys['ArrowRight'] || keys['KeyD'] || touchKeys.right; }
 function isJump()   { return keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchKeys.jump; }
@@ -288,6 +300,10 @@ class Player extends Entity {
         this.scaleX = 1;
         this.scaleY = 1;
         this.wasGrounded = false;
+        // Double jump
+        this.jumpCount = 0;
+        this.canDoubleJump = false;
+        this.doubleJumpFlash = 0;
     }
 
     update() {
@@ -302,14 +318,25 @@ class Player extends Entity {
             this.vx = 0;
         }
 
-        // jump (only on press, not hold)
-        if (isJump() && !jumpWasPressed && this.isGrounded) {
-            this.vy = PLAYER_JUMP;
-            this.isGrounded = false;
-            // Stretch on jump
-            this.scaleX = 0.75;
-            this.scaleY = 1.3;
-            playSound('jump');
+        // jump (only on press, not hold) — supports double jump
+        if (isJump() && !jumpWasPressed) {
+            if (this.isGrounded) {
+                this.vy = PLAYER_JUMP;
+                this.isGrounded = false;
+                this.jumpCount = 1;
+                this.canDoubleJump = true;
+                this.scaleX = 0.75;
+                this.scaleY = 1.3;
+                playSound('jump');
+            } else if (this.canDoubleJump) {
+                this.vy = PLAYER_JUMP * 0.85;
+                this.canDoubleJump = false;
+                this.jumpCount = 2;
+                this.doubleJumpFlash = 12;
+                this.scaleX = 0.7;
+                this.scaleY = 1.35;
+                playSound('jump');
+            }
         }
         jumpWasPressed = isJump();
 
@@ -355,6 +382,8 @@ class Player extends Entity {
             this.scaleX = Math.min(this.scaleX, 1 - stretch * 0.5);
             this.scaleY = Math.max(this.scaleY, 1 + stretch);
         }
+        // Double jump flash timer
+        if (this.doubleJumpFlash > 0) this.doubleJumpFlash--;
     }
 
     resolveCollisionsX() {
@@ -382,6 +411,8 @@ class Player extends Entity {
                     }
                     this.vy = 0;
                     this.isGrounded = true;
+                    this.jumpCount = 0;
+                    this.canDoubleJump = false;
                     if (comboCount > 0) comboCount = 0;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
@@ -415,6 +446,20 @@ class Player extends Entity {
     render() {
         // blink when invincible
         if (this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0) return;
+
+        // Double jump ring flash
+        if (this.doubleJumpFlash > 0) {
+            const alpha = this.doubleJumpFlash / 12;
+            const r = (1 - alpha) * 28 + 16;
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.7;
+            ctx.strokeStyle = '#88ddff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
 
         // 3D shadow
         drawShadow(this.x, this.y + this.h, this.w);
@@ -882,6 +927,7 @@ let totalScore = 0;
 let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
+let soundMuted = false;
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
@@ -893,7 +939,7 @@ function initAudio() {
 }
 
 function playSound(type) {
-    if (!audioCtx) return;
+    if (!audioCtx || soundMuted) return;
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
@@ -1249,6 +1295,26 @@ function drawHUD() {
         ctx.textAlign = 'left';
         ctx.restore();
     }
+
+    // Mute icon (bottom-right, clickable area)
+    ctx.save();
+    ctx.font = '18px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = soundMuted ? 'rgba(255,80,80,0.85)' : 'rgba(255,255,255,0.7)';
+    ctx.fillText(soundMuted ? '🔇' : '🔊', W - 10, H - 10);
+    ctx.textAlign = 'left';
+    ctx.restore();
+
+    // Double jump indicator
+    if (player && !player.isGrounded && player.canDoubleJump) {
+        ctx.save();
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(100,200,255,0.8)';
+        ctx.fillText('2x прыжок!', W / 2, H - 15);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
 }
 
 // === SCREEN RENDERS ===
@@ -1425,6 +1491,12 @@ function update() {
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
             levelTimer++;
+
+            // Mute toggle with M key (only when not paused)
+            if (keys['KeyM'] && !keys['_muteWas']) {
+                soundMuted = !soundMuted;
+            }
+            keys['_muteWas'] = keys['KeyM'];
 
             // Check level complete
             if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0) {
