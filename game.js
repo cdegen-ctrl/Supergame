@@ -1853,6 +1853,112 @@ function spawnDeathParticles(x, y, w, h) {
     }
 }
 
+// === TELEPORT PORTALS (Feature 49) ===
+class Portal {
+    constructor(x, y, color, linkedPortal = null) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 44;
+        this.color = color; // 'blue' | 'orange'
+        this.linked = linkedPortal; // set after creation
+        this.animTimer = Math.random() * 60;
+        this.cooldown = 0; // prevent teleport loop
+    }
+
+    update() {
+        this.animTimer++;
+        if (this.cooldown > 0) this.cooldown--;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        const spin = t * 0.06;
+        const pulse = 0.88 + Math.sin(t * 0.09) * 0.12;
+        const isBlue = this.color === 'blue';
+        const mainColor = isBlue ? '#2255ff' : '#ff8800';
+        const glowColor = isBlue ? 'rgba(60,120,255,0.35)' : 'rgba(255,140,0,0.35)';
+
+        ctx.save();
+        // Outer glow oval
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, (this.w / 2 + 10) * pulse, (this.h / 2 + 8) * pulse, spin * 0.3, 0, Math.PI * 2);
+        ctx.fillStyle = glowColor;
+        ctx.fill();
+        // Portal body (swirling ellipse)
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, this.w / 2 * pulse, this.h / 2 * pulse, 0, 0, Math.PI * 2);
+        ctx.fillStyle = isBlue ? '#0033cc' : '#cc5500';
+        ctx.fill();
+        // Inner swirl rings
+        for (let i = 0; i < 3; i++) {
+            const r = (0.7 - i * 0.2) * pulse;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, this.w / 2 * r, this.h / 2 * r, spin + i * 0.8, 0, Math.PI * 2);
+            ctx.strokeStyle = isBlue ? `rgba(100,180,255,${0.7 - i * 0.2})` : `rgba(255,200,80,${0.7 - i * 0.2})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        // Center bright dot
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        // Label above
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = mainColor;
+        ctx.fillText(isBlue ? '●' : '●', cx, this.y - 4);
+        ctx.restore();
+    }
+}
+
+let portalPairs = []; // each pair: [portalA, portalB]
+
+function checkPortalCollisions() {
+    if (!player) return;
+    for (const [pA, pB] of portalPairs) {
+        // Check blue portal entry
+        if (pA.cooldown <= 0 && pB.cooldown <= 0 && aabb(player, pA)) {
+            player.x = pB.x + pB.w / 2 - player.w / 2;
+            player.y = pB.y + pB.h / 2 - player.h / 2;
+            player.vx = player.vx;
+            pA.cooldown = 45;
+            pB.cooldown = 45;
+            // Teleport flash particles
+            for (let i = 0; i < 10; i++) {
+                const angle = (Math.PI * 2 * i) / 10;
+                particles.push(new DeathParticle(
+                    pB.x + pB.w / 2, pB.y + pB.h / 2,
+                    Math.cos(angle) * 3, Math.sin(angle) * 3, '#88aaff', 4
+                ));
+            }
+            particles.push(new Particle(player.x, player.y - 14, '🌀 ПОРТАЛ!', '#88aaff'));
+            playSound('levelup');
+            break;
+        }
+        // Check orange portal entry (bidirectional)
+        if (pA.cooldown <= 0 && pB.cooldown <= 0 && aabb(player, pB)) {
+            player.x = pA.x + pA.w / 2 - player.w / 2;
+            player.y = pA.y + pA.h / 2 - player.h / 2;
+            pA.cooldown = 45;
+            pB.cooldown = 45;
+            for (let i = 0; i < 10; i++) {
+                const angle = (Math.PI * 2 * i) / 10;
+                particles.push(new DeathParticle(
+                    pA.x + pA.w / 2, pA.y + pA.h / 2,
+                    Math.cos(angle) * 3, Math.sin(angle) * 3, '#ffaa44', 4
+                ));
+            }
+            particles.push(new Particle(player.x, player.y - 14, '🌀 ПОРТАЛ!', '#ffaa44'));
+            playSound('levelup');
+            break;
+        }
+    }
+}
+
 // Feature 52: Jump smoke effect
 function spawnJumpSmoke(cx, cy, isDouble = false) {
     const count = isDouble ? 8 : 5;
@@ -2350,6 +2456,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 470, y: 350 }],
         magnetSpawns: [{ x: 130, y: 350 }],
         freezeSpawns: [{ x: 390, y: 205 }],
+        portalSpawns: [{ blue: { x: 30, y: 415 }, orange: { x: 650, y: 415 } }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -2386,6 +2493,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 350, y: 105 }],
         magnetSpawns: [{ x: 200, y: 235 }],
         freezeSpawns: [{ x: 580, y: 330 }],
+        portalSpawns: [{ blue: { x: 0, y: 415 }, orange: { x: 700, y: 415 } }],
         checkpointSpawns: [{ x: 395, y: 415 }],
         flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
         shooterMarioSpawns: [{ x: 350, y: 90 }],
@@ -2429,6 +2537,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 450, y: 375 }],
         magnetSpawns: [{ x: 590, y: 225 }],
         freezeSpawns: [{ x: 155, y: 145 }],
+        portalSpawns: [{ blue: { x: 130, y: 375 }, orange: { x: 620, y: 325 } }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
         shooterMarioSpawns: [{ x: 450, y: 370 }],
@@ -2475,6 +2584,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 640, y: 165 }],
         magnetSpawns: [{ x: 300, y: 65 }],
         freezeSpawns: [{ x: 220, y: 265 }],
+        portalSpawns: [{ blue: { x: 20, y: 430 }, orange: { x: 400, y: 50 } }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
         shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
@@ -2525,6 +2635,10 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 360, y: 175 }],
         magnetSpawns: [{ x: 460, y: 275 }],
         freezeSpawns: [{ x: 100, y: 195 }, { x: 560, y: 190 }],
+        portalSpawns: [
+            { blue: { x: 10, y: 415 }, orange: { x: 610, y: 285 } },
+            { blue: { x: 380, y: 415 }, orange: { x: 260, y: 85 } },
+        ],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
         shooterMarioSpawns: [{ x: 310, y: 85 }, { x: 530, y: 265 }],
@@ -2555,6 +2669,58 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 740, y: 446 }],
         speedBoostSpawns: [{ x: 450, y: 225 }],
         magnetSpawns: [{ x: 280, y: 225 }],
+    },
+    {
+        // Level 10: «Возмездие» — post-boss gauntlet with all enemy types
+        platforms: [
+            { x: 0,   y: 460, w: 60,  h: 40 },
+            { x: 740, y: 460, w: 60,  h: 40 },
+            { x: 90,  y: 420, w: 80,  h: 20, moveAxis: 'x', moveRange: 90, moveSpeed: 2.8 },
+            { x: 260, y: 390, w: 80,  h: 20, moveAxis: 'y', moveRange: 55, moveSpeed: 2.2 },
+            { x: 420, y: 420, w: 80,  h: 20, moveAxis: 'x', moveRange: 85, moveSpeed: 3.0 },
+            { x: 590, y: 390, w: 80,  h: 20, moveAxis: 'y', moveRange: 60, moveSpeed: 2.5 },
+            { x: 40,  y: 330, w: 90,  h: 20, moveAxis: 'y', moveRange: 70, moveSpeed: 2.0 },
+            { x: 200, y: 300, w: 90,  h: 20, moveAxis: 'x', moveRange: 100, moveSpeed: 3.2 },
+            { x: 380, y: 320, w: 90,  h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 2.3 },
+            { x: 560, y: 290, w: 90,  h: 20, moveAxis: 'x', moveRange: 85, moveSpeed: 2.8 },
+            { x: 100, y: 210, w: 100, h: 20, moveAxis: 'x', moveRange: 95, moveSpeed: 2.6 },
+            { x: 360, y: 190, w: 100, h: 20, moveAxis: 'y', moveRange: 55, moveSpeed: 2.2 },
+            { x: 600, y: 205, w: 100, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 3.0 },
+            { x: 260, y: 100, w: 280, h: 20 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 },
+            { x: 750, y: 430 },
+            { x: 110, y: 380 },
+            { x: 430, y: 380 },
+            { x: 660, y: 370 },
+            { x: 210, y: 260 },
+            { x: 570, y: 250 },
+        ],
+        marioTypes: ['normal', 'normal', 'fast', 'fast', 'jumpy', 'armored', 'armored'],
+        marioSpeed: 4.0,
+        playerSpawn: { x: 10, y: 430 },
+        coinSpawns: [
+            { x: 110, y: 395 }, { x: 280, y: 365 }, { x: 440, y: 395 }, { x: 610, y: 365 },
+            { x: 60,  y: 305 }, { x: 220, y: 275 }, { x: 400, y: 295 }, { x: 580, y: 265 },
+            { x: 120, y: 185 }, { x: 380, y: 165 }, { x: 630, y: 180 },
+            { x: 310, y: 75  }, { x: 450, y: 75  },
+        ],
+        doubleCoinSpawns: [{ x: 380, y: 75 }, { x: 500, y: 180 }],
+        starSpawns: [{ x: 510, y: 75 }, { x: 140, y: 185 }],
+        shieldSpawns: [{ x: 700, y: 435 }],
+        bombSpawns: [{ x: 330, y: 265 }, { x: 660, y: 180 }],
+        springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
+        speedBoostSpawns: [{ x: 415, y: 165 }],
+        magnetSpawns: [{ x: 480, y: 75 }],
+        freezeSpawns: [{ x: 240, y: 265 }, { x: 630, y: 265 }],
+        portalSpawns: [
+            { blue: { x: 10, y: 415 }, orange: { x: 540, y: 165 } },
+            { blue: { x: 390, y: 415 }, orange: { x: 280, y: 75 } },
+        ],
+        checkpointSpawns: [{ x: 395, y: 425 }],
+        flyingMarioSpawns: [{ x: 180, y: 155 }, { x: 480, y: 140 }, { x: 660, y: 165 }],
+        shooterMarioSpawns: [{ x: 120, y: 170 }, { x: 620, y: 165 }],
     },
 ];
 
@@ -2905,6 +3071,14 @@ function loadLevel(index) {
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
     magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
     freezes = (lvl.freezeSpawns || []).map(f => new Freeze(f.x, f.y));
+    // Portals: each entry is {blue: {x,y}, orange: {x,y}}
+    portalPairs = (lvl.portalSpawns || []).map(p => {
+        const pA = new Portal(p.blue.x, p.blue.y, 'blue');
+        const pB = new Portal(p.orange.x, p.orange.y, 'orange');
+        pA.linked = pB;
+        pB.linked = pA;
+        return [pA, pB];
+    });
     checkpoints = (lvl.checkpointSpawns || []).map(c => new Checkpoint(c.x, c.y));
     if (player) player.checkpointSpawn = null; // reset checkpoint on new level
     isBossLevel = !!lvl.isBossLevel;
@@ -4127,6 +4301,8 @@ function update() {
             checkFreezeCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
+            for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
+            checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
             updateWeather();
             updateAchievementToasts();
@@ -4289,6 +4465,7 @@ function render() {
             speedBoosts.forEach(sb => sb.render());
             magnets.forEach(m => m.render());
             freezes.forEach(f => f.render());
+            for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
