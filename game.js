@@ -653,11 +653,11 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy' | 'armored'
+    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.speed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : speed;
+        this.speed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'shooter' ? 0 : speed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
         this.deathTimer = 0;
@@ -670,6 +670,8 @@ class Mario extends Entity {
         // flying: fixed altitude
         this.flyingY = type === 'flying' ? y : null;
         this.wingFlap = Math.random() * Math.PI * 2; // random phase
+        // shooter: fire rate timer
+        this.shootTimer = type === 'shooter' ? 120 + Math.floor(Math.random() * 120) : 9999;
         // freeze
         this.frozenTimer = 0;
     }
@@ -684,6 +686,32 @@ class Mario extends Entity {
         // Frozen: skip all movement, just count down
         if (this.frozenTimer > 0) {
             this.frozenTimer--;
+            return true;
+        }
+
+        // Shooter type: stands still, aims and fires toward player
+        if (this.type === 'shooter') {
+            // Face the player
+            if (player) {
+                this.direction = player.x < this.x ? -1 : 1;
+            }
+            this.animTimer++;
+            if (this.animTimer > 20) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+            // Apply gravity so it stays on platforms
+            this.vy += GRAVITY;
+            if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+            this.y += this.vy;
+            this.resolveCollisionsY();
+            // Shoot timer
+            this.shootTimer--;
+            if (this.shootTimer <= 0 && player) {
+                this.shootTimer = 150 + Math.floor(Math.random() * 90);
+                const dir = player.x + player.w / 2 < this.x + this.w / 2 ? -1 : 1;
+                fireballs.push(new Fireball(
+                    this.x + this.w / 2, this.y + this.h * 0.4, dir
+                ));
+                playSound('jump'); // reuse a sound
+            }
             return true;
         }
 
@@ -894,6 +922,11 @@ class Mario extends Entity {
                 ctx.fillText('✈', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#88ddff';
                 ctx.fillText('✈', badgeX, badgeY);
+            } else if (this.type === 'shooter') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('🎯', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#ff8800';
+                ctx.fillText('🎯', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
             ctx.restore();
@@ -950,11 +983,12 @@ class Mario extends Entity {
 
 // === COINS ===
 class Coin {
-    constructor(x, y) {
+    constructor(x, y, bonus = 50) {
         this.x = x;
         this.y = y;
-        this.w = 16;
-        this.h = 16;
+        this.w = bonus > 50 ? 20 : 16;
+        this.h = bonus > 50 ? 20 : 16;
+        this.bonus = bonus;
         this.collected = false;
         this.animTimer = Math.random() * 60; // stagger animation
         this.bobOffset = Math.random() * Math.PI * 2;
@@ -1000,31 +1034,42 @@ class Coin {
 
     render() {
         const bob = Math.sin(this.animTimer * 0.07 + this.bobOffset) * 3;
-        const rx = this.x;
-        const ry = this.y + bob;
+        const isDouble = this.bonus > 50;
+        const r = isDouble ? 10 : 7;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
         const glow = Math.abs(Math.sin(this.animTimer * 0.05)) * 0.4 + 0.6;
+        const spin = isDouble ? Math.cos(this.animTimer * 0.09) : 1; // spin effect (scale x)
 
         ctx.save();
         // Outer glow
         ctx.beginPath();
-        ctx.arc(rx + 8, ry + 8, 10, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 220, 0, ${glow * 0.25})`;
+        ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
+        ctx.fillStyle = isDouble
+            ? `rgba(255, 160, 0, ${glow * 0.4})`
+            : `rgba(255, 220, 0, ${glow * 0.25})`;
         ctx.fill();
-        // Coin body
+        // Coin body (with spin for double)
+        ctx.translate(cx, cy);
+        ctx.scale(Math.abs(spin), 1);
+        ctx.translate(-cx, -cy);
         ctx.beginPath();
-        ctx.arc(rx + 8, ry + 8, 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffcc00';
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = isDouble ? '#ff9900' : '#ffcc00';
         ctx.fill();
+        ctx.strokeStyle = isDouble ? '#ffcc00' : '#e6a800';
+        ctx.lineWidth = isDouble ? 2 : 1;
+        ctx.stroke();
         // Shine
         ctx.beginPath();
-        ctx.arc(rx + 6, ry + 5, 3, 0, Math.PI * 2);
+        ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.35, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255,255,200,0.7)';
         ctx.fill();
-        // Dollar sign
-        ctx.font = 'bold 8px monospace';
+        // Label
+        ctx.font = `bold ${isDouble ? 9 : 8}px monospace`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = '#b8860b';
-        ctx.fillText('$', rx + 8, ry + 12);
+        ctx.fillStyle = isDouble ? '#7a3c00' : '#b8860b';
+        ctx.fillText(isDouble ? 'x2' : '$', cx, cy + r * 0.45);
         ctx.restore();
     }
 }
@@ -1519,6 +1564,87 @@ function checkFreezeCollisions() {
         playSound('star'); // reuse levelup sound
     }
     freezes = freezes.filter(f => !f.collected);
+}
+
+// === FIREBALL (Shooter enemy projectile) ===
+class Fireball {
+    constructor(x, y, dir) {
+        this.x = x;
+        this.y = y;
+        this.w = 12;
+        this.h = 12;
+        this.vx = dir * 5.5;
+        this.vy = 0;
+        this.alive = true;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        this.x += this.vx;
+        // Light gravity on fireball
+        this.vy += 0.15;
+        this.y += this.vy;
+        // Hit platform → bounce once then die
+        for (const p of platforms) {
+            if (aabb(this, p)) {
+                if (this.vy > 0) {
+                    this.vy = -this.vy * 0.4;
+                    this.y = p.y - this.h;
+                    if (Math.abs(this.vy) < 0.5) { this.alive = false; }
+                }
+            }
+        }
+        // Out of bounds
+        if (this.x < -20 || this.x > W + 20 || this.y > H + 20) this.alive = false;
+        return this.alive;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        const flicker = 0.8 + Math.sin(t * 0.4) * 0.2;
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * flicker, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 120, 0, 0.35)`;
+        ctx.fill();
+        // Inner fire
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5 * flicker, 0, Math.PI * 2);
+        ctx.fillStyle = t % 4 < 2 ? '#ff6600' : '#ffcc00';
+        ctx.fill();
+        // Hot center
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+let fireballs = [];
+
+function checkFireballCollisions() {
+    if (!player) return;
+    for (const fb of fireballs) {
+        if (!fb.alive) continue;
+        if (!aabb(player, fb)) continue;
+        fb.alive = false;
+        if (player.invincibleTimer > 0 || player.starTimer > 0) continue;
+        if (player.shieldActive) {
+            player.shieldActive = false;
+            player.shieldBreakTimer = 20;
+            player.invincibleTimer = 60;
+            particles.push(new Particle(player.x, player.y - 10, 'ЩИТ!', '#4488ff'));
+            playSound('hurt');
+        } else {
+            player.die();
+        }
+    }
+    fireballs = fireballs.filter(fb => fb.alive);
 }
 
 function checkMagnetCollisions() {
@@ -2111,6 +2237,7 @@ const LEVELS = [
             { x: 230, y: 435 }, { x: 400, y: 435 }, { x: 570, y: 435 },
             { x: 195, y: 345 }, { x: 545, y: 345 },
         ],
+        doubleCoinSpawns: [{ x: 380, y: 435 }],
     },
     {
         // Level 2: More platforms, 3 Marios
@@ -2132,6 +2259,7 @@ const LEVELS = [
             { x: 140, y: 435 }, { x: 220, y: 435 }, { x: 490, y: 435 },
             { x: 155, y: 345 }, { x: 395, y: 295 }, { x: 605, y: 345 },
         ],
+        doubleCoinSpawns: [{ x: 360, y: 295 }],
         shieldSpawns: [{ x: 600, y: 435 }],
         springSpawns: [{ x: 370, y: 446 }],
     },
@@ -2159,6 +2287,7 @@ const LEVELS = [
             { x: 120, y: 345 }, { x: 370, y: 305 }, { x: 620, y: 345 },
             { x: 370, y: 195 },
         ],
+        doubleCoinSpawns: [{ x: 450, y: 195 }],
         starSpawns: [{ x: 380, y: 290 }],
         shieldSpawns: [{ x: 620, y: 345 }],
         bombSpawns: [{ x: 150, y: 305 }],
@@ -2194,6 +2323,7 @@ const LEVELS = [
             { x: 90, y: 350 }, { x: 290, y: 315 }, { x: 470, y: 350 }, { x: 660, y: 315 },
             { x: 260, y: 205 }, { x: 500, y: 205 },
         ],
+        doubleCoinSpawns: [{ x: 420, y: 205 }, { x: 380, y: 315 }],
         starSpawns: [{ x: 530, y: 205 }],
         bombSpawns: [{ x: 660, y: 295 }],
         springSpawns: [{ x: 50, y: 446 }, { x: 700, y: 446 }],
@@ -2228,6 +2358,7 @@ const LEVELS = [
         ],
         marioSpeed: 2.5,
         playerSpawn: { x: 30, y: 400 },
+        doubleCoinSpawns: [{ x: 480, y: 105 }, { x: 620, y: 330 }],
         starSpawns: [{ x: 380, y: 185 }],
         shieldSpawns: [{ x: 90, y: 350 }],
         bombSpawns: [{ x: 640, y: 230 }],
@@ -2237,6 +2368,7 @@ const LEVELS = [
         freezeSpawns: [{ x: 580, y: 330 }],
         checkpointSpawns: [{ x: 395, y: 415 }],
         flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
+        shooterMarioSpawns: [{ x: 350, y: 90 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2270,6 +2402,7 @@ const LEVELS = [
             { x: 80, y: 275 }, { x: 250, y: 235 }, { x: 590, y: 225 },
             { x: 180, y: 145 }, { x: 440, y: 125 }, { x: 360, y: 55 },
         ],
+        doubleCoinSpawns: [{ x: 320, y: 55 }, { x: 690, y: 330 }],
         starSpawns: [{ x: 440, y: 55 }],
         bombSpawns: [{ x: 230, y: 235 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 680, y: 446 }],
@@ -2278,6 +2411,7 @@ const LEVELS = [
         freezeSpawns: [{ x: 155, y: 145 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
+        shooterMarioSpawns: [{ x: 450, y: 370 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -2314,6 +2448,7 @@ const LEVELS = [
             { x: 150, y: 175 }, { x: 410, y: 155 }, { x: 650, y: 165 },
             { x: 360, y: 65 },
         ],
+        doubleCoinSpawns: [{ x: 490, y: 255 }, { x: 320, y: 65 }],
         starSpawns: [{ x: 460, y: 155 }, { x: 190, y: 175 }],
         bombSpawns: [{ x: 140, y: 375 }, { x: 500, y: 355 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
@@ -2322,6 +2457,7 @@ const LEVELS = [
         freezeSpawns: [{ x: 220, y: 265 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
+        shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -2362,6 +2498,7 @@ const LEVELS = [
             { x: 100, y: 195 }, { x: 340, y: 175 }, { x: 580, y: 190 },
             { x: 310, y: 85  }, { x: 450, y: 85  },
         ],
+        doubleCoinSpawns: [{ x: 400, y: 85 }, { x: 260, y: 175 }],
         starSpawns: [{ x: 350, y: 85 }, { x: 600, y: 190 }],
         bombSpawns: [{ x: 200, y: 285 }, { x: 555, y: 270 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
@@ -2370,6 +2507,7 @@ const LEVELS = [
         freezeSpawns: [{ x: 100, y: 195 }, { x: 560, y: 190 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
+        shooterMarioSpawns: [{ x: 310, y: 85 }, { x: 530, y: 265 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -2390,6 +2528,7 @@ const LEVELS = [
             { x: 120, y: 335 }, { x: 600, y: 335 },
             { x: 360, y: 235 }, { x: 430, y: 235 },
         ],
+        doubleCoinSpawns: [{ x: 195, y: 335 }, { x: 395, y: 235 }],
         starSpawns: [{ x: 370, y: 225 }],
         shieldSpawns: [{ x: 600, y: 335 }],
         bombSpawns: [{ x: 110, y: 325 }],
@@ -2710,6 +2849,10 @@ function loadLevel(index) {
     const flyingSpeed = speed * 0.85;
     const flyingMarios = (lvl.flyingMarioSpawns || []).map(s => new Mario(s.x, s.y, flyingSpeed, 'flying'));
     marios = [...marios, ...flyingMarios];
+    // Shooter Marios (stationary, fires fireballs)
+    const shooterMarios = (lvl.shooterMarioSpawns || []).map(s => new Mario(s.x, s.y, 0, 'shooter'));
+    marios = [...marios, ...shooterMarios];
+    fireballs = [];
 
     const sp = lvl.playerSpawn;
     if (player) {
@@ -2730,7 +2873,10 @@ function loadLevel(index) {
     levelTimer = 0;
     hudScoreDisplay = 0;
     levelTotalMarios = marios.length;
-    coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
+    coins = [
+        ...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)),
+        ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100)),
+    ];
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
@@ -2770,12 +2916,13 @@ function checkCoinCollisions() {
         if (coin.collected) continue;
         if (aabb(player, coin)) {
             coin.collected = true;
-            player.score += 50;
-            totalScore += 50;
+            const pts = coin.bonus || 50;
+            player.score += pts;
+            totalScore += pts;
             totalCoinsCollectedRun++;
             runStats.coinsCollected++;
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
-            particles.push(new Particle(coin.x, coin.y - 5, '+50', '#ffcc00'));
+            particles.push(new Particle(coin.x, coin.y - 5, `+${pts}`, pts > 50 ? '#ff9900' : '#ffcc00'));
             playSound('coin');
         }
     }
@@ -3889,6 +4036,8 @@ function update() {
             checkMagnetCollisions();
             freezes = freezes.filter(f => f.update());
             checkFreezeCollisions();
+            fireballs = fireballs.filter(fb => fb.update());
+            checkFireballCollisions();
             checkpoints.forEach(cp => cp.update());
             updateWeather();
             updateAchievementToasts();
@@ -4051,6 +4200,7 @@ function render() {
             speedBoosts.forEach(sb => sb.render());
             magnets.forEach(m => m.render());
             freezes.forEach(f => f.render());
+            fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
             if (bossMarco) bossMarco.render();
