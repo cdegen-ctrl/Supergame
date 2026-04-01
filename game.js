@@ -204,7 +204,7 @@ class Entity {
 }
 
 class Platform extends Entity {
-    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumbling) {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumbling, icy) {
         super(x, y, w, h);
         // Moving platform support
         this.moveAxis = moveAxis || null;   // 'x' | 'y' | null
@@ -216,6 +216,8 @@ class Platform extends Entity {
         this._prevY = y;
         // Feature 53: Crumbling platform support
         this.isCrumbling = crumbling || false;
+        // Feature 57: Icy/slippery platform
+        this.isIcy = icy || false;
         this.standTimer = 0;      // ticks player has been standing
         this.shakingTimer = 0;    // ticks of shaking before fall
         this.fallVy = 0;          // fall velocity once triggered
@@ -273,6 +275,50 @@ class Platform extends Entity {
 
     render() {
         if (this.dead) return;
+
+        // Feature 57: Icy platform — bright blue-white look
+        if (this.isIcy) {
+            const d = DEPTH_3D;
+            // 3D bottom face
+            ctx.fillStyle = '#5588cc';
+            ctx.fillRect(this.x, this.y + this.h, this.w, d);
+            // 3D right face
+            ctx.fillStyle = '#6699dd';
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.w, this.y);
+            ctx.lineTo(this.x + this.w + d * 0.5, this.y - d * 0.3);
+            ctx.lineTo(this.x + this.w + d * 0.5, this.y + this.h - d * 0.3);
+            ctx.lineTo(this.x + this.w, this.y + this.h);
+            ctx.closePath();
+            ctx.fill();
+            // Main face — gradient-like two-tone
+            ctx.fillStyle = '#aaddff';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            ctx.fillStyle = 'rgba(255,255,255,0.35)';
+            ctx.fillRect(this.x, this.y, this.w, this.h * 0.4);
+            // Shine streaks
+            ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+            ctx.lineWidth = 2;
+            for (let ix = this.x + 10; ix < this.x + this.w - 8; ix += 18) {
+                ctx.beginPath();
+                ctx.moveTo(ix, this.y + 2);
+                ctx.lineTo(ix + 6, this.y + this.h - 2);
+                ctx.stroke();
+            }
+            // Top edge shimmer
+            ctx.strokeStyle = '#eef8ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(this.x, this.y + 1); ctx.lineTo(this.x + this.w, this.y + 1); ctx.stroke();
+            // Ice label
+            ctx.save();
+            ctx.globalAlpha = 0.6;
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ccf0ff';
+            ctx.fillText('❄', this.x + this.w / 2, this.y + this.h / 2 + 4);
+            ctx.restore();
+            return;
+        }
 
         // Feature 53: Crumbling platform — distinct orange-brown look
         if (this.isCrumbling) {
@@ -471,16 +517,36 @@ class Player extends Entity {
         // Wall jump lock countdown
         if (this.wallJumpLockTimer > 0) this.wallJumpLockTimer--;
 
+        // Feature 57: Check if standing on icy platform
+        const onIce = this.isGrounded && platforms.some(p =>
+            !p.dead && !p.falling && p.isIcy &&
+            this.y + this.h >= p.y - 1 && this.y + this.h <= p.y + 4 &&
+            this.x + this.w > p.x && this.x < p.x + p.w
+        );
+
         // horizontal movement
         const currentSpeed = this.speedBoostTimer > 0 ? PLAYER_SPEED * 2 : PLAYER_SPEED;
-        if (isLeft()) {
-            this.vx = -currentSpeed;
-            this.facingRight = false;
-        } else if (isRight()) {
-            this.vx = currentSpeed;
-            this.facingRight = true;
+        if (onIce) {
+            // On ice: gradually accelerate toward input direction, low friction when no input
+            if (isLeft()) {
+                this.vx = Math.max(this.vx - 0.35, -currentSpeed);
+                this.facingRight = false;
+            } else if (isRight()) {
+                this.vx = Math.min(this.vx + 0.35, currentSpeed);
+                this.facingRight = true;
+            } else {
+                this.vx *= 0.96; // very low friction on ice
+            }
         } else {
-            this.vx = 0;
+            if (isLeft()) {
+                this.vx = -currentSpeed;
+                this.facingRight = false;
+            } else if (isRight()) {
+                this.vx = currentSpeed;
+                this.facingRight = true;
+            } else {
+                this.vx = 0;
+            }
         }
 
         // jump (only on press, not hold) — supports double jump + wall jump
@@ -2750,6 +2816,8 @@ const LEVELS = [
             { x: 410, y: 150, w: 130, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 2.2 },
             { x: 280, y: 80, w: 240, h: 20 },
             { x: 350, y: 210, w: 80, h: 20, crumbling: true }, // Feature 53
+            { x: 460, y: 400, w: 90, h: 20, icy: true }, // Feature 57
+            { x: 0, y: 460, w: 100, h: 40, icy: true },  // Feature 57
         ],
         marioSpawns: [
             { x: 20, y: 420 },
@@ -2799,6 +2867,8 @@ const LEVELS = [
             { x: 300, y: 90, w: 200, h: 20 },
             { x: 160, y: 140, w: 70, h: 20, crumbling: true }, // Feature 53
             { x: 490, y: 130, w: 70, h: 20, crumbling: true }, // Feature 53
+            { x: 0,   y: 460, w: 80, h: 40, icy: true },       // Feature 57
+            { x: 340, y: 230, w: 80, h: 20, icy: true },        // Feature 57
         ],
         marioSpawns: [
             { x: 20, y: 430 },
@@ -2851,6 +2921,8 @@ const LEVELS = [
             { x: 555, y: 215, w: 80,  h: 20, moveAxis: 'x', moveRange: 80,  moveSpeed: 2.7 },
             { x: 250, y: 110, w: 300, h: 20 },
             { x: 420, y: 155, w: 80,  h: 20, crumbling: true }, // Feature 53
+            { x: 0,   y: 460, w: 60,  h: 40, icy: true },       // Feature 57
+            { x: 440, y: 260, w: 70,  h: 20, icy: true },        // Feature 57
         ],
         marioSpawns: [
             { x: 10,  y: 430 },
@@ -2968,6 +3040,69 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 120, y: 170 }, { x: 620, y: 165 }],
         // Feature 53+54: crumbling platforms & spikes
         spikeSpawns: [{ x: 300, y: 84, w: 50 }, { x: 540, y: 175, w: 30 }],
+    },
+    {
+        // Level 11: «Возрождение Хаоса» — Feature 58: ultimate final level
+        // All mechanics: crumbling + icy + spikes + all enemy types
+        platforms: [
+            { x: 0,   y: 460, w: 55,  h: 40, icy: true },
+            { x: 745, y: 460, w: 55,  h: 40, icy: true },
+            { x: 80,  y: 425, w: 55,  h: 20, moveAxis: 'x', moveRange: 85, moveSpeed: 3.0 },
+            { x: 240, y: 395, w: 55,  h: 20, moveAxis: 'y', moveRange: 55, moveSpeed: 2.5 },
+            { x: 400, y: 425, w: 55,  h: 20, moveAxis: 'x', moveRange: 95, moveSpeed: 3.2, crumbling: true },
+            { x: 560, y: 395, w: 55,  h: 20, moveAxis: 'y', moveRange: 60, moveSpeed: 2.8 },
+            { x: 700, y: 425, w: 55,  h: 20, moveAxis: 'x', moveRange: 65, moveSpeed: 2.7 },
+            { x: 30,  y: 335, w: 65,  h: 20, moveAxis: 'y', moveRange: 70, moveSpeed: 2.2, icy: true },
+            { x: 170, y: 305, w: 65,  h: 20, moveAxis: 'x', moveRange: 100, moveSpeed: 3.0 },
+            { x: 330, y: 325, w: 65,  h: 20, crumbling: true },
+            { x: 490, y: 295, w: 65,  h: 20, moveAxis: 'x', moveRange: 85, moveSpeed: 3.2 },
+            { x: 650, y: 325, w: 65,  h: 20, moveAxis: 'y', moveRange: 65, moveSpeed: 2.5 },
+            { x: 90,  y: 215, w: 80,  h: 20, moveAxis: 'x', moveRange: 90, moveSpeed: 2.8 },
+            { x: 310, y: 195, w: 80,  h: 20, crumbling: true },
+            { x: 530, y: 210, w: 80,  h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 3.0, icy: true },
+            { x: 240, y: 105, w: 320, h: 20 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 435 },
+            { x: 755, y: 435 },
+            { x: 95,  y: 385 },
+            { x: 415, y: 385 },
+            { x: 575, y: 375 },
+            { x: 180, y: 265 },
+            { x: 500, y: 255 },
+            { x: 340, y: 65  },
+            { x: 480, y: 65  },
+        ],
+        marioSpeed: 4.2,
+        playerSpawn: { x: 10, y: 435 },
+        coinSpawns: [
+            { x: 100, y: 400 }, { x: 260, y: 370 }, { x: 420, y: 400 }, { x: 580, y: 370 },
+            { x: 50,  y: 310 }, { x: 190, y: 280 }, { x: 350, y: 300 }, { x: 510, y: 270 },
+            { x: 110, y: 190 }, { x: 350, y: 170 }, { x: 560, y: 185 },
+            { x: 290, y: 80  }, { x: 430, y: 80  }, { x: 500, y: 80  },
+        ],
+        doubleCoinSpawns: [{ x: 380, y: 80 }, { x: 460, y: 185 }],
+        starSpawns: [{ x: 350, y: 80 }, { x: 550, y: 80 }],
+        shieldSpawns: [{ x: 0, y: 435 }],
+        bombSpawns: [{ x: 195, y: 265 }, { x: 650, y: 295 }],
+        springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
+        speedBoostSpawns: [{ x: 400, y: 170 }],
+        magnetSpawns: [{ x: 510, y: 80 }],
+        freezeSpawns: [{ x: 100, y: 185 }, { x: 650, y: 190 }],
+        portalSpawns: [
+            { blue: { x: 10, y: 415 }, orange: { x: 300, y: 65 } },
+            { blue: { x: 410, y: 415 }, orange: { x: 450, y: 65 } },
+        ],
+        checkpointSpawns: [{ x: 390, y: 420 }],
+        flyingMarioSpawns: [{ x: 160, y: 155 }, { x: 400, y: 140 }, { x: 620, y: 160 }],
+        shooterMarioSpawns: [{ x: 280, y: 65 }, { x: 480, y: 60 }],
+        // Feature 53+54+57: crumbling, icy, and spike hazards
+        spikeSpawns: [
+            { x: 270, y: 89,  w: 42 },
+            { x: 450, y: 89,  w: 42 },
+            { x: 345, y: 175, w: 28 },
+            { x: 110, y: 195, w: 24 },
+        ],
     },
 ];
 
@@ -3291,7 +3426,7 @@ function loadLevel(index) {
     const lvl = LEVELS[lvlIndex];
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumbling));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumbling, p.icy));
     spikeStrips = (lvl.spikeSpawns || []).map(s => new SpikeStrip(s.x, s.y, s.w, s.pointUp));
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : 1;
