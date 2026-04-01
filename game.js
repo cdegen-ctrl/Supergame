@@ -462,6 +462,9 @@ class Player extends Entity {
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
         // Checkpoint respawn
         this.checkpointSpawn = null;
+        // Feature 56: Ghost trail at high combo
+        this.ghostTrail = [];   // [{x, y, alpha}]
+        this.ghostTrailTick = 0;
     }
 
     update() {
@@ -580,6 +583,21 @@ class Player extends Entity {
         // Smooth squash/stretch recovery
         this.scaleX += (1 - this.scaleX) * 0.22;
         this.scaleY += (1 - this.scaleY) * 0.22;
+
+        // Feature 56: Ghost trail when combo x4+
+        if (comboCount >= 4) {
+            this.ghostTrailTick++;
+            if (this.ghostTrailTick >= 3) {
+                this.ghostTrailTick = 0;
+                this.ghostTrail.unshift({ x: this.x, y: this.y, alpha: 0.55 });
+                if (this.ghostTrail.length > 5) this.ghostTrail.pop();
+            }
+            // Fade existing trail
+            for (const g of this.ghostTrail) g.alpha *= 0.82;
+        } else {
+            this.ghostTrailTick = 0;
+            this.ghostTrail = [];
+        }
         // Stretch in air (falling fast)
         if (!this.isGrounded && this.vy > 3) {
             const stretch = Math.min(this.vy / MAX_FALL, 1) * 0.2;
@@ -727,6 +745,40 @@ class Player extends Entity {
             ctx.beginPath();
             ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r, 0, Math.PI * 2);
             ctx.stroke();
+            ctx.restore();
+        }
+
+        // Feature 56: Ghost trail at high combo
+        if (this.ghostTrail.length > 0) {
+            const mc = getMushroomColors();
+            const ghostSprite = MUSHROOM_SPRITE.map(row => row.map(cell => {
+                if (cell === C.mushroomCap) return mc.cap;
+                if (cell === C.mushroomCapLight) return mc.capLight;
+                return cell;
+            }));
+            const gpx = 2.5;
+            const gW = 14 * gpx;
+            const gH = 12 * gpx;
+            const trailColor = comboCount >= 5 ? [220, 0, 255] : [255, 220, 0];
+            ctx.save();
+            for (const g of this.ghostTrail) {
+                ctx.globalAlpha = g.alpha * 0.6;
+                // Tint the trail with combo color
+                ctx.fillStyle = `rgba(${trailColor[0]},${trailColor[1]},${trailColor[2]},${g.alpha * 0.5})`;
+                ctx.fillRect(g.x, g.y, this.w, this.h);
+                // Sprite overlay
+                ctx.globalAlpha = g.alpha * 0.35;
+                const gdx = g.x + (this.w - gW) / 2;
+                const gdy = g.y + (this.h - gH);
+                if (!this.facingRight) {
+                    ctx.translate(gdx + gW, gdy);
+                    ctx.scale(-1, 1);
+                    drawPixelSprite(0, 0, gpx, ghostSprite);
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                } else {
+                    drawPixelSprite(gdx, gdy, gpx, ghostSprite);
+                }
+            }
             ctx.restore();
         }
 
@@ -2919,6 +2971,27 @@ const LEVELS = [
     },
 ];
 
+// === SCORE ATTACK ARENA (Feature 55) ===
+const SCORE_ATTACK_LEVEL = {
+    platforms: [
+        { x: 0,   y: 460, w: 800, h: 40 },
+        { x: 100, y: 360, w: 130, h: 20 },
+        { x: 570, y: 360, w: 130, h: 20 },
+        { x: 300, y: 280, w: 200, h: 20 },
+        { x: 40,  y: 200, w: 110, h: 20 },
+        { x: 650, y: 200, w: 110, h: 20 },
+    ],
+    marioSpawns: [
+        { x: 200, y: 420 }, { x: 500, y: 420 }, { x: 350, y: 240 },
+    ],
+    marioSpeed: 2.0,
+    playerSpawn: { x: 50, y: 400 },
+    coinSpawns: [
+        { x: 150, y: 435 }, { x: 400, y: 435 }, { x: 620, y: 435 },
+        { x: 130, y: 335 }, { x: 600, y: 335 }, { x: 380, y: 255 },
+    ],
+};
+
 // === GAME STATE ===
 let gameState = 'MENU';
 let currentLevel = 0;
@@ -2948,6 +3021,12 @@ let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || 
 let selectedLevelIdx = 0;
 let soundMuted = false;
 let difficulty = localStorage.getItem('mushroomDifficulty') || 'normal';
+
+// === SCORE ATTACK STATE (Feature 55) ===
+let isScoreAttack = false;
+let scoreAttackTimer = 0;          // ticks remaining (60s * 60fps)
+let scoreAttackWaveNum = 0;        // current wave number
+let scoreAttackHighScore = parseInt(localStorage.getItem('mushroomScoreAttackHigh') || '0');
 
 // === LEVEL BEST TIMES ===
 let levelBestTimes = [];
@@ -3285,9 +3364,55 @@ function loadLevel(index) {
 }
 
 function startGame() {
+    isScoreAttack = false;
     resetAchievements();
     resetRunStats();
     startGameFromLevel(0);
+}
+
+// Feature 55: Score Attack mode — 60s blitz
+function startScoreAttack() {
+    isScoreAttack = true;
+    scoreAttackTimer = 60 * 60; // 60 seconds
+    scoreAttackWaveNum = 0;
+    totalScore = 0;
+    hudScoreDisplay = 0;
+    resetAchievements();
+    resetRunStats();
+
+    const lvl = SCORE_ATTACK_LEVEL;
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h));
+    spikeStrips = [];
+    const sp = lvl.playerSpawn;
+    player = new Player(sp.x, sp.y);
+    player.lives = 99; // no life loss in score attack
+    player.score = 0;
+    marios = lvl.marioSpawns.map(s => new Mario(s.x, s.y, lvl.marioSpeed, 'normal'));
+    levelTotalMarios = marios.length;
+    coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
+    stars = []; shields = []; bombs = []; springPads = [];
+    speedBoosts = []; magnets = []; freezes = []; fireballs = [];
+    portalPairs = []; checkpoints = []; particles = [];
+    bossMarco = null; isBossLevel = false;
+    comboCount = 0; comboDisplayTimer = 0; levelTimer = 0;
+    initWeather(0);
+    if (audioCtx && !soundMuted) startBGM('title');
+    gameState = 'PLAYING';
+}
+
+function spawnScoreAttackWave() {
+    scoreAttackWaveNum++;
+    const speed = 2.0 + scoreAttackWaveNum * 0.4;
+    const types = ['normal', 'fast', 'jumpy'];
+    const count = 2 + Math.floor(scoreAttackWaveNum / 2);
+    const spawns = SCORE_ATTACK_LEVEL.marioSpawns;
+    for (let i = 0; i < count; i++) {
+        const s = spawns[i % spawns.length];
+        const type = types[i % types.length];
+        marios.push(new Mario(s.x + (Math.random() - 0.5) * 60, s.y, speed, type));
+    }
+    levelTotalMarios = marios.length;
+    coins = SCORE_ATTACK_LEVEL.coinSpawns.map(c => new Coin(c.x, c.y));
 }
 
 function startGameFromLevel(level) {
@@ -3630,20 +3755,40 @@ function drawHUD() {
         ctx.fillText('♥', 20 + i * 22, 57);
     }
 
-    // Level
-    const lvlText = `LEVEL: ${currentLevel + 1}`;
-    ctx.fillStyle = C.textShadow;
-    ctx.fillText(lvlText, W - 152, 32);
-    ctx.fillStyle = C.hud;
-    ctx.fillText(lvlText, W - 150, 30);
+    // Feature 55: Score Attack HUD override
+    if (isScoreAttack) {
+        const secsLeft = Math.ceil(scoreAttackTimer / 60);
+        const timerColor = secsLeft <= 10 ? '#ff2222' : secsLeft <= 20 ? '#ffaa00' : '#00ff88';
+        // Big countdown timer
+        ctx.save();
+        const pulse = secsLeft <= 10 ? 1 + Math.sin(Date.now() * 0.02) * 0.08 : 1;
+        ctx.font = `bold ${Math.round(22 * pulse)}px monospace`;
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#000';
+        ctx.fillText(`⏱ ${secsLeft}s`, W - 12, 33);
+        ctx.fillStyle = timerColor;
+        ctx.fillText(`⏱ ${secsLeft}s`, W - 14, 31);
+        ctx.font = 'bold 13px monospace';
+        ctx.fillStyle = '#ffdd44';
+        ctx.fillText(`АТАКА • ВОЛНА ${scoreAttackWaveNum + 1}`, W - 14, 55);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    } else {
+        // Level
+        const lvlText = `LEVEL: ${currentLevel + 1}`;
+        ctx.fillStyle = C.textShadow;
+        ctx.fillText(lvlText, W - 152, 32);
+        ctx.fillStyle = C.hud;
+        ctx.fillText(lvlText, W - 150, 30);
 
-    // Timer
-    const secs = Math.floor(levelTimer / 60);
-    const timerColor = secs >= 50 ? '#ff4444' : secs >= 35 ? '#ffaa00' : '#ffffff';
-    ctx.fillStyle = C.textShadow;
-    ctx.fillText(`T: ${secs}s`, W - 152, 57);
-    ctx.fillStyle = timerColor;
-    ctx.fillText(`T: ${secs}s`, W - 150, 55);
+        // Timer
+        const secs = Math.floor(levelTimer / 60);
+        const timerColor = secs >= 50 ? '#ff4444' : secs >= 35 ? '#ffaa00' : '#ffffff';
+        ctx.fillStyle = C.textShadow;
+        ctx.fillText(`T: ${secs}s`, W - 152, 57);
+        ctx.fillStyle = timerColor;
+        ctx.fillText(`T: ${secs}s`, W - 150, 55);
+    }
 
     // High score
     if (highScore > 0) {
@@ -3942,9 +4087,13 @@ function renderMenu() {
     drawPixelSprite(sx, 240, px, MUSHROOM_SPRITE);
     ctx.restore();
 
-    drawTitle("ENTER / Нажми — Начать", 400, 18, C.text);
-    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 428, 12, '#aaaaaa');
-    drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 447, 11, '#888888');
+    drawTitle("ENTER / Нажми — Начать", 390, 18, C.text);
+    drawTitle("S — АТАКА ОЧКОВ (60 сек)", 416, 15, '#ffaa00');
+    if (scoreAttackHighScore > 0) {
+        drawTitle(`Рекорд атаки: ${scoreAttackHighScore}`, 438, 12, '#ff7700');
+    }
+    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 455, 11, '#aaaaaa');
+    drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 470, 11, '#888888');
 
     // Mini leaderboard on menu
     const board = loadLeaderboard();
@@ -3967,6 +4116,21 @@ function renderMenu() {
 
 function renderGameOver() {
     drawBackground();
+
+    // Feature 55: Score Attack special Game Over
+    if (isScoreAttack) {
+        drawTitle("ВРЕМЯ ВЫШЛО!", 130, 38, '#ff8800');
+        drawTitle(`Счёт Атаки: ${player ? player.score : totalScore}`, 178, 24, '#ffcc00');
+        const saScore = player ? player.score : totalScore;
+        if (saScore >= scoreAttackHighScore && scoreAttackHighScore > 0) {
+            drawTitle("НОВЫЙ РЕКОРД АТАКИ!", 210, 18, '#00ff88');
+        }
+        drawTitle(`Рекорд: ${scoreAttackHighScore}`, 234, 16, '#ff9900');
+        drawTitle(`Волн пройдено: ${scoreAttackWaveNum}`, 258, 16, '#88ccff');
+        drawTitle(`Убито врагов: ${runStats.enemiesKilled}`, 280, 14, '#aaaaaa');
+        drawTitle('ENTER — Играть снова  |  ESC — Меню', 330, 14, '#ffffff');
+        return;
+    }
 
     drawTitle("GAME OVER", 150, 42, '#ff4444');
     drawTitle(`Счёт: ${totalScore}`, 200, 22, '#ffcc00');
@@ -4403,6 +4567,12 @@ function update() {
                 initAudio();
                 gameState = 'DIFFICULTY_SELECT';
             }
+            // Feature 55: S key launches Score Attack
+            if (keys['KeyS'] && !keys['_sWas']) {
+                initAudio();
+                startScoreAttack();
+            }
+            keys['_sWas'] = keys['KeyS'];
             break;
 
         case 'DIFFICULTY_SELECT': {
@@ -4519,9 +4689,28 @@ function update() {
             }
             keys['_muteWas'] = keys['KeyM'];
 
+            // Feature 55: Score Attack timer countdown
+            if (isScoreAttack) {
+                scoreAttackTimer--;
+                if (scoreAttackTimer <= 0) {
+                    // Time's up! Save high score and end
+                    if (player.score > scoreAttackHighScore) {
+                        scoreAttackHighScore = player.score;
+                        localStorage.setItem('mushroomScoreAttackHigh', String(scoreAttackHighScore));
+                    }
+                    playSound('gameover');
+                    gameState = 'GAME_OVER';
+                } else if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0) {
+                    // Wave cleared — spawn next wave
+                    spawnScoreAttackWave();
+                    particles.push(new Particle(W / 2 - 60, 200, `ВОЛНА ${scoreAttackWaveNum}!`, '#ffdd00'));
+                    playSound('levelup');
+                }
+            }
+
             // Check level complete (boss level needs boss defeated, regular needs all marios dead)
             const bossCleared = !isBossLevel || bossMarco === null;
-            if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
+            if (!isScoreAttack && marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
                 const timeBonusMult = difficulty === 'easy' ? 2.0 : difficulty === 'hard' ? 0.5 : 1.0;
@@ -4595,11 +4784,19 @@ function update() {
 
         case 'GAME_OVER':
             if (isEnter() && !enterWasPressed) {
-                if (totalScore > highScore) {
-                    highScore = totalScore;
-                    localStorage.setItem('mushroomHighScore', String(highScore));
+                if (isScoreAttack) {
+                    startScoreAttack();
+                } else {
+                    if (totalScore > highScore) {
+                        highScore = totalScore;
+                        localStorage.setItem('mushroomHighScore', String(highScore));
+                    }
+                    startGame();
                 }
-                startGame();
+            }
+            if (isEscape() && !escapeWasPressed && isScoreAttack) {
+                isScoreAttack = false;
+                gameState = 'MENU';
             }
             break;
 
