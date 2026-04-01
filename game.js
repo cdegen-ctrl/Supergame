@@ -352,6 +352,8 @@ class Player extends Entity {
         this.speedBoostTimer = 0;
         // Magnet power-up
         this.magnetTimer = 0;
+        // Freeze power-up (global freeze timer)
+        this.freezeTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -452,6 +454,8 @@ class Player extends Entity {
         if (this.speedBoostTimer > 0) this.speedBoostTimer--;
         // magnet timer
         if (this.magnetTimer > 0) this.magnetTimer--;
+        // freeze timer
+        if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
         if (this.shieldBreakTimer > 0) this.shieldBreakTimer--;
 
@@ -666,6 +670,8 @@ class Mario extends Entity {
         // flying: fixed altitude
         this.flyingY = type === 'flying' ? y : null;
         this.wingFlap = Math.random() * Math.PI * 2; // random phase
+        // freeze
+        this.frozenTimer = 0;
     }
 
     update() {
@@ -673,6 +679,12 @@ class Mario extends Entity {
             this.deathTimer--;
             this.squishScale = Math.max(0.1, this.deathTimer / 20);
             return this.deathTimer > 0;
+        }
+
+        // Frozen: skip all movement, just count down
+        if (this.frozenTimer > 0) {
+            this.frozenTimer--;
+            return true;
         }
 
         // Flying type: no gravity, fixed altitude
@@ -918,6 +930,21 @@ class Mario extends Entity {
             ctx.fill();
             ctx.restore();
         }
+
+        // Frozen overlay: ice-blue tint + snowflake icon
+        if (this.isAlive && this.frozenTimer > 0) {
+            ctx.save();
+            ctx.globalAlpha = 0.55;
+            ctx.fillStyle = '#88ddff';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            ctx.globalAlpha = 1;
+            ctx.font = 'bold 14px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('❄', this.x + this.w / 2, this.y - 2);
+            ctx.textAlign = 'left';
+            ctx.restore();
+        }
     }
 }
 
@@ -1009,6 +1036,7 @@ const STAR_DURATION = 600; // 10 seconds at 60fps
 const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
 const MAGNET_DURATION = 420; // 7 seconds at 60fps
 const MAGNET_RADIUS = 180;
+const FREEZE_DURATION = 240; // 4 seconds at 60fps
 
 class Star {
     constructor(x, y) {
@@ -1406,6 +1434,92 @@ class Magnet {
 }
 
 let magnets = [];
+
+// === FREEZE CRYSTAL POWER-UP ===
+class Freeze {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.1) * 0.1;
+
+        ctx.save();
+        // Icy glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(100, 220, 255, ${0.3 * pulse})`;
+        ctx.fill();
+        // Crystal body (hexagon-like)
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const r = 8 * pulse;
+            const px = cx + Math.cos(angle) * r;
+            const py = cy + Math.sin(angle) * r;
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fillStyle = '#55ccee';
+        ctx.fill();
+        ctx.strokeStyle = '#aaeeff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Inner shine
+        ctx.beginPath();
+        ctx.arc(cx - 2, cy - 2, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(220, 245, 255, 0.7)';
+        ctx.fill();
+        // Snowflake symbol
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('❄', cx, cy + 4);
+        ctx.restore();
+    }
+}
+
+let freezes = [];
+
+function checkFreezeCollisions() {
+    for (const f of freezes) {
+        if (f.collected) continue;
+        if (!aabb(player, f)) continue;
+        f.collected = true;
+        player.freezeTimer = FREEZE_DURATION;
+        // Freeze all alive enemies
+        for (const m of marios) {
+            if (m.isAlive) m.frozenTimer = FREEZE_DURATION;
+        }
+        // Ice particles burst
+        for (let i = 0; i < 16; i++) {
+            const angle = (Math.PI * 2 * i) / 16;
+            const spd = 2 + Math.random() * 3;
+            particles.push(new DeathParticle(
+                f.x + f.w / 2, f.y + f.h / 2,
+                Math.cos(angle) * spd, Math.sin(angle) * spd,
+                i % 2 === 0 ? '#88ddff' : '#ffffff', 5
+            ));
+        }
+        particles.push(new Particle(f.x - 20, f.y - 16, '❄ ЗАМОРОЗКА!', '#88eeff'));
+        playSound('star'); // reuse levelup sound
+    }
+    freezes = freezes.filter(f => !f.collected);
+}
 
 function checkMagnetCollisions() {
     for (const m of magnets) {
@@ -2085,6 +2199,7 @@ const LEVELS = [
         springSpawns: [{ x: 50, y: 446 }, { x: 700, y: 446 }],
         speedBoostSpawns: [{ x: 470, y: 350 }],
         magnetSpawns: [{ x: 130, y: 350 }],
+        freezeSpawns: [{ x: 390, y: 205 }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -2119,6 +2234,7 @@ const LEVELS = [
         springSpawns: [{ x: 280, y: 446 }],
         speedBoostSpawns: [{ x: 350, y: 105 }],
         magnetSpawns: [{ x: 200, y: 235 }],
+        freezeSpawns: [{ x: 580, y: 330 }],
         checkpointSpawns: [{ x: 395, y: 415 }],
         flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
     },
@@ -2159,6 +2275,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 680, y: 446 }],
         speedBoostSpawns: [{ x: 450, y: 375 }],
         magnetSpawns: [{ x: 590, y: 225 }],
+        freezeSpawns: [{ x: 155, y: 145 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
     },
@@ -2202,6 +2319,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
         speedBoostSpawns: [{ x: 640, y: 165 }],
         magnetSpawns: [{ x: 300, y: 65 }],
+        freezeSpawns: [{ x: 220, y: 265 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
     },
@@ -2249,6 +2367,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
         speedBoostSpawns: [{ x: 360, y: 175 }],
         magnetSpawns: [{ x: 460, y: 275 }],
+        freezeSpawns: [{ x: 100, y: 195 }, { x: 560, y: 190 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
     },
@@ -2618,6 +2737,7 @@ function loadLevel(index) {
     springPads = (lvl.springSpawns || []).map(s => new SpringPad(s.x, s.y));
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
     magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
+    freezes = (lvl.freezeSpawns || []).map(f => new Freeze(f.x, f.y));
     checkpoints = (lvl.checkpointSpawns || []).map(c => new Checkpoint(c.x, c.y));
     if (player) player.checkpointSpawn = null; // reset checkpoint on new level
     isBossLevel = !!lvl.isBossLevel;
@@ -3074,6 +3194,29 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Freeze timer bar
+    if (player && player.freezeTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0);
+        const frac = player.freezeTimer / FREEZE_DURATION;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `hsl(${190 + Math.sin(Date.now() * 0.005) * 15}, 90%, 60%)`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('❄ ЗАМОРОЗКА', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Boss HP bar at top center (when in boss level)
     if (isBossLevel && bossMarco && bossMarco.isAlive) {
         const bw = 320;
@@ -3098,6 +3241,33 @@ function drawHUD() {
         ctx.fillStyle = '#fff';
         ctx.fillText(`👑 МАРИО БОСС  ❤ ${bossMarco.hp}/${bossMarco.maxHp}`, W / 2, by + 13);
         ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Enemy progress bar (thin strip below top HUD row, hidden on boss level)
+    if (levelTotalMarios > 0 && !isBossLevel) {
+        const aliveCount = marios.filter(m => m.isAlive).length;
+        const frac = aliveCount / levelTotalMarios;
+        const barW = W - 4;
+        const barH = 6;
+        const barX = 2;
+        const barY = 30;
+        const isLast = aliveCount === 1;
+        const pulse = isLast ? 0.7 + Math.abs(Math.sin(Date.now() * 0.012)) * 0.3 : 1;
+        // Color: green → yellow → red based on remaining fraction
+        const r = Math.round(frac < 0.5 ? 255 * (frac * 2) : 255);
+        const g = Math.round(frac >= 0.5 ? 255 * ((1 - frac) * 2) : 255);
+        ctx.save();
+        ctx.globalAlpha = 0.85 * pulse;
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+        ctx.fillStyle = `rgb(${r},${g},30)`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        // Bright top highlight
+        ctx.globalAlpha = 0.3 * pulse;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(barX, barY, barW * frac, barH * 0.4);
+        ctx.globalAlpha = 1;
         ctx.restore();
     }
 
@@ -3717,6 +3887,8 @@ function update() {
             speedBoosts = speedBoosts.filter(s => s.update());
             magnets = magnets.filter(m => m.update());
             checkMagnetCollisions();
+            freezes = freezes.filter(f => f.update());
+            checkFreezeCollisions();
             checkpoints.forEach(cp => cp.update());
             updateWeather();
             updateAchievementToasts();
@@ -3878,6 +4050,7 @@ function render() {
             springPads.forEach(sp => sp.render());
             speedBoosts.forEach(sb => sb.render());
             magnets.forEach(m => m.render());
+            freezes.forEach(f => f.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
             if (bossMarco) bossMarco.render();
