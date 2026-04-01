@@ -526,6 +526,9 @@ class Player extends Entity {
 
     die() {
         this.lives--;
+        deathFlashTimer = 35;
+        shakeTimer = 20;
+        shakeIntensity = 10;
         if (this.lives <= 0) {
             if (totalScore > highScore) {
                 highScore = totalScore;
@@ -2549,6 +2552,7 @@ let isBossLevel = false;
 let particles = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
+let deathFlashTimer = 0; // red screen flash on player death
 let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
 let comboDisplayTimer = 0;
@@ -3262,20 +3266,43 @@ function drawHUD() {
         ctx.fillText(`HI: ${highScore}`, W / 2 - 40, 30);
     }
 
-    // Combo indicator
+    // Combo indicator (Feature 47: large animated combo display)
     if (comboCount >= 2 && comboDisplayTimer > 0) {
         const alpha = Math.min(1, comboDisplayTimer / 20);
-        const pulse = 1 + Math.sin(comboDisplayTimer * 0.3) * 0.08;
-        const comboColors = ['', '', '#ffff00', '#ffaa00', '#ff6600', '#ff2200'];
-        const color = comboColors[Math.min(comboCount, 5)] || '#ff00ff';
+        // Pulsing scale: bursts big at start, then steady pulse
+        const burstScale = comboDisplayTimer > 80 ? 1 + (100 - comboDisplayTimer) * 0.02 : 1;
+        const pulse = burstScale * (1 + Math.sin(comboDisplayTimer * 0.25) * 0.07);
+        const comboColors = ['', '', '#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
+        const color = comboColors[Math.min(comboCount, 6)] || '#ff00ff';
+        const fontSize = Math.round(40 * pulse);
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.font = `bold ${Math.round(26 * pulse)}px monospace`;
+        // Glow halo behind text
+        ctx.beginPath();
+        ctx.arc(W / 2, H / 2 - 55, 70 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = color.replace('#', 'rgba(').replace(/(..)(..)(..)/, (m, r, g, b) =>
+            `${parseInt(r,16)}, ${parseInt(g,16)}, ${parseInt(b,16)}, 0.18)`);
+        ctx.fill();
+        // Text shadow
+        ctx.font = `bold ${fontSize}px monospace`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = '#000';
-        ctx.fillText(`COMBO x${comboCount}!`, W / 2 + 2, H / 2 - 28);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(`COMBO x${comboCount}!`, W / 2 + 3, H / 2 - 48);
+        // Main text
         ctx.fillStyle = color;
-        ctx.fillText(`COMBO x${comboCount}!`, W / 2, H / 2 - 30);
+        ctx.fillText(`COMBO x${comboCount}!`, W / 2, H / 2 - 51);
+        // Underline sparkle dots
+        if (comboCount >= 3) {
+            const dotCount = Math.min(comboCount, 7);
+            for (let i = 0; i < dotCount; i++) {
+                const dx = (i - (dotCount - 1) / 2) * 16;
+                const dy = 10 + Math.sin(comboDisplayTimer * 0.2 + i) * 3;
+                ctx.beginPath();
+                ctx.arc(W / 2 + dx, H / 2 - 28 + dy, 4, 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.fill();
+            }
+        }
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -4206,6 +4233,17 @@ function render() {
             if (bossMarco) bossMarco.render();
             player.render();
             particles.forEach(p => p.render());
+            // Feature 48: red flash overlay on player death
+            if (deathFlashTimer > 0) {
+                const flashAlpha = (deathFlashTimer / 35) * 0.55;
+                ctx.save();
+                ctx.globalAlpha = flashAlpha;
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(0, 0, W, H);
+                ctx.globalAlpha = 1;
+                ctx.restore();
+                deathFlashTimer--;
+            }
             drawHUD();
             renderAchievementToasts();
             break;
