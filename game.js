@@ -387,6 +387,8 @@ class Player extends Entity {
                 this.scaleX = 0.75;
                 this.scaleY = 1.3;
                 playSound('jump');
+                // Feature 52: smoke puff on ground jump
+                spawnJumpSmoke(this.x + this.w / 2, this.y + this.h);
             } else if (this.canDoubleJump) {
                 this.vy = PLAYER_JUMP * 0.85;
                 this.canDoubleJump = false;
@@ -395,6 +397,8 @@ class Player extends Entity {
                 this.scaleX = 0.7;
                 this.scaleY = 1.35;
                 playSound('jump');
+                // Feature 52: bigger smoke puff on double jump
+                spawnJumpSmoke(this.x + this.w / 2, this.y + this.h, true);
             } else if (this.wallSlideDir !== 0 && this.wallJumpLockTimer <= 0) {
                 // Wall jump! Launch away from wall
                 this.vy = PLAYER_JUMP * 0.9;
@@ -1846,6 +1850,19 @@ function spawnDeathParticles(x, y, w, h) {
         const color = colors[Math.floor(Math.random() * colors.length)];
         const size = 3 + Math.floor(Math.random() * 4);
         particles.push(new DeathParticle(cx, cy, vx, vy, color, size));
+    }
+}
+
+// Feature 52: Jump smoke effect
+function spawnJumpSmoke(cx, cy, isDouble = false) {
+    const count = isDouble ? 8 : 5;
+    const color1 = 'rgba(200,200,200,0.7)';
+    const color2 = isDouble ? '#aaeeff' : 'rgba(180,180,180,0.5)';
+    for (let i = 0; i < count; i++) {
+        const vx = (Math.random() - 0.5) * (isDouble ? 4.5 : 3);
+        const vy = -(0.5 + Math.random() * (isDouble ? 2.5 : 1.5));
+        const sz = 3 + Math.floor(Math.random() * (isDouble ? 5 : 3));
+        particles.push(new DeathParticle(cx + (Math.random() - 0.5) * 14, cy, vx, vy, i % 2 === 0 ? color1 : color2, sz));
     }
 }
 
@@ -3457,6 +3474,51 @@ function drawHUD() {
         ctx.fillText(`ВРАГИ: ${aliveCount}/${levelTotalMarios}`, 22, H - 15);
         ctx.fillStyle = enemyColor;
         ctx.fillText(`ВРАГИ: ${aliveCount}/${levelTotalMarios}`, 20, H - 17);
+        ctx.restore();
+    }
+
+    // Feature 51: Mini-map (enemy tracker) — bottom-right area, above mute
+    if (levelTotalMarios > 0 && !isBossLevel) {
+        const mmW = 80;
+        const mmH = 40;
+        const mmX = W - mmW - 8;
+        const mmY = H - mmH - 30;
+        ctx.save();
+        ctx.globalAlpha = 0.75;
+        // Background
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.beginPath();
+        ctx.roundRect(mmX - 2, mmY - 2, mmW + 4, mmH + 4, 3);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        // Enemy dots (red)
+        ctx.fillStyle = '#ff4444';
+        for (const m of marios) {
+            if (!m.isAlive) continue;
+            const dx = (m.x / W) * mmW;
+            const dy = (m.y / H) * mmH;
+            ctx.beginPath();
+            ctx.arc(mmX + dx, mmY + dy, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        // Player dot (green)
+        if (player) {
+            const px = (player.x / W) * mmW;
+            const py = (player.y / H) * mmH;
+            ctx.fillStyle = '#44ff88';
+            ctx.beginPath();
+            ctx.arc(mmX + px, mmY + py, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // Label
+        ctx.font = 'bold 7px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(200,200,200,0.7)';
+        ctx.fillText('MAP', W - 10, mmY - 4);
+        ctx.textAlign = 'left';
         ctx.restore();
     }
 
