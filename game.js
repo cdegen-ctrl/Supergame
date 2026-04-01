@@ -89,14 +89,14 @@ function setupTouchControls() {
     }, { passive: true });
     canvas.addEventListener('touchend', e => {
         e.preventDefault();
-        if (gameState === 'MENU' || gameState === 'GAME_OVER') {
+        if (gameState === 'MENU' || gameState === 'GAME_OVER' || gameState === 'VICTORY') {
             initAudio();
             keys['Enter'] = true;
             setTimeout(() => { keys['Enter'] = false; }, 120);
         } else if (gameState === 'PAUSED') {
             keys['Escape'] = true;
             setTimeout(() => { keys['Escape'] = false; }, 120);
-        } else if (gameState === 'LEVEL_SELECT') {
+        } else if (gameState === 'LEVEL_SELECT' || gameState === 'DIFFICULTY_SELECT') {
             const endX = e.changedTouches[0]?.clientX ?? touchStartX;
             const dx = endX - touchStartX;
             if (Math.abs(dx) > 30) {
@@ -355,6 +355,8 @@ class Player extends Entity {
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
+        // Checkpoint respawn
+        this.checkpointSpawn = null;
     }
 
     update() {
@@ -529,8 +531,11 @@ class Player extends Entity {
             gameState = 'GAME_OVER';
             playSound('gameover');
         } else {
-            this.x = this.spawnX;
-            this.y = this.spawnY;
+            // Respawn at checkpoint if activated, otherwise level start
+            const rx = this.checkpointSpawn ? this.checkpointSpawn.x : this.spawnX;
+            const ry = this.checkpointSpawn ? this.checkpointSpawn.y : this.spawnY;
+            this.x = rx;
+            this.y = ry;
             this.vx = 0;
             this.vy = 0;
             this.invincibleTimer = 120; // 2 seconds
@@ -1535,6 +1540,74 @@ function spawnDeathParticles(x, y, w, h) {
     }
 }
 
+// === CHECKPOINTS ===
+class Checkpoint {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 16;
+        this.h = 50;
+        this.activated = false;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        if (!this.activated && player && aabb(player, this)) {
+            this.activated = true;
+            player.checkpointSpawn = { x: this.x - 8, y: this.y + 2 };
+            particles.push(new Particle(this.x - 20, this.y - 25, '✅ ЧЕКПОИНТ!', '#00ff88'));
+            playSound('levelup');
+        }
+    }
+
+    render() {
+        const t = this.animTimer;
+        const poleH = 46;
+        const px = this.x + 5;
+        ctx.save();
+
+        // Glow behind pole when activated
+        if (this.activated) {
+            const glow = 0.3 + Math.abs(Math.sin(t * 0.07)) * 0.25;
+            ctx.globalAlpha = glow;
+            ctx.fillStyle = '#00ff88';
+            ctx.beginPath();
+            ctx.arc(px, this.y + poleH / 2, 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
+        // Flagpole
+        ctx.strokeStyle = this.activated ? '#55cc66' : '#999999';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(px, this.y + poleH);
+        ctx.lineTo(px, this.y);
+        ctx.stroke();
+
+        // Pole ball top
+        ctx.fillStyle = this.activated ? '#ffdd00' : '#aaaaaa';
+        ctx.beginPath();
+        ctx.arc(px, this.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Flag (waves when active)
+        const wave = this.activated ? Math.sin(t * 0.13) * 3 : 0;
+        ctx.fillStyle = this.activated ? '#00cc44' : '#888888';
+        ctx.beginPath();
+        ctx.moveTo(px, this.y + 4);
+        ctx.lineTo(px + 20 + wave, this.y + 11);
+        ctx.lineTo(px, this.y + 22);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+    }
+}
+
+let checkpoints = [];
+
 // === BOSS MARIO ===
 class BossMarco extends Entity {
     constructor(x, y) {
@@ -1980,6 +2053,7 @@ const LEVELS = [
         springSpawns: [{ x: 280, y: 446 }],
         speedBoostSpawns: [{ x: 350, y: 105 }],
         magnetSpawns: [{ x: 200, y: 235 }],
+        checkpointSpawns: [{ x: 395, y: 415 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2018,6 +2092,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 680, y: 446 }],
         speedBoostSpawns: [{ x: 450, y: 375 }],
         magnetSpawns: [{ x: 590, y: 225 }],
+        checkpointSpawns: [{ x: 395, y: 425 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -2059,6 +2134,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
         speedBoostSpawns: [{ x: 640, y: 165 }],
         magnetSpawns: [{ x: 300, y: 65 }],
+        checkpointSpawns: [{ x: 395, y: 425 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -2104,6 +2180,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
         speedBoostSpawns: [{ x: 360, y: 175 }],
         magnetSpawns: [{ x: 460, y: 275 }],
+        checkpointSpawns: [{ x: 395, y: 425 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -2160,6 +2237,7 @@ let hudScoreDisplay = 0; // animated score counter
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
 let soundMuted = false;
+let difficulty = localStorage.getItem('mushroomDifficulty') || 'normal';
 
 // === MUSHROOM COLOR CUSTOMIZATION ===
 const MUSHROOM_COLORS = [
@@ -2420,7 +2498,8 @@ function loadLevel(index) {
 
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed));
 
-    const speed = lvl.marioSpeed * speedMult;
+    const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : 1;
+    const speed = lvl.marioSpeed * speedMult * diffMult;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
 
     // Extra Marios for levels beyond 5
@@ -2458,6 +2537,8 @@ function loadLevel(index) {
     springPads = (lvl.springSpawns || []).map(s => new SpringPad(s.x, s.y));
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
     magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
+    checkpoints = (lvl.checkpointSpawns || []).map(c => new Checkpoint(c.x, c.y));
+    if (player) player.checkpointSpawn = null; // reset checkpoint on new level
     isBossLevel = !!lvl.isBossLevel;
     bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
     initWeather(index);
@@ -2477,7 +2558,7 @@ function startGameFromLevel(level) {
     player = null;
     stars = [];
     loadLevel(level);
-    player.lives = 3;
+    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : 3;
     player.score = 0;
     gameState = 'PLAYING';
 }
@@ -3167,6 +3248,104 @@ function renderLevelComplete() {
     drawTitle(`Счёт: ${player.score}`, 245, 20, '#ffcc00');
 }
 
+function renderDifficultySelect() {
+    drawBackground();
+    drawTitle('ВЫБОР СЛОЖНОСТИ', 90, 30, '#ffcc00');
+
+    const opts = [
+        {
+            key: 'easy',
+            name: 'ЛЕГКО',
+            color: 'rgba(30,120,200,0.85)',
+            selColor: 'rgba(60,180,255,0.92)',
+            border: '#88ccff',
+            icon: '😊',
+            lines: ['Скорость врагов ×0.7', '5 жизней', 'Бонус времени ×2', 'Для новичков'],
+        },
+        {
+            key: 'normal',
+            name: 'НОРМАЛЬНО',
+            color: 'rgba(30,130,60,0.85)',
+            selColor: 'rgba(60,200,80,0.92)',
+            border: '#88ffaa',
+            icon: '😐',
+            lines: ['Стандартная скорость', '3 жизни', 'Обычный бонус', 'Оригинальный баланс'],
+        },
+        {
+            key: 'hard',
+            name: 'СЛОЖНО',
+            color: 'rgba(160,30,30,0.85)',
+            selColor: 'rgba(230,60,60,0.92)',
+            border: '#ff8888',
+            icon: '😤',
+            lines: ['Скорость врагов ×1.3', '2 жизни', 'Бонус времени ×0.5', 'Для мастеров'],
+        },
+    ];
+
+    const cardW = 195;
+    const cardH = 200;
+    const gap = 18;
+    const totalW = opts.length * cardW + (opts.length - 1) * gap;
+    const startX = (W - totalW) / 2;
+    const startY = 160;
+
+    opts.forEach((opt, i) => {
+        const bx = startX + i * (cardW + gap);
+        const by = startY;
+        const isSel = difficulty === opt.key;
+
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.beginPath();
+        ctx.roundRect(bx + 4, by + 4, cardW, cardH, 14);
+        ctx.fill();
+
+        // Card background
+        ctx.fillStyle = isSel ? opt.selColor : opt.color;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, cardW, cardH, 14);
+        ctx.fill();
+
+        // Border
+        if (isSel) {
+            ctx.strokeStyle = opt.border;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.roundRect(bx, by, cardW, cardH, 14);
+            ctx.stroke();
+        }
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        const cx = bx + cardW / 2;
+
+        // Icon
+        ctx.font = '32px monospace';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(opt.icon, cx, by + 48);
+
+        // Name
+        ctx.font = `bold ${isSel ? 17 : 15}px monospace`;
+        ctx.fillStyle = '#fff';
+        ctx.fillText(opt.name, cx, by + 80);
+
+        // Details
+        ctx.font = '11px monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        opt.lines.forEach((line, li) => {
+            ctx.fillText(line, cx, by + 105 + li * 22);
+        });
+
+        ctx.restore();
+    });
+
+    drawTitle('← → — Выбор   ENTER — Начать   ESC — Назад', 390, 13, '#aaaaaa');
+
+    // Show current difficulty label
+    const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ' };
+    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, '#ffffaa');
+}
+
 function renderLevelSelect() {
     drawBackground();
 
@@ -3245,6 +3424,8 @@ function renderLevelSelect() {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
 
+    const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : '😐 НОРМА';
+    drawTitle(`Сложность: ${diffLabel}  (ESC → изменить)`, 350, 12, '#aaddff');
     drawTitle('← → — Выбор   ENTER — Играть   ESC — Назад', 380, 13, '#aaaaaa');
     if (selectedLevelIdx >= unlockedLevels) {
         drawTitle('Уровень заблокирован! Пройди предыдущий.', 405, 12, '#ff6666');
@@ -3338,10 +3519,30 @@ function update() {
         case 'MENU':
             if (isEnter() && !enterWasPressed) {
                 initAudio();
+                gameState = 'DIFFICULTY_SELECT';
+            }
+            break;
+
+        case 'DIFFICULTY_SELECT': {
+            const opts = ['easy', 'normal', 'hard'];
+            const idx = opts.indexOf(difficulty);
+            if (isLeft() && !leftWasPressed && idx > 0) {
+                difficulty = opts[idx - 1];
+                localStorage.setItem('mushroomDifficulty', difficulty);
+            }
+            if (isRight() && !rightWasPressed && idx < 2) {
+                difficulty = opts[idx + 1];
+                localStorage.setItem('mushroomDifficulty', difficulty);
+            }
+            if (isEnter() && !enterWasPressed) {
                 selectedLevelIdx = 0;
                 gameState = 'LEVEL_SELECT';
             }
+            if (isEscape() && !escapeWasPressed) {
+                gameState = 'MENU';
+            }
             break;
+        }
 
         case 'LEVEL_SELECT':
             if (isLeft() && !leftWasPressed && selectedLevelIdx > 0) {
@@ -3356,7 +3557,7 @@ function update() {
                 }
             }
             if (isEscape() && !escapeWasPressed) {
-                gameState = 'MENU';
+                gameState = 'DIFFICULTY_SELECT';
             }
             // Z / X — cycle mushroom color
             if (keys['KeyZ'] && !keys['_zWas']) {
@@ -3410,6 +3611,7 @@ function update() {
             speedBoosts = speedBoosts.filter(s => s.update());
             magnets = magnets.filter(m => m.update());
             checkMagnetCollisions();
+            checkpoints.forEach(cp => cp.update());
             updateWeather();
             updateAchievementToasts();
 
@@ -3432,7 +3634,8 @@ function update() {
             if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
-                const timeBonus = Math.max(0, Math.round(TIME_BONUS_MAX * (1 - elapsed / 60)));
+                const timeBonusMult = difficulty === 'easy' ? 2.0 : difficulty === 'hard' ? 0.5 : 1.0;
+                const timeBonus = Math.max(0, Math.round(TIME_BONUS_MAX * timeBonusMult * (1 - elapsed / 60)));
                 if (timeBonus > 0) {
                     player.score += timeBonus;
                     totalScore += timeBonus;
@@ -3538,6 +3741,10 @@ function render() {
             renderMenu();
             break;
 
+        case 'DIFFICULTY_SELECT':
+            renderDifficultySelect();
+            break;
+
         case 'LEVEL_SELECT':
             renderLevelSelect();
             break;
@@ -3549,6 +3756,7 @@ function render() {
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
             shields.forEach(s => s.render());
+            checkpoints.forEach(cp => cp.render());
             springPads.forEach(sp => sp.render());
             speedBoosts.forEach(sb => sb.render());
             magnets.forEach(m => m.render());
