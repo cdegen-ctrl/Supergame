@@ -204,7 +204,7 @@ class Entity {
 }
 
 class Platform extends Entity {
-    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed) {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumbling) {
         super(x, y, w, h);
         // Moving platform support
         this.moveAxis = moveAxis || null;   // 'x' | 'y' | null
@@ -214,9 +214,49 @@ class Platform extends Entity {
         this.moveDir = 1;
         this._prevX = x;
         this._prevY = y;
+        // Feature 53: Crumbling platform support
+        this.isCrumbling = crumbling || false;
+        this.standTimer = 0;      // ticks player has been standing
+        this.shakingTimer = 0;    // ticks of shaking before fall
+        this.fallVy = 0;          // fall velocity once triggered
+        this.falling = false;     // platform is actively falling
+        this.dead = false;        // remove from array
+        this.shakeOffX = 0;       // visual shake offset
+        this.playerOnTop = false; // reset each frame, set in collision
     }
 
     update() {
+        if (this.dead) return;
+
+        // Feature 53: Crumbling platform lifecycle
+        if (this.isCrumbling) {
+            if (this.falling) {
+                this.fallVy += 0.6;
+                this.y += this.fallVy;
+                if (this.y > H + 100) this.dead = true;
+                this.playerOnTop = false;
+                return;
+            }
+            if (this.shakingTimer > 0) {
+                this.shakingTimer--;
+                this.shakeOffX = (Math.random() - 0.5) * 4;
+                if (this.shakingTimer <= 0) {
+                    this.falling = true;
+                    this.shakeOffX = 0;
+                }
+            } else if (this.playerOnTop) {
+                this.standTimer++;
+                if (this.standTimer >= 90) {
+                    this.shakingTimer = 25;
+                    this.standTimer = 0;
+                    playSound('hurt');
+                }
+            } else {
+                this.standTimer = Math.max(0, this.standTimer - 1);
+            }
+            this.playerOnTop = false; // reset each frame
+        }
+
         if (!this.moveAxis) return;
         this._prevX = this.x;
         this._prevY = this.y;
@@ -232,6 +272,69 @@ class Platform extends Entity {
     }
 
     render() {
+        if (this.dead) return;
+
+        // Feature 53: Crumbling platform — distinct orange-brown look
+        if (this.isCrumbling) {
+            const d = DEPTH_3D;
+            const sx = this.x + this.shakeOffX;
+            const sy = this.y;
+            const showCracks = this.standTimer > 35 || this.shakingTimer > 0;
+
+            // 3D bottom face
+            ctx.fillStyle = '#7a3a08';
+            ctx.fillRect(sx, sy + this.h, this.w, d);
+            // 3D right face
+            ctx.fillStyle = '#8c4510';
+            ctx.beginPath();
+            ctx.moveTo(sx + this.w, sy);
+            ctx.lineTo(sx + this.w + d * 0.5, sy - d * 0.3);
+            ctx.lineTo(sx + this.w + d * 0.5, sy + this.h - d * 0.3);
+            ctx.lineTo(sx + this.w, sy + this.h);
+            ctx.closePath();
+            ctx.fill();
+            // Main face
+            const faceColor = this.shakingTimer > 0 ? '#d06010' : '#c05818';
+            ctx.fillStyle = faceColor;
+            ctx.fillRect(sx, sy, this.w, this.h);
+            // Brick lines
+            ctx.strokeStyle = '#8a3a08';
+            ctx.lineWidth = 1;
+            for (let bx = sx; bx < sx + this.w; bx += 22) {
+                ctx.beginPath(); ctx.moveTo(bx, sy); ctx.lineTo(bx, sy + this.h); ctx.stroke();
+            }
+            // Top highlight
+            ctx.strokeStyle = '#e88040';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(sx, sy + 1); ctx.lineTo(sx + this.w, sy + 1); ctx.stroke();
+            // Crack lines when near collapse
+            if (showCracks) {
+                ctx.save();
+                ctx.strokeStyle = '#4a1800';
+                ctx.lineWidth = 1.5;
+                const cx1 = sx + this.w * 0.3;
+                const cx2 = sx + this.w * 0.68;
+                ctx.beginPath();
+                ctx.moveTo(cx1, sy); ctx.lineTo(cx1 + 4, sy + this.h / 2); ctx.lineTo(cx1 - 3, sy + this.h);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx2, sy); ctx.lineTo(cx2 - 4, sy + this.h / 2); ctx.lineTo(cx2 + 5, sy + this.h);
+                ctx.stroke();
+                ctx.restore();
+            }
+            // Warning flash when shaking
+            if (this.shakingTimer > 0 || this.standTimer > 60) {
+                ctx.save();
+                ctx.globalAlpha = 0.5 + Math.sin(Date.now() * 0.03) * 0.4;
+                ctx.font = 'bold 11px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#ffdd00';
+                ctx.fillText('!', sx + this.w / 2, sy + this.h / 2 + 4);
+                ctx.restore();
+            }
+            return;
+        }
+
         const d = DEPTH_3D;
 
         // 3D front face (bottom side)
@@ -490,6 +593,7 @@ class Player extends Entity {
     resolveCollisionsX() {
         this.wallSlideDir = 0; // reset each frame
         for (const p of platforms) {
+            if (p.dead || p.falling) continue; // Feature 53: skip fallen platforms
             if (aabb(this, p)) {
                 if (this.vx > 0) {
                     this.x = p.x - this.w;
@@ -507,6 +611,7 @@ class Player extends Entity {
 
     resolveCollisionsY() {
         for (const p of platforms) {
+            if (p.dead || p.falling) continue; // Feature 53: skip fallen platforms
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
@@ -520,6 +625,8 @@ class Player extends Entity {
                     this.jumpCount = 0;
                     this.canDoubleJump = false;
                     if (comboCount > 0) comboCount = 0;
+                    // Feature 53: notify crumbling platform that player is on top
+                    if (p.isCrumbling) p.playerOnTop = true;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -789,6 +896,7 @@ class Mario extends Entity {
 
     resolveCollisionsX() {
         for (const p of platforms) {
+            if (p.dead || p.falling) continue;
             if (aabb(this, p)) {
                 if (this.vx > 0) {
                     this.x = p.x - this.w;
@@ -802,6 +910,7 @@ class Mario extends Entity {
 
     resolveCollisionsY() {
         for (const p of platforms) {
+            if (p.dead || p.falling) continue;
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
@@ -819,6 +928,7 @@ class Mario extends Entity {
         const footY = this.y + this.h + 2;
         let onPlatform = false;
         for (const p of platforms) {
+            if (p.dead || p.falling) continue;
             if (footX >= p.x && footX <= p.x + p.w && footY >= p.y && footY <= p.y + p.h + 4) {
                 onPlatform = true;
                 break;
@@ -1853,6 +1963,74 @@ function spawnDeathParticles(x, y, w, h) {
     }
 }
 
+// === SPIKE HAZARDS (Feature 54) ===
+class SpikeStrip {
+    constructor(x, y, w, pointUp) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = 16;
+        this.pointUp = pointUp !== false; // default: spikes point up
+    }
+
+    render() {
+        const spikeW = 14;
+        const numSpikes = Math.max(1, Math.floor(this.w / spikeW));
+        const actualW = this.w / numSpikes;
+
+        // Base strip
+        ctx.fillStyle = '#444455';
+        if (this.pointUp) {
+            ctx.fillRect(this.x, this.y + this.h * 0.55, this.w, this.h * 0.45);
+        } else {
+            ctx.fillRect(this.x, this.y, this.w, this.h * 0.45);
+        }
+
+        for (let i = 0; i < numSpikes; i++) {
+            const sx = this.x + i * actualW;
+            // Spike body
+            ctx.fillStyle = '#bb2222';
+            ctx.beginPath();
+            if (this.pointUp) {
+                ctx.moveTo(sx + 1, this.y + this.h);
+                ctx.lineTo(sx + actualW / 2, this.y);
+                ctx.lineTo(sx + actualW - 1, this.y + this.h);
+            } else {
+                ctx.moveTo(sx + 1, this.y);
+                ctx.lineTo(sx + actualW / 2, this.y + this.h);
+                ctx.lineTo(sx + actualW - 1, this.y);
+            }
+            ctx.closePath();
+            ctx.fill();
+            // Metallic sheen
+            ctx.strokeStyle = '#ff6666';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            if (this.pointUp) {
+                ctx.moveTo(sx + actualW / 2, this.y + 3);
+                ctx.lineTo(sx + actualW / 2 - 2, this.y + this.h - 2);
+            } else {
+                ctx.moveTo(sx + actualW / 2, this.y + this.h - 3);
+                ctx.lineTo(sx + actualW / 2 - 2, this.y + 2);
+            }
+            ctx.stroke();
+        }
+    }
+}
+
+let spikeStrips = [];
+
+function checkSpikeCollisions() {
+    if (!player) return;
+    if (player.invincibleTimer > 0 || player.starTimer > 0) return;
+    for (const spike of spikeStrips) {
+        if (aabb(player, spike)) {
+            player.die();
+            return;
+        }
+    }
+}
+
 // === TELEPORT PORTALS (Feature 49) ===
 class Portal {
     constructor(x, y, color, linkedPortal = null) {
@@ -2434,6 +2612,7 @@ const LEVELS = [
             { x: 620, y: 340, w: 120, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.5 },
             { x: 200, y: 230, w: 160, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 0.8 },
             { x: 460, y: 230, w: 160, h: 20 },
+            { x: 345, y: 290, w: 90, h: 20, crumbling: true }, // Feature 53
         ],
         marioSpawns: [
             { x: 50, y: 420 },
@@ -2474,6 +2653,8 @@ const LEVELS = [
             { x: 380, y: 230, w: 140, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.3 },
             { x: 560, y: 260, w: 140, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 0.9 },
             { x: 300, y: 130, w: 200, h: 20 },
+            { x: 100, y: 305, w: 80, h: 20, crumbling: true }, // Feature 53
+            { x: 580, y: 305, w: 80, h: 20, crumbling: true }, // Feature 53
         ],
         marioSpawns: [
             { x: 200, y: 420 },
@@ -2497,6 +2678,8 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 415 }],
         flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
         shooterMarioSpawns: [{ x: 350, y: 90 }],
+        // Feature 54: spike hazards
+        spikeSpawns: [{ x: 275, y: 339, w: 28 }, { x: 635, y: 339, w: 28 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2514,6 +2697,7 @@ const LEVELS = [
             { x: 150, y: 170, w: 130, h: 20 },
             { x: 410, y: 150, w: 130, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 2.2 },
             { x: 280, y: 80, w: 240, h: 20 },
+            { x: 350, y: 210, w: 80, h: 20, crumbling: true }, // Feature 53
         ],
         marioSpawns: [
             { x: 20, y: 420 },
@@ -2541,6 +2725,8 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
         shooterMarioSpawns: [{ x: 450, y: 370 }],
+        // Feature 54: spike hazards
+        spikeSpawns: [{ x: 238, y: 244, w: 30 }, { x: 575, y: 234, w: 30 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -2559,6 +2745,8 @@ const LEVELS = [
             { x: 380, y: 180, w: 110, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.4 },
             { x: 620, y: 190, w: 110, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 2.1 },
             { x: 300, y: 90, w: 200, h: 20 },
+            { x: 160, y: 140, w: 70, h: 20, crumbling: true }, // Feature 53
+            { x: 490, y: 130, w: 70, h: 20, crumbling: true }, // Feature 53
         ],
         marioSpawns: [
             { x: 20, y: 430 },
@@ -2588,6 +2776,8 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
         shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
+        // Feature 53+54: crumbling & spikes
+        spikeSpawns: [{ x: 325, y: 74, w: 50 }, { x: 215, y: 274, w: 30 }, { x: 582, y: 264, w: 28 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -2608,6 +2798,7 @@ const LEVELS = [
             { x: 320, y: 200, w: 80,  h: 20, moveAxis: 'y', moveRange: 50,  moveSpeed: 2.0 },
             { x: 555, y: 215, w: 80,  h: 20, moveAxis: 'x', moveRange: 80,  moveSpeed: 2.7 },
             { x: 250, y: 110, w: 300, h: 20 },
+            { x: 420, y: 155, w: 80,  h: 20, crumbling: true }, // Feature 53
         ],
         marioSpawns: [
             { x: 10,  y: 430 },
@@ -2642,6 +2833,8 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
         shooterMarioSpawns: [{ x: 310, y: 85 }, { x: 530, y: 265 }],
+        // Feature 54: spike hazards
+        spikeSpawns: [{ x: 290, y: 94, w: 50 }, { x: 400, y: 94, w: 50 }, { x: 340, y: 184, w: 30 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -2721,6 +2914,8 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 180, y: 155 }, { x: 480, y: 140 }, { x: 660, y: 165 }],
         shooterMarioSpawns: [{ x: 120, y: 170 }, { x: 620, y: 165 }],
+        // Feature 53+54: crumbling platforms & spikes
+        spikeSpawns: [{ x: 300, y: 84, w: 50 }, { x: 540, y: 175, w: 30 }],
     },
 ];
 
@@ -3017,7 +3212,8 @@ function loadLevel(index) {
     const lvl = LEVELS[lvlIndex];
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumbling));
+    spikeStrips = (lvl.spikeSpawns || []).map(s => new SpikeStrip(s.x, s.y, s.w, s.pointUp));
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : 1;
     const speed = lvl.marioSpeed * speedMult * diffMult;
@@ -4261,6 +4457,7 @@ function update() {
         case 'PLAYING':
             // Update moving platforms before entities so positions are current
             platforms.forEach(p => p.update());
+            platforms = platforms.filter(p => !p.dead); // Feature 53: remove fallen platforms
             // Carry player on moving platform
             for (const p of platforms) {
                 if (!p.moveAxis) continue;
@@ -4301,6 +4498,7 @@ function update() {
             checkFreezeCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
+            checkSpikeCollisions(); // Feature 54: spike hazard collision
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -4457,6 +4655,7 @@ function render() {
             drawBackground();
             renderWeather();
             platforms.forEach(p => p.render());
+            spikeStrips.forEach(s => s.render()); // Feature 54: draw spike hazards
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
             shields.forEach(s => s.render());
@@ -4506,6 +4705,7 @@ function render() {
         case 'PAUSED':
             drawBackground();
             platforms.forEach(p => p.render());
+            spikeStrips.forEach(s => s.render());
             marios.forEach(m => m.render());
             if (bossMarco) bossMarco.render();
             player.render();
