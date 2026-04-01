@@ -121,7 +121,7 @@ canvas.addEventListener('click', e => {
     const cx = (e.clientX - rect.left) * scaleX;
     const cy = (e.clientY - rect.top) * scaleY;
     if (cx > W - 50 && cy > H - 35 && gameState === 'PLAYING') {
-        soundMuted = !soundMuted;
+        setMuted(!soundMuted);
     }
 });
 
@@ -1535,6 +1535,208 @@ function spawnDeathParticles(x, y, w, h) {
     }
 }
 
+// === BOSS MARIO ===
+class BossMarco extends Entity {
+    constructor(x, y) {
+        super(x, y, 72, 90);
+        this.hp = 5;
+        this.maxHp = 5;
+        this.speed = 1.3;
+        this.direction = -1;
+        this.isAlive = true;
+        this.isGrounded = false;
+        this.deathTimer = 0;
+        this.invTimer = 0;    // invincibility after each hit
+        this.animFrame = 0;
+        this.animTimer = 0;
+        this.slamCooldown = 200; // frames until first slam
+        this.isSlaming = false;  // in the air for slam
+        this.shockwaveTimer = 0;
+    }
+
+    update() {
+        if (!this.isAlive) {
+            this.deathTimer--;
+            if (this.deathTimer % 8 === 0) spawnExplosionParticles(
+                this.x + Math.random() * this.w, this.y + Math.random() * this.h);
+            return this.deathTimer > 0;
+        }
+
+        if (this.invTimer > 0) this.invTimer--;
+        if (this.slamCooldown > 0) this.slamCooldown--;
+        if (this.shockwaveTimer > 0) this.shockwaveTimer--;
+
+        const speedMult = this.hp <= 2 ? 2.0 : 1;
+
+        // Ground slam attack
+        if (this.slamCooldown <= 0 && this.isGrounded && !this.isSlaming) {
+            this.vy = -16;
+            this.isGrounded = false;
+            this.isSlaming = true;
+            this.slamCooldown = 260;
+            shakeTimer = 4; shakeIntensity = 2;
+        }
+
+        // Walk (face player when low HP)
+        if (player && this.hp <= 3 && this.isGrounded) {
+            this.direction = player.x < this.x ? -1 : 1;
+        }
+        this.vx = this.speed * speedMult * this.direction;
+
+        // Gravity
+        this.vy += GRAVITY;
+        if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+
+        // Animation
+        this.animTimer++;
+        if (this.animTimer > 10) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+
+        // Move X
+        this.x += this.vx;
+        this.resolveBossX();
+
+        // Move Y
+        const wasGrounded = this.isGrounded;
+        this.isGrounded = false;
+        this.y += this.vy;
+        this.resolveBossY();
+
+        // Landing shockwave
+        if (!wasGrounded && this.isGrounded && this.isSlaming) {
+            this.isSlaming = false;
+            this.shockwaveTimer = 35;
+            shakeTimer = 18; shakeIntensity = 8;
+            particles.push(new Particle(this.x + this.w / 2 - 50, this.y - 20, '💥 УДАР!', '#ff6600'));
+            // Shockwave damage to player
+            if (player && player.invincibleTimer <= 0 && player.starTimer <= 0) {
+                const hDist = Math.abs((player.x + player.w / 2) - (this.x + this.w / 2));
+                const playerNearGround = player.y + player.h > this.y + this.h - 60;
+                if (hDist < 140 && playerNearGround) {
+                    if (player.shieldActive) {
+                        player.shieldActive = false;
+                        player.shieldBreakTimer = 20;
+                        player.invincibleTimer = 60;
+                        unlockAchievement('shieldUser');
+                        playSound('hurt');
+                    } else {
+                        player.die();
+                    }
+                }
+            }
+        }
+
+        // Reverse at bounds
+        if (this.x <= 0 || this.x + this.w >= W) {
+            this.direction *= -1;
+            this.x = Math.max(0, Math.min(this.x, W - this.w));
+        }
+
+        return true;
+    }
+
+    resolveBossX() {
+        for (const p of platforms) {
+            if (aabb(this, p)) {
+                if (this.vx > 0) { this.x = p.x - this.w; }
+                else if (this.vx < 0) { this.x = p.x + p.w; }
+                this.direction *= -1;
+                this.vx = 0;
+            }
+        }
+    }
+
+    resolveBossY() {
+        for (const p of platforms) {
+            if (aabb(this, p)) {
+                if (this.vy > 0) { this.y = p.y - this.h; this.vy = 0; this.isGrounded = true; }
+                else if (this.vy < 0) { this.y = p.y + p.h; this.vy = 0; }
+            }
+        }
+    }
+
+    stomp(fromStar = false) {
+        const invDur = fromStar ? 20 : 60;
+        if (this.invTimer > 0) return false;
+        this.hp--;
+        this.invTimer = invDur;
+        spawnDeathParticles(this.x + this.w * 0.25, this.y, this.w * 0.5, this.h * 0.4);
+        shakeTimer = 8; shakeIntensity = 5;
+        playSound('stomp');
+        if (this.hp <= 0) {
+            this.isAlive = false;
+            this.deathTimer = 90;
+            return true;
+        }
+        return false;
+    }
+
+    render() {
+        if (this.invTimer > 0 && Math.floor(this.invTimer / 4) % 2 === 0) {
+            this.renderHPBar(); return;
+        }
+
+        // Shockwave rings on landing
+        if (this.shockwaveTimer > 0) {
+            const elapsed = 35 - this.shockwaveTimer;
+            const r = elapsed * 6;
+            const alpha = this.shockwaveTimer / 35;
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.65;
+            ctx.strokeStyle = '#ff8800';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h - 2, r, r * 0.25, 0, 0, Math.PI);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        drawShadow(this.x, this.y + this.h, this.w);
+
+        // 3x scale Mario sprite
+        ctx.save();
+        const px = 5.5;
+        const spriteW = 12 * px;
+        const spriteH = 13 * px;
+        const drawX = this.x + (this.w - spriteW) / 2;
+        const drawY = this.y + this.h - spriteH;
+        if (this.direction < 0) {
+            ctx.translate(drawX + spriteW, drawY);
+            ctx.scale(-1, 1);
+            drawPixelSprite(0, 0, px, MARIO_SPRITE);
+        } else {
+            ctx.translate(drawX, drawY);
+            drawPixelSprite(0, 0, px, MARIO_SPRITE);
+        }
+        ctx.restore();
+
+        this.renderHPBar();
+
+        // BOSS label
+        ctx.save();
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#000';
+        ctx.fillText('👑 МАРИО БОСС', this.x + this.w / 2 + 1, this.y - 16);
+        ctx.fillStyle = '#ff3333';
+        ctx.fillText('👑 МАРИО БОСС', this.x + this.w / 2, this.y - 17);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    renderHPBar() {
+        const bw = this.w + 14;
+        const bh = 8;
+        const bx = this.x - 7;
+        const by = this.y - 13;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+        ctx.fillStyle = this.hp > 2 ? '#cc0000' : '#ff4400';
+        ctx.fillRect(bx, by, bw * (this.hp / this.maxHp), bh);
+        ctx.restore();
+    }
+}
+
 // === SCORE PARTICLES ===
 class Particle {
     constructor(x, y, text, color = '#ffff00') {
@@ -1903,6 +2105,32 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 360, y: 175 }],
         magnetSpawns: [{ x: 460, y: 275 }],
     },
+    {
+        // Level 9: BOSS FIGHT — final battle arena
+        isBossLevel: true,
+        platforms: [
+            { x: 0,   y: 460, w: 800, h: 40 },          // full ground
+            { x: 80,  y: 360, w: 160, h: 20 },           // left platform
+            { x: 560, y: 360, w: 160, h: 20 },           // right platform
+            { x: 310, y: 260, w: 180, h: 20 },           // center high
+            { x: 100, y: 210, w: 100, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.5 },
+            { x: 600, y: 210, w: 100, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.5 },
+        ],
+        marioSpawns: [],
+        marioSpeed: 0,
+        playerSpawn: { x: 50, y: 400 },
+        coinSpawns: [
+            { x: 130, y: 435 }, { x: 280, y: 435 }, { x: 450, y: 435 }, { x: 620, y: 435 },
+            { x: 120, y: 335 }, { x: 600, y: 335 },
+            { x: 360, y: 235 }, { x: 430, y: 235 },
+        ],
+        starSpawns: [{ x: 370, y: 225 }],
+        shieldSpawns: [{ x: 600, y: 335 }],
+        bombSpawns: [{ x: 110, y: 325 }],
+        springSpawns: [{ x: 0, y: 446 }, { x: 740, y: 446 }],
+        speedBoostSpawns: [{ x: 450, y: 225 }],
+        magnetSpawns: [{ x: 280, y: 225 }],
+    },
 ];
 
 // === GAME STATE ===
@@ -1911,6 +2139,8 @@ let currentLevel = 0;
 let player = null;
 let marios = [];
 let platforms = [];
+let bossMarco = null;
+let isBossLevel = false;
 let particles = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
@@ -2061,6 +2291,108 @@ function playSound(type) {
     }
 }
 
+// === BACKGROUND MUSIC (chiptune BGM) ===
+let bgmTheme = null;
+let bgmBeat = 0;
+let bgmNextNoteTime = 0;
+let bgmSchedulerTimeout = null;
+
+const BGM_THEMES = {
+    day: {
+        tempo: 0.17,
+        oscType: 'square',
+        gain: 0.038,
+        melody: [
+            330, 392, 440, 392, 330, 262, 294, 330,
+            349, 440, 523, 440, 392, 330, 294, 0,
+            330, 0,  392, 440, 494, 440, 392, 330,
+            392, 330, 294, 262, 294, 330, 392, 0,
+        ],
+    },
+    dusk: {
+        tempo: 0.22,
+        oscType: 'triangle',
+        gain: 0.032,
+        melody: [
+            294, 0,   330, 294, 262, 0,   247, 0,
+            262, 294, 330, 294, 262, 247, 220, 0,
+            247, 0,   262, 0,   294, 330, 294, 0,
+            262, 247, 220, 0,   220, 0,   247, 0,
+        ],
+    },
+    night: {
+        tempo: 0.28,
+        oscType: 'sine',
+        gain: 0.028,
+        melody: [
+            220, 0,   0,   247, 220, 0,   196, 0,
+            220, 0,   0,   220, 196, 175, 0,   0,
+            185, 196, 0,   0,   185, 0,   175, 0,
+            196, 0,   220, 0,   196, 185, 0,   0,
+        ],
+    },
+};
+
+function getBGMThemeForLevel(levelIdx) {
+    if (levelIdx >= 6) return 'night';
+    if (levelIdx >= 4) return 'dusk';
+    return 'day';
+}
+
+function startBGM(theme) {
+    stopBGM();
+    if (!audioCtx || soundMuted || !theme) return;
+    bgmTheme = theme;
+    bgmBeat = 0;
+    bgmNextNoteTime = audioCtx.currentTime + 0.05;
+    scheduleBGMNotes();
+}
+
+function stopBGM() {
+    if (bgmSchedulerTimeout) { clearTimeout(bgmSchedulerTimeout); bgmSchedulerTimeout = null; }
+    bgmTheme = null;
+}
+
+function scheduleBGMNotes() {
+    if (!bgmTheme || !audioCtx || soundMuted) return;
+    // Stop scheduling when in menu or game over
+    if (gameState === 'GAME_OVER' || gameState === 'MENU') { bgmTheme = null; return; }
+
+    const theme = BGM_THEMES[bgmTheme];
+    if (!theme) return;
+
+    while (bgmNextNoteTime < audioCtx.currentTime + 0.4) {
+        const freq = theme.melody[bgmBeat % theme.melody.length];
+        if (freq > 0) {
+            const osc = audioCtx.createOscillator();
+            const g   = audioCtx.createGain();
+            osc.connect(g);
+            g.connect(audioCtx.destination);
+            osc.type = theme.oscType;
+            osc.frequency.value = freq;
+            const noteDur = theme.tempo * 0.82;
+            g.gain.setValueAtTime(0, bgmNextNoteTime);
+            g.gain.linearRampToValueAtTime(theme.gain, bgmNextNoteTime + 0.012);
+            g.gain.setValueAtTime(theme.gain, bgmNextNoteTime + noteDur * 0.65);
+            g.gain.linearRampToValueAtTime(0, bgmNextNoteTime + noteDur);
+            osc.start(bgmNextNoteTime);
+            osc.stop(bgmNextNoteTime + noteDur);
+        }
+        bgmBeat++;
+        bgmNextNoteTime += theme.tempo;
+    }
+    bgmSchedulerTimeout = setTimeout(scheduleBGMNotes, 100);
+}
+
+function setMuted(muted) {
+    soundMuted = muted;
+    if (muted) {
+        stopBGM();
+    } else if (gameState === 'PLAYING' && audioCtx) {
+        startBGM(getBGMThemeForLevel(currentLevel));
+    }
+}
+
 // === LEVEL MANAGEMENT ===
 function getMarioType(levelIndex, spawnIdx) {
     if (levelIndex < 2) return 'normal';
@@ -2126,7 +2458,11 @@ function loadLevel(index) {
     springPads = (lvl.springSpawns || []).map(s => new SpringPad(s.x, s.y));
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
     magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
+    isBossLevel = !!lvl.isBossLevel;
+    bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
     initWeather(index);
+    // Start BGM appropriate to this level's theme
+    if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
 }
 
 function startGame() {
@@ -2234,6 +2570,55 @@ function checkPlayerMarioCollisions() {
             } else {
                 player.die();
             }
+        }
+    }
+}
+
+function checkPlayerBossCollision() {
+    if (!bossMarco || !bossMarco.isAlive) return;
+    if (!aabb(player, bossMarco)) return;
+
+    // Star power: deal 1 HP per contact (with short invincibility window)
+    if (player.starTimer > 0) {
+        if (bossMarco.stomp(true)) {
+            const pts = 1000;
+            player.score += pts;
+            totalScore += pts;
+            particles.push(new Particle(bossMarco.x + bossMarco.w / 2 - 40, bossMarco.y - 10, `+${pts}`, '#ffff00'));
+        }
+        return;
+    }
+
+    if (player.invincibleTimer > 0) return;
+
+    const playerBottom = player.y + player.h;
+    const bossTop = bossMarco.y;
+    const overlapY = playerBottom - bossTop;
+
+    if (player.vy > 0 && overlapY < 20) {
+        // Stomp on boss
+        const killed = bossMarco.stomp(false);
+        player.vy = STOMP_BOUNCE;
+        if (killed) {
+            runStats.enemiesKilled++;
+            const pts = 1000;
+            player.score += pts;
+            totalScore += pts;
+            particles.push(new Particle(bossMarco.x + bossMarco.w / 2 - 50, bossMarco.y - 10, `👑 +${pts}!`, '#ffff00'));
+        } else if (bossMarco.invTimer > 0) {
+            particles.push(new Particle(bossMarco.x + bossMarco.w / 2 - 40, bossMarco.y - 10, `HP: ${bossMarco.hp}`, '#ff6666'));
+        }
+    } else {
+        // Side hit
+        if (player.shieldActive) {
+            player.shieldActive = false;
+            player.shieldBreakTimer = 20;
+            player.invincibleTimer = 60;
+            unlockAchievement('shieldUser');
+            particles.push(new Particle(player.x, player.y - 10, '🛡 ЩИТ!', '#4488ff'));
+            playSound('hurt');
+        } else {
+            player.die();
         }
     }
 }
@@ -2527,8 +2912,35 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Boss HP bar at top center (when in boss level)
+    if (isBossLevel && bossMarco && bossMarco.isAlive) {
+        const bw = 320;
+        const bh = 18;
+        const bx = W / 2 - bw / 2;
+        const by = 6;
+        const frac = bossMarco.hp / bossMarco.maxHp;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.beginPath();
+        ctx.roundRect(bx - 2, by - 2, bw + 4, bh + 4, 5);
+        ctx.fill();
+        ctx.fillStyle = bossMarco.hp <= 2 ? '#ff3300' : '#cc0000';
+        ctx.fillRect(bx, by, bw * frac, bh);
+        // Bright stripe on HP bar
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = '#ff8888';
+        ctx.fillRect(bx, by, bw * frac, bh * 0.4);
+        ctx.globalAlpha = 1;
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`👑 МАРИО БОСС  ❤ ${bossMarco.hp}/${bossMarco.maxHp}`, W / 2, by + 13);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Enemy counter (bottom-left area)
-    if (levelTotalMarios > 0) {
+    if (levelTotalMarios > 0 && !isBossLevel) {
         const aliveCount = marios.filter(m => m.isAlive).length;
         const isLast = aliveCount === 1;
         const enemyColor = isLast ? '#ff4444' : '#ffffff';
@@ -2683,6 +3095,70 @@ function renderGameOver() {
     drawTitle("ENTER — Играть снова", H - 20, 18, C.text);
 }
 
+function renderVictory() {
+    drawBackground();
+
+    // Golden banner
+    ctx.save();
+    const grd = ctx.createLinearGradient(0, 80, 0, 170);
+    grd.addColorStop(0, 'rgba(200,150,0,0.0)');
+    grd.addColorStop(0.5, 'rgba(255,220,0,0.18)');
+    grd.addColorStop(1, 'rgba(200,150,0,0.0)');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 80, W, 90);
+    ctx.restore();
+
+    drawTitle('🏆 ТЫ ПОБЕДИЛ! 🏆', 145, 40, '#ffee00');
+    drawTitle('Финальный Марио повержен!', 198, 18, '#00ff88');
+    drawTitle(`Счёт: ${totalScore}`, 232, 22, '#ffcc00');
+    if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 262, 18, '#00ff44');
+
+    // Big mushroom
+    ctx.save();
+    const mcols = getMushroomColors();
+    const bigSprite = MUSHROOM_SPRITE.map(row => row.map(c => {
+        if (c === C.mushroomCap) return mcols.cap;
+        if (c === C.mushroomCapLight) return mcols.capLight;
+        return c;
+    }));
+    const spx = 6;
+    drawPixelSprite(W / 2 - (14 * spx) / 2, 285, spx, bigSprite);
+    ctx.restore();
+
+    // Stats
+    const panelX = W / 2 - 160;
+    const panelY = 385;
+    const statData = [
+        ['⚔️', 'Убито врагов', runStats.enemiesKilled],
+        ['💰', 'Монет собрано', runStats.coinsCollected],
+        ['🔥', 'Макс. комбо',   runStats.maxCombo],
+        ['🏁', 'Уровней пройдено', runStats.levelsCleared],
+    ];
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, 320, statData.length * 22 + 22, 10);
+    ctx.fill();
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#aaddff';
+    ctx.fillText('📊 СТАТИСТИКА', W / 2, panelY + 15);
+    statData.forEach(([icon, label, val], i) => {
+        const sy = panelY + 15 + (i + 1) * 22;
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#cccccc';
+        ctx.fillText(`${icon} ${label}:`, panelX + 12, sy);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#ffee88';
+        ctx.fillText(String(val), panelX + 308, sy);
+    });
+    ctx.textAlign = 'left';
+    ctx.restore();
+
+    drawTitle('ENTER — В меню', H - 12, 16, C.text);
+}
+
 function renderLevelComplete() {
     drawBackground();
     platforms.forEach(p => p.render());
@@ -2764,7 +3240,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС'];
     if (selectedLevelIdx < unlockedLevels) {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
@@ -2847,7 +3323,7 @@ function renderLevelTransition() {
         ctx.save();
         ctx.globalAlpha = alpha;
         drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
-        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар'];
+        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС'];
         const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
         drawTitle(name, H / 2 + 50, 20, '#aaffaa');
         ctx.restore();
@@ -2922,7 +3398,9 @@ function update() {
             shields = shields.filter(s => s.update());
             bombs = bombs.filter(b => b.update());
             springPads.forEach(sp => sp.update());
+            if (bossMarco) { if (!bossMarco.update()) bossMarco = null; }
             checkPlayerMarioCollisions();
+            checkPlayerBossCollision();
             checkCoinCollisions();
             checkStarCollisions();
             checkShieldCollisions();
@@ -2945,12 +3423,13 @@ function update() {
 
             // Mute toggle with M key (only when not paused)
             if (keys['KeyM'] && !keys['_muteWas']) {
-                soundMuted = !soundMuted;
+                setMuted(!soundMuted);
             }
             keys['_muteWas'] = keys['KeyM'];
 
-            // Check level complete
-            if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0) {
+            // Check level complete (boss level needs boss defeated, regular needs all marios dead)
+            const bossCleared = !isBossLevel || bossMarco === null;
+            if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
                 const timeBonus = Math.max(0, Math.round(TIME_BONUS_MAX * (1 - elapsed / 60)));
@@ -2973,15 +3452,32 @@ function update() {
             levelCompleteTimer--;
             if (levelCompleteTimer <= 0) {
                 runStats.levelsCleared++;
-                currentLevel++;
-                // Unlock next level (up to LEVELS.length)
-                if (currentLevel < LEVELS.length && currentLevel >= unlockedLevels) {
-                    unlockedLevels = currentLevel + 1;
-                    localStorage.setItem('mushroomUnlockedLevels', String(unlockedLevels));
+                if (isBossLevel) {
+                    // Final boss defeated → Victory!
+                    if (totalScore > highScore) {
+                        highScore = totalScore;
+                        localStorage.setItem('mushroomHighScore', String(highScore));
+                    }
+                    submitScore(totalScore);
+                    stopBGM();
+                    gameState = 'VICTORY';
+                } else {
+                    currentLevel++;
+                    // Unlock next level (up to LEVELS.length)
+                    if (currentLevel < LEVELS.length && currentLevel >= unlockedLevels) {
+                        unlockedLevels = currentLevel + 1;
+                        localStorage.setItem('mushroomUnlockedLevels', String(unlockedLevels));
+                    }
+                    loadLevel(currentLevel);
+                    gameState = 'LEVEL_TRANSITION';
+                    levelTransitionTimer = 0;
                 }
-                loadLevel(currentLevel);
-                gameState = 'LEVEL_TRANSITION';
-                levelTransitionTimer = 0;
+            }
+            break;
+
+        case 'VICTORY':
+            if (isEnter() && !enterWasPressed) {
+                gameState = 'MENU';
             }
             break;
 
@@ -3011,6 +3507,7 @@ function update() {
                 startGame();
             }
             if (keys['KeyM'] && !keys['_mWas']) {
+                stopBGM();
                 gameState = 'MENU';
                 player = null;
             }
@@ -3057,6 +3554,7 @@ function render() {
             magnets.forEach(m => m.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
+            if (bossMarco) bossMarco.render();
             player.render();
             particles.forEach(p => p.render());
             drawHUD();
@@ -3075,10 +3573,15 @@ function render() {
             renderGameOver();
             break;
 
+        case 'VICTORY':
+            renderVictory();
+            break;
+
         case 'PAUSED':
             drawBackground();
             platforms.forEach(p => p.render());
             marios.forEach(m => m.render());
+            if (bossMarco) bossMarco.render();
             player.render();
             drawHUD();
 
