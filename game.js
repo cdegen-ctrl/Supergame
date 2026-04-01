@@ -663,6 +663,9 @@ class Mario extends Entity {
         this.armor = type === 'armored' ? 1 : 0;
         // jumpy: timer until next jump
         this.jumpTimer = type === 'jumpy' ? 60 + Math.floor(Math.random() * 80) : 9999;
+        // flying: fixed altitude
+        this.flyingY = type === 'flying' ? y : null;
+        this.wingFlap = Math.random() * Math.PI * 2; // random phase
     }
 
     update() {
@@ -670,6 +673,32 @@ class Mario extends Entity {
             this.deathTimer--;
             this.squishScale = Math.max(0.1, this.deathTimer / 20);
             return this.deathTimer > 0;
+        }
+
+        // Flying type: no gravity, fixed altitude
+        if (this.type === 'flying') {
+            this.wingFlap += 0.18;
+            this.vx = this.speed * this.direction;
+            this.x += this.vx;
+            this.y = this.flyingY;
+            this.vy = 0;
+            // Reverse on canvas bounds
+            if (this.x <= 0 || this.x + this.w >= W) {
+                this.direction *= -1;
+                this.x = Math.max(0, Math.min(this.x, W - this.w));
+            }
+            // Reverse on platform horizontal collision
+            for (const p of platforms) {
+                if (aabb(this, p)) {
+                    if (this.vx > 0) this.x = p.x - this.w;
+                    else if (this.vx < 0) this.x = p.x + p.w;
+                    this.direction *= -1;
+                    break;
+                }
+            }
+            this.animTimer++;
+            if (this.animTimer > 8) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+            return true;
         }
 
         this.vx = this.speed * this.direction;
@@ -848,8 +877,45 @@ class Mario extends Entity {
                 ctx.fillText('🛡', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#aabbcc';
                 ctx.fillText('🛡', badgeX, badgeY);
+            } else if (this.type === 'flying') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('✈', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#88ddff';
+                ctx.fillText('✈', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        // Wings for flying type
+        if (this.isAlive && this.type === 'flying') {
+            const flapY = Math.sin(this.wingFlap) * 6;
+            const wx = this.x + this.w / 2;
+            const wy = this.y + this.h * 0.25;
+            ctx.save();
+            ctx.globalAlpha = 0.82;
+            // Left wing
+            ctx.fillStyle = '#aaddff';
+            ctx.strokeStyle = '#5599cc';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(wx - 20, wy + flapY, 16, 7, -0.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            // Right wing
+            ctx.beginPath();
+            ctx.ellipse(wx + 20, wy - flapY, 16, 7, 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            // Wing highlights
+            ctx.globalAlpha = 0.35;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.ellipse(wx - 22, wy + flapY - 2, 8, 3, -0.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(wx + 18, wy - flapY - 2, 8, 3, 0.4, 0, Math.PI * 2);
+            ctx.fill();
             ctx.restore();
         }
     }
@@ -2054,6 +2120,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 350, y: 105 }],
         magnetSpawns: [{ x: 200, y: 235 }],
         checkpointSpawns: [{ x: 395, y: 415 }],
+        flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2093,6 +2160,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 450, y: 375 }],
         magnetSpawns: [{ x: 590, y: 225 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
+        flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -2135,6 +2203,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 640, y: 165 }],
         magnetSpawns: [{ x: 300, y: 65 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
+        flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -2181,6 +2250,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 360, y: 175 }],
         magnetSpawns: [{ x: 460, y: 275 }],
         checkpointSpawns: [{ x: 395, y: 425 }],
+        flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -2238,6 +2308,12 @@ let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || 
 let selectedLevelIdx = 0;
 let soundMuted = false;
 let difficulty = localStorage.getItem('mushroomDifficulty') || 'normal';
+
+// === LEVEL BEST TIMES ===
+let levelBestTimes = [];
+try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || '[]'); } catch { levelBestTimes = []; }
+let levelCompletionTime = 0;   // seconds spent on last completed level
+let isNewLevelTimeRecord = false;
 
 // === MUSHROOM COLOR CUSTOMIZATION ===
 const MUSHROOM_COLORS = [
@@ -2510,6 +2586,11 @@ function loadLevel(index) {
             marios.push(new Mario(spawn.x + 40, spawn.y, speed * 1.1, 'fast'));
         }
     }
+
+    // Flying Marios (no gravity, patrol at fixed altitude)
+    const flyingSpeed = speed * 0.85;
+    const flyingMarios = (lvl.flyingMarioSpawns || []).map(s => new Mario(s.x, s.y, flyingSpeed, 'flying'));
+    marios = [...marios, ...flyingMarios];
 
     const sp = lvl.playerSpawn;
     if (player) {
@@ -3246,6 +3327,31 @@ function renderLevelComplete() {
 
     drawTitle(`УРОВЕНЬ ${currentLevel + 1} ПРОЙДЕН!`, 200, 32, '#00ff00');
     drawTitle(`Счёт: ${player.score}`, 245, 20, '#ffcc00');
+
+    // Time display
+    const t = levelCompletionTime;
+    const tMins = Math.floor(t / 60);
+    const tSecs = Math.floor(t % 60);
+    const tMs = Math.floor((t % 1) * 10);
+    const timeStr = tMins > 0 ? `${tMins}м ${tSecs}.${tMs}с` : `${tSecs}.${tMs}с`;
+    drawTitle(`⏱ Время: ${timeStr}`, 278, 17, '#88ddff');
+
+    if (isNewLevelTimeRecord) {
+        const pulse = 0.85 + Math.sin(Date.now() * 0.008) * 0.15;
+        ctx.save();
+        ctx.globalAlpha = 0.85 + pulse * 0.15;
+        drawTitle('🏅 РЕКОРД ВРЕМЕНИ!', 308, 16, '#00ffcc');
+        ctx.restore();
+    } else {
+        const best = levelBestTimes[currentLevel];
+        if (best != null) {
+            const bm = Math.floor(best / 60);
+            const bs = Math.floor(best % 60);
+            const bms = Math.floor((best % 1) * 10);
+            const bestStr = bm > 0 ? `${bm}м ${bs}.${bms}с` : `${bs}.${bms}с`;
+            drawTitle(`Рекорд: ${bestStr}`, 308, 14, '#888888');
+        }
+    }
 }
 
 function renderDifficultySelect() {
@@ -3644,6 +3750,18 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
+                // Save best level time
+                levelCompletionTime = levelTimer / 60;
+                if (!isBossLevel) {
+                    const prev = levelBestTimes[currentLevel];
+                    if (prev === undefined || prev === null || levelCompletionTime < prev) {
+                        levelBestTimes[currentLevel] = parseFloat(levelCompletionTime.toFixed(1));
+                        isNewLevelTimeRecord = true;
+                        localStorage.setItem('mushroomLevelTimes', JSON.stringify(levelBestTimes));
+                    } else {
+                        isNewLevelTimeRecord = false;
+                    }
+                }
             }
 
             if (isEscape() && !escapeWasPressed) {
