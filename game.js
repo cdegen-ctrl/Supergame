@@ -350,9 +350,17 @@ class Player extends Entity {
         this.shieldBreakTimer = 0;
         // Speed boost power-up
         this.speedBoostTimer = 0;
+        // Magnet power-up
+        this.magnetTimer = 0;
+        // Wall jump
+        this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
+        this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
     }
 
     update() {
+        // Wall jump lock countdown
+        if (this.wallJumpLockTimer > 0) this.wallJumpLockTimer--;
+
         // horizontal movement
         const currentSpeed = this.speedBoostTimer > 0 ? PLAYER_SPEED * 2 : PLAYER_SPEED;
         if (isLeft()) {
@@ -365,7 +373,7 @@ class Player extends Entity {
             this.vx = 0;
         }
 
-        // jump (only on press, not hold) — supports double jump
+        // jump (only on press, not hold) — supports double jump + wall jump
         if (isJump() && !jumpWasPressed) {
             if (this.isGrounded) {
                 this.vy = PLAYER_JUMP;
@@ -383,6 +391,18 @@ class Player extends Entity {
                 this.scaleX = 0.7;
                 this.scaleY = 1.35;
                 playSound('jump');
+            } else if (this.wallSlideDir !== 0 && this.wallJumpLockTimer <= 0) {
+                // Wall jump! Launch away from wall
+                this.vy = PLAYER_JUMP * 0.9;
+                this.vx = -this.wallSlideDir * currentSpeed * 3.5;
+                this.facingRight = this.wallSlideDir < 0;
+                this.canDoubleJump = true;
+                this.jumpCount = 1;
+                this.wallJumpLockTimer = 18;
+                this.doubleJumpFlash = 15;
+                this.scaleX = 0.7;
+                this.scaleY = 1.35;
+                playSound('jump');
             }
         }
         jumpWasPressed = isJump();
@@ -390,6 +410,11 @@ class Player extends Entity {
         // gravity
         this.vy += GRAVITY;
         if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+
+        // Wall slide: slow down fall when pressing against a wall in air
+        if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 1.5) {
+            this.vy = 1.5 + (this.vy - 1.5) * 0.18; // damp fall speed
+        }
 
         // animation
         if (this.vx !== 0 && this.isGrounded) {
@@ -423,8 +448,21 @@ class Player extends Entity {
         if (this.starTimer > 0) this.starTimer--;
         // speed boost timer
         if (this.speedBoostTimer > 0) this.speedBoostTimer--;
+        // magnet timer
+        if (this.magnetTimer > 0) this.magnetTimer--;
         // shield break animation timer
         if (this.shieldBreakTimer > 0) this.shieldBreakTimer--;
+
+        // Wall slide dust particles
+        if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 0.5) {
+            if (Math.random() < 0.18) {
+                const px = this.wallSlideDir > 0 ? this.x + this.w + 1 : this.x - 3;
+                const py = this.y + this.h * 0.5 + Math.random() * this.h * 0.35;
+                particles.push(new DeathParticle(px, py,
+                    -this.wallSlideDir * (0.8 + Math.random()), this.vy * 0.2,
+                    '#ddddcc', 2));
+            }
+        }
 
         // Smooth squash/stretch recovery
         this.scaleX += (1 - this.scaleX) * 0.22;
@@ -440,16 +478,21 @@ class Player extends Entity {
     }
 
     resolveCollisionsX() {
+        this.wallSlideDir = 0; // reset each frame
         for (const p of platforms) {
             if (aabb(this, p)) {
                 if (this.vx > 0) {
                     this.x = p.x - this.w;
+                    if (!this.isGrounded) this.wallSlideDir = 1;  // touching right wall
                 } else if (this.vx < 0) {
                     this.x = p.x + p.w;
+                    if (!this.isGrounded) this.wallSlideDir = -1; // touching left wall
                 }
                 this.vx = 0;
             }
         }
+        // During wall jump lock, suppress wallSlideDir to prevent re-triggering
+        if (this.wallJumpLockTimer > 0) this.wallSlideDir = 0;
     }
 
     resolveCollisionsY() {
@@ -537,6 +580,16 @@ class Player extends Entity {
             ctx.beginPath();
             ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r, 0, Math.PI * 2);
             ctx.stroke();
+            ctx.restore();
+        }
+
+        // Wall slide glow (vertical strip on wall side)
+        if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 0) {
+            ctx.save();
+            ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.015) * 0.15;
+            const glowX = this.wallSlideDir > 0 ? this.x + this.w - 3 : this.x;
+            ctx.fillStyle = '#ffdd55';
+            ctx.fillRect(glowX, this.y + 4, 3, this.h - 8);
             ctx.restore();
         }
 
@@ -814,6 +867,21 @@ class Coin {
 
     update() {
         this.animTimer++;
+        // Magnet attraction: pull coin toward player when magnet is active
+        if (player && player.magnetTimer > 0 && !this.isDropped) {
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            const px = player.x + player.w / 2;
+            const py = player.y + player.h / 2;
+            const dx = px - cx;
+            const dy = py - cy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < MAGNET_RADIUS && dist > 1) {
+                const spd = Math.min(10, (MAGNET_RADIUS - dist) / 18 + 2);
+                this.x += (dx / dist) * spd;
+                this.y += (dy / dist) * spd;
+            }
+        }
         if (this.isDropped) {
             this.vy += 0.45;
             this.x += this.vx;
@@ -868,6 +936,8 @@ let coins = [];
 // === STAR POWER-UP ===
 const STAR_DURATION = 600; // 10 seconds at 60fps
 const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
+const MAGNET_DURATION = 420; // 7 seconds at 60fps
+const MAGNET_RADIUS = 180;
 
 class Star {
     constructor(x, y) {
@@ -1212,6 +1282,71 @@ class SpeedBoost {
 }
 
 let speedBoosts = [];
+
+// === MAGNET POWER-UP ===
+class Magnet {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.12) * 0.1;
+
+        ctx.save();
+        // Pink/magenta glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 60, 200, ${0.3 * pulse})`;
+        ctx.fill();
+        // Body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#cc00aa';
+        ctx.fill();
+        ctx.strokeStyle = '#ff88dd';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Shine
+        ctx.beginPath();
+        ctx.arc(cx - 2.5, cy - 2, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 200, 240, 0.5)';
+        ctx.fill();
+        // Magnet symbol
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('🧲', cx, cy + 4);
+        ctx.restore();
+    }
+}
+
+let magnets = [];
+
+function checkMagnetCollisions() {
+    for (const m of magnets) {
+        if (m.collected) continue;
+        if (!aabb(player, m)) continue;
+        m.collected = true;
+        player.magnetTimer = MAGNET_DURATION;
+        particles.push(new Particle(m.x, m.y - 10, '🧲 МАГНИТ!', '#ff44cc'));
+        playSound('levelup');
+    }
+    magnets = magnets.filter(m => !m.collected);
+}
 
 function checkSpeedBoostCollisions() {
     for (const sb of speedBoosts) {
@@ -1574,6 +1709,7 @@ const LEVELS = [
         bombSpawns: [{ x: 150, y: 305 }],
         springSpawns: [{ x: 460, y: 446 }],
         speedBoostSpawns: [{ x: 90, y: 435 }],
+        magnetSpawns: [{ x: 310, y: 195 }],
     },
     {
         // Level 4: Complex layout with moving platforms
@@ -1607,6 +1743,7 @@ const LEVELS = [
         bombSpawns: [{ x: 660, y: 295 }],
         springSpawns: [{ x: 50, y: 446 }, { x: 700, y: 446 }],
         speedBoostSpawns: [{ x: 470, y: 350 }],
+        magnetSpawns: [{ x: 130, y: 350 }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -1640,6 +1777,7 @@ const LEVELS = [
         bombSpawns: [{ x: 640, y: 230 }],
         springSpawns: [{ x: 280, y: 446 }],
         speedBoostSpawns: [{ x: 350, y: 105 }],
+        magnetSpawns: [{ x: 200, y: 235 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -1677,6 +1815,7 @@ const LEVELS = [
         bombSpawns: [{ x: 230, y: 235 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 680, y: 446 }],
         speedBoostSpawns: [{ x: 450, y: 375 }],
+        magnetSpawns: [{ x: 590, y: 225 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -1717,6 +1856,7 @@ const LEVELS = [
         bombSpawns: [{ x: 140, y: 375 }, { x: 500, y: 355 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 700, y: 446 }],
         speedBoostSpawns: [{ x: 640, y: 165 }],
+        magnetSpawns: [{ x: 300, y: 65 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -1761,6 +1901,7 @@ const LEVELS = [
         bombSpawns: [{ x: 200, y: 285 }, { x: 555, y: 270 }],
         springSpawns: [{ x: 0, y: 446 }, { x: 720, y: 446 }],
         speedBoostSpawns: [{ x: 360, y: 175 }],
+        magnetSpawns: [{ x: 460, y: 275 }],
     },
 ];
 
@@ -1984,6 +2125,7 @@ function loadLevel(index) {
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
     springPads = (lvl.springSpawns || []).map(s => new SpringPad(s.x, s.y));
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
+    magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
     initWeather(index);
 }
 
@@ -2350,7 +2492,7 @@ function drawHUD() {
         const barW = 140;
         const barH = 10;
         const barX = W / 2 - barW / 2;
-        const barY = player.starTimer > 0 ? 86 : 68;
+        const barY = 68 + (player.starTimer > 0 ? 18 : 0);
         const frac = player.speedBoostTimer / SPEED_BOOST_DURATION;
         ctx.save();
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -2361,6 +2503,26 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff';
         ctx.fillText('⚡ УСКОР.', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Magnet timer bar
+    if (player && player.magnetTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68 + (player.starTimer > 0 ? 18 : 0) + (player.speedBoostTimer > 0 ? 18 : 0);
+        const frac = player.magnetTimer / MAGNET_DURATION;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = '#cc00aa';
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('🧲 МАГНИТ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -2389,13 +2551,18 @@ function drawHUD() {
     ctx.textAlign = 'left';
     ctx.restore();
 
-    // Double jump indicator
-    if (player && !player.isGrounded && player.canDoubleJump) {
+    // Jump state indicator (double jump or wall jump)
+    if (player && !player.isGrounded) {
         ctx.save();
         ctx.font = 'bold 11px monospace';
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(100,200,255,0.8)';
-        ctx.fillText('2x прыжок!', W / 2, H - 15);
+        if (player.wallSlideDir !== 0 && player.wallJumpLockTimer <= 0) {
+            ctx.fillStyle = 'rgba(255,220,80,0.92)';
+            ctx.fillText('↑ ПРЫЖОК ОТ СТЕНЫ!', W / 2, H - 15);
+        } else if (player.canDoubleJump) {
+            ctx.fillStyle = 'rgba(100,200,255,0.8)';
+            ctx.fillText('2x прыжок!', W / 2, H - 15);
+        }
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -2763,6 +2930,8 @@ function update() {
             checkSpringCollisions();
             checkSpeedBoostCollisions();
             speedBoosts = speedBoosts.filter(s => s.update());
+            magnets = magnets.filter(m => m.update());
+            checkMagnetCollisions();
             updateWeather();
             updateAchievementToasts();
 
@@ -2885,6 +3054,7 @@ function render() {
             shields.forEach(s => s.render());
             springPads.forEach(sp => sp.render());
             speedBoosts.forEach(sb => sb.render());
+            magnets.forEach(m => m.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
             player.render();
