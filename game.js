@@ -2667,6 +2667,60 @@ class Particle {
     }
 }
 
+// === FIREWORK SPARKS (Feature 62) ===
+class FireworkSpark {
+    constructor(x, y, vx, vy, color) {
+        this.x = x; this.y = y;
+        this.vx = vx; this.vy = vy;
+        this.color = color;
+        this.life = 55 + Math.random() * 35;
+        this.maxLife = this.life;
+        this.r = 2 + Math.random() * 1.5;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.12;
+        this.vx *= 0.97;
+        this.vy *= 0.98;
+        this.life--;
+        return this.life > 0;
+    }
+
+    render() {
+        const a = (this.life / this.maxLife);
+        ctx.save();
+        ctx.globalAlpha = a * 0.9;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.r * a + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+function spawnFirework(x, y) {
+    const palettes = [
+        ['#ff4444', '#ff8800', '#ffcc00'],
+        ['#44ff88', '#00ccff', '#4488ff'],
+        ['#ff44ff', '#cc00cc', '#ffffff'],
+        ['#ffdd00', '#ff8800', '#ffaaaa'],
+    ];
+    const colors = palettes[Math.floor(Math.random() * palettes.length)];
+    const count = 20 + Math.floor(Math.random() * 10);
+    for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+        const spd = 1.5 + Math.random() * 3.5;
+        victoryFireworks.push(new FireworkSpark(
+            x, y,
+            Math.cos(angle) * spd,
+            Math.sin(angle) * spd - 0.5,
+            colors[Math.floor(Math.random() * colors.length)]
+        ));
+    }
+}
+
 // === RUN STATISTICS ===
 let runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0 };
 function resetRunStats() {
@@ -3264,6 +3318,7 @@ let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
 let comboDisplayTimer = 0;
 let levelTimer = 0;       // frames elapsed in current level
+let coinsThisLevel = 0;   // Feature 61: coins collected on current level
 const TIME_BONUS_MAX = 3000; // max bonus at 0 seconds
 const TIME_PER_FRAME = 1 / 60;
 let enterWasPressed = false;
@@ -3273,6 +3328,9 @@ let rightWasPressed = false;
 let totalScore = 0;
 let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
 let hudScoreDisplay = 0; // animated score counter
+// Feature 62: victory fireworks
+let victoryFireworks = [];
+let victoryFrameTimer = 0;
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
 let soundMuted = false;
@@ -3589,6 +3647,7 @@ function loadLevel(index) {
     comboCount = 0;
     comboDisplayTimer = 0;
     levelTimer = 0;
+    coinsThisLevel = 0;
     hudScoreDisplay = 0;
     levelTotalMarios = marios.length;
     coins = [
@@ -3694,6 +3753,7 @@ function checkCoinCollisions() {
             totalScore += pts;
             totalCoinsCollectedRun++;
             runStats.coinsCollected++;
+            coinsThisLevel++;
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
             particles.push(new Particle(coin.x, coin.y - 5, `+${pts}`, pts > 50 ? '#ff9900' : '#ffcc00'));
             playSound('coin');
@@ -4262,6 +4322,17 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 61: Coin counter for current level
+    if (!isScoreAttack) {
+        ctx.save();
+        ctx.font = 'bold 12px monospace';
+        ctx.fillStyle = '#000';
+        ctx.fillText(`🪙 ${coinsThisLevel}`, W / 2 - 17, H - 15);
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillText(`🪙 ${coinsThisLevel}`, W / 2 - 18, H - 17);
+        ctx.restore();
+    }
+
     // Feature 51: Mini-map (enemy tracker) — bottom-right area, above mute
     if (levelTotalMarios > 0 && !isBossLevel) {
         const mmW = 80;
@@ -4485,7 +4556,10 @@ function renderVictory() {
     drawTitle(`Счёт: ${totalScore}`, 232, 22, '#ffcc00');
     if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 262, 18, '#00ff44');
 
-    // Big mushroom
+    // Feature 62: fireworks behind everything
+    victoryFireworks.forEach(f => f.render());
+
+    // Big mushroom — bouncing dance (Feature 62)
     ctx.save();
     const mcols = getMushroomColors();
     const bigSprite = MUSHROOM_SPRITE.map(row => row.map(c => {
@@ -4494,7 +4568,8 @@ function renderVictory() {
         return c;
     }));
     const spx = 6;
-    drawPixelSprite(W / 2 - (14 * spx) / 2, 285, spx, bigSprite);
+    const bounce = Math.abs(Math.sin(victoryFrameTimer * 0.08)) * 14;
+    drawPixelSprite(W / 2 - (14 * spx) / 2, 285 - bounce, spx, bigSprite);
     ctx.restore();
 
     // Stats
@@ -5036,6 +5111,8 @@ function update() {
                     submitScore(totalScore);
                     stopBGM();
                     gameState = 'VICTORY';
+                    victoryFireworks = [];
+                    victoryFrameTimer = 0;
                 } else {
                     currentLevel++;
                     // Unlock next level (up to LEVELS.length)
@@ -5054,6 +5131,12 @@ function update() {
             if (isEnter() && !enterWasPressed) {
                 gameState = 'MENU';
             }
+            // Feature 62: spawn and update fireworks
+            victoryFrameTimer++;
+            if (victoryFrameTimer % 45 === 0) {
+                spawnFirework(80 + Math.random() * 640, 60 + Math.random() * 220);
+            }
+            victoryFireworks = victoryFireworks.filter(f => f.update());
             break;
 
         case 'LEVEL_TRANSITION':
