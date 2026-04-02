@@ -3736,6 +3736,71 @@ const LEVELS = [
         shooterMarioSpawns:   [{ x: 310, y: 85  }, { x: 490, y: 100 }],
         parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 380, y: -80 }, { x: 620, y: -50 }, { x: 50, y: -110 }, { x: 750, y: -90 }], // Feature 71
     },
+    ,{
+        // Level 13: «Монетная пещера» — Feature 82: bonus coin-only timed challenge
+        isBonusLevel: true,
+        platforms: [
+            // Floor
+            { x: 0,   y: 460, w: 800, h: 40 },
+            // Low caves platforms
+            { x: 50,  y: 400, w: 90,  h: 16 },
+            { x: 200, y: 410, w: 80,  h: 16 },
+            { x: 360, y: 395, w: 90,  h: 16 },
+            { x: 530, y: 405, w: 80,  h: 16 },
+            { x: 680, y: 395, w: 90,  h: 16 },
+            // Mid cave tier
+            { x: 0,   y: 340, w: 70,  h: 16 },
+            { x: 130, y: 325, w: 90,  h: 16 },
+            { x: 290, y: 335, w: 90,  h: 16 },
+            { x: 450, y: 320, w: 90,  h: 16 },
+            { x: 610, y: 330, w: 80,  h: 16 },
+            { x: 740, y: 320, w: 60,  h: 16 },
+            // Upper-mid cave tier
+            { x: 40,  y: 255, w: 100, h: 16 },
+            { x: 190, y: 240, w: 90,  h: 16 },
+            { x: 340, y: 255, w: 90,  h: 16, moveAxis: 'x', moveRange: 60, moveSpeed: 2.0 },
+            { x: 500, y: 240, w: 90,  h: 16 },
+            { x: 660, y: 250, w: 100, h: 16 },
+            // Top cave tier
+            { x: 80,  y: 170, w: 110, h: 16 },
+            { x: 260, y: 155, w: 100, h: 16 },
+            { x: 440, y: 165, w: 100, h: 16, moveAxis: 'x', moveRange: 50, moveSpeed: 1.8 },
+            { x: 620, y: 155, w: 110, h: 16 },
+            // Summit platform
+            { x: 300, y: 85,  w: 200, h: 16 },
+        ],
+        marioSpawns: [],  // No enemies — pure coin collecting!
+        marioSpeed: 0,
+        playerSpawn: { x: 50, y: 400 },
+        coinSpawns: [
+            // Floor level coins
+            { x: 90,  y: 435 }, { x: 180, y: 435 }, { x: 270, y: 435 }, { x: 360, y: 435 },
+            { x: 450, y: 435 }, { x: 540, y: 435 }, { x: 630, y: 435 }, { x: 720, y: 435 },
+            // Low platform coins
+            { x: 65,  y: 375 }, { x: 215, y: 385 }, { x: 375, y: 370 },
+            { x: 545, y: 380 }, { x: 695, y: 370 },
+            // Mid tier coins
+            { x: 15,  y: 315 }, { x: 145, y: 300 }, { x: 305, y: 310 },
+            { x: 465, y: 295 }, { x: 625, y: 305 }, { x: 755, y: 295 },
+            // Upper-mid tier coins
+            { x: 55,  y: 230 }, { x: 205, y: 215 }, { x: 355, y: 230 },
+            { x: 515, y: 215 }, { x: 675, y: 225 },
+            // Top tier coins
+            { x: 95,  y: 145 }, { x: 275, y: 130 }, { x: 455, y: 140 },
+            { x: 635, y: 130 },
+            // Summit coins
+            { x: 325, y: 60 }, { x: 375, y: 60 }, { x: 425, y: 60 }, { x: 475, y: 60 },
+        ],
+        doubleCoinSpawns: [
+            { x: 150, y: 435 }, { x: 460, y: 435 },
+            { x: 490, y: 370 }, { x: 180, y: 300 },
+            { x: 575, y: 215 }, { x: 345, y: 130 },
+            { x: 395, y: 60  },
+        ],
+        springSpawns: [
+            { x: 370, y: 446 },
+        ],
+    }
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -3965,6 +4030,16 @@ let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || 
 let selectedLevelIdx = 0;
 let soundMuted = false;
 let difficulty = localStorage.getItem('mushroomDifficulty') || 'normal';
+
+// === FEATURE 81: MIRROR MODE ===
+let mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true';
+
+// === FEATURE 82: COIN CAVE MODE ===
+let coinCaveMode = false;
+let coinCaveCountdown = 0;       // frames remaining (starts at 30*60)
+let coinCaveBestCoins = parseInt(localStorage.getItem('mushroomCoinCaveBest') || '0');
+const COIN_CAVE_DURATION = 30 * 60; // 30 seconds in frames
+const COIN_CAVE_LEVEL_INDEX = 12;   // bonus level 13 is index 12
 
 // === FEATURE 68: SURVIVAL MODE ===
 let survivalMode = false;
@@ -4364,12 +4439,54 @@ function getMarioType(levelIndex, spawnIdx) {
     return types[spawnIdx % types.length];
 }
 
+// Feature 81: Mirror a level layout horizontally
+function mirrorLevelData(lvl) {
+    const mx = (x, w) => W - x - (w || 0);
+    const msp = s => ({ ...s, x: mx(s.x, 20) });
+    const mPlatforms = lvl.platforms.map(p => ({ ...p, x: mx(p.x, p.w) }));
+    const mPlayerSpawn = { x: mx(lvl.playerSpawn.x, 18), y: lvl.playerSpawn.y };
+    return {
+        ...lvl,
+        platforms: mPlatforms,
+        playerSpawn: mPlayerSpawn,
+        marioSpawns:          (lvl.marioSpawns         || []).map(msp),
+        coinSpawns:           (lvl.coinSpawns           || []).map(s => ({ x: mx(s.x, 14), y: s.y })),
+        doubleCoinSpawns:     (lvl.doubleCoinSpawns     || []).map(s => ({ x: mx(s.x, 14), y: s.y })),
+        starSpawns:           (lvl.starSpawns           || []).map(msp),
+        shieldSpawns:         (lvl.shieldSpawns         || []).map(msp),
+        bombSpawns:           (lvl.bombSpawns           || []).map(msp),
+        springSpawns:         (lvl.springSpawns         || []).map(msp),
+        speedBoostSpawns:     (lvl.speedBoostSpawns     || []).map(msp),
+        magnetSpawns:         (lvl.magnetSpawns         || []).map(msp),
+        freezeSpawns:         (lvl.freezeSpawns         || []).map(msp),
+        ghostSpawns:          (lvl.ghostSpawns          || []).map(msp),
+        scoreBoostSpawns:     (lvl.scoreBoostSpawns     || []).map(msp),
+        electroSpawns:        (lvl.electroSpawns        || []).map(msp),
+        slowMoSpawns:         (lvl.slowMoSpawns         || []).map(msp),
+        rocketSpawns:         (lvl.rocketSpawns         || []).map(msp),
+        checkpointSpawns:     (lvl.checkpointSpawns     || []).map(msp),
+        flyingMarioSpawns:    (lvl.flyingMarioSpawns    || []).map(msp),
+        shooterMarioSpawns:   (lvl.shooterMarioSpawns   || []).map(msp),
+        parachuteMarioSpawns: (lvl.parachuteMarioSpawns || []).map(msp),
+        portalSpawns: (lvl.portalSpawns || []).map(p => ({
+            blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
+            orange: { x: mx(p.orange.x, 22), y: p.orange.y },
+        })),
+    };
+}
+
 function loadLevel(index) {
     rageModeActive = false; // Feature 69: reset rage on level change
     rageModeWarningTimer = 0;
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
-    const lvl = LEVELS[lvlIndex];
+    const rawLvl = LEVELS[lvlIndex];
+    // Feature 81: apply horizontal mirror if mode is active
+    const lvl = (mirrorMode && !rawLvl.isBonusLevel) ? mirrorLevelData(rawLvl) : rawLvl;
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
+
+    // Feature 82: Coin Cave setup
+    coinCaveMode = !!lvl.isBonusLevel;
+    coinCaveCountdown = coinCaveMode ? COIN_CAVE_DURATION : 0;
 
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice));
 
@@ -4821,6 +4938,32 @@ function prlx(factor) {
 }
 
 function drawBackground() {
+    // Feature 82: Cave background for bonus level
+    if (coinCaveMode) {
+        const caveGrad = ctx.createLinearGradient(0, 0, 0, H);
+        caveGrad.addColorStop(0, '#0a0010');
+        caveGrad.addColorStop(0.5, '#15003a');
+        caveGrad.addColorStop(1, '#220050');
+        ctx.fillStyle = caveGrad;
+        ctx.fillRect(0, 0, W, H);
+        // Glowing coin-like particles in background
+        const t = Date.now() * 0.001;
+        ctx.save();
+        for (let i = 0; i < 25; i++) {
+            const bx = ((i * 137.5 + 7) % W);
+            const by = ((i * 97.3 + 31) % (H * 0.9));
+            const pulse = 0.2 + Math.abs(Math.sin(t * 0.7 + i * 0.8)) * 0.4;
+            ctx.globalAlpha = pulse;
+            ctx.fillStyle = i % 3 === 0 ? '#ffd700' : i % 3 === 1 ? '#cc44ff' : '#44ffcc';
+            ctx.beginPath();
+            ctx.arc(bx, by, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        return;
+    }
+
     // Sky gradient — changes based on level
     const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
     let mountainColor, hillColorLight, hillColorDark, cloudAlpha;
@@ -5281,6 +5424,46 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffcc88';
         ctx.fillText('🚀 РАКЕТА', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 81: Mirror mode HUD indicator
+    if (mirrorMode) {
+        ctx.save();
+        const pulse = 0.75 + Math.abs(Math.sin(Date.now() * 0.003)) * 0.25;
+        ctx.globalAlpha = pulse;
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText('🪞 ЗЕРКАЛО', W / 2 + 1, 71);
+        ctx.fillStyle = '#aaeeff';
+        ctx.fillText('🪞 ЗЕРКАЛО', W / 2, 70);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 82: Coin Cave HUD — big countdown + coin counter instead of normal timer
+    if (coinCaveMode) {
+        const secsLeft = Math.ceil(coinCaveCountdown / 60);
+        const isUrgent = secsLeft <= 10;
+        const timerColor = secsLeft <= 5 ? '#ff2222' : secsLeft <= 10 ? '#ffaa00' : '#ffee44';
+        const pulse = isUrgent ? 1 + Math.abs(Math.sin(Date.now() * 0.012)) * 0.15 : 1;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = `bold ${Math.round(28 * pulse)}px monospace`;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(`⏱ ${secsLeft}с`, W / 2 + 2, H / 2 - 188);
+        ctx.fillStyle = timerColor;
+        ctx.fillText(`⏱ ${secsLeft}с`, W / 2, H / 2 - 190);
+        ctx.font = 'bold 14px monospace';
+        ctx.fillStyle = '#ffd700';
+        ctx.fillText(`🪙 ${levelCoinsCollected} монет`, W / 2, H / 2 - 162);
+        if (coinCaveBestCoins > 0) {
+            ctx.font = '11px monospace';
+            ctx.fillStyle = 'rgba(255,220,100,0.7)';
+            ctx.fillText(`РЕКОРД: ${coinCaveBestCoins}`, W / 2, H / 2 - 147);
+        }
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -5757,8 +5940,16 @@ function renderLevelComplete() {
     drawBackground();
     platforms.forEach(p => p.render());
 
-    drawTitle(`УРОВЕНЬ ${currentLevel + 1} ПРОЙДЕН!`, 200, 32, '#00ff00');
-    drawTitle(`Счёт: ${player.score}`, 245, 20, '#ffcc00');
+    // Feature 82: Special coin cave completion screen
+    if (currentLevel === COIN_CAVE_LEVEL_INDEX) {
+        drawTitle('🪙 МОНЕТНАЯ ПЕЩЕРА!', 170, 30, '#ffd700');
+        drawTitle(`Собрано монет: ${levelCoinsCollected} / ${levelCoinsTotal}`, 215, 20, '#ffcc00');
+        const pct = levelCoinsTotal > 0 ? Math.floor(levelCoinsCollected / levelCoinsTotal * 100) : 0;
+        drawTitle(`${pct}% — Рекорд: ${coinCaveBestCoins} монет`, 248, 14, '#cc88ff');
+    } else {
+        drawTitle(`УРОВЕНЬ ${currentLevel + 1} ПРОЙДЕН!`, 200, 32, '#00ff00');
+        drawTitle(`Счёт: ${player.score}`, 245, 20, '#ffcc00');
+    }
 
     // Time display
     const t = levelCompletionTime;
@@ -5918,6 +6109,28 @@ function renderDifficultySelect() {
     // Show current difficulty label
     const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ', hardcore: '💀 ХАРДКОР' };
     drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, difficulty === 'hardcore' ? '#ff44ff' : '#ffffaa');
+
+    // Feature 81: Mirror Mode toggle button
+    const mirBtnW = 220;
+    const mirBtnH = 36;
+    const mirBtnX = W / 2 - mirBtnW / 2;
+    const mirBtnY = 445;
+    ctx.save();
+    ctx.fillStyle = mirrorMode ? 'rgba(0,200,255,0.28)' : 'rgba(60,60,80,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(mirBtnX, mirBtnY, mirBtnW, mirBtnH, 8);
+    ctx.fill();
+    ctx.strokeStyle = mirrorMode ? '#44eeff' : 'rgba(150,150,180,0.4)';
+    ctx.lineWidth = mirrorMode ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(mirBtnX, mirBtnY, mirBtnW, mirBtnH, 8);
+    ctx.stroke();
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = mirrorMode ? '#44eeff' : '#888899';
+    ctx.fillText(`🪞 ЗЕРКАЛО: ${mirrorMode ? 'ВКЛ' : 'ВЫКЛ'}   [M]`, W / 2, mirBtnY + 24);
+    ctx.textAlign = 'left';
+    ctx.restore();
 }
 
 function renderLevelSelect() {
@@ -5946,12 +6159,13 @@ function renderLevelSelect() {
         ctx.fill();
 
         // Box background
+        const isBonusLvl = LEVELS[i] && LEVELS[i].isBonusLevel;
         if (locked) {
             ctx.fillStyle = 'rgba(40,40,60,0.8)';
         } else if (isSelected) {
-            ctx.fillStyle = 'rgba(80,180,80,0.85)';
+            ctx.fillStyle = isBonusLvl ? 'rgba(160,80,220,0.9)' : 'rgba(80,180,80,0.85)';
         } else {
-            ctx.fillStyle = 'rgba(60,120,200,0.75)';
+            ctx.fillStyle = isBonusLvl ? 'rgba(100,40,160,0.75)' : 'rgba(60,120,200,0.75)';
         }
         ctx.beginPath();
         ctx.roundRect(bx, by, boxW, boxH, 10);
@@ -5978,12 +6192,21 @@ function renderLevelSelect() {
             ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 85);
         } else {
             // Level number
-            ctx.font = 'bold 40px monospace';
-            ctx.fillStyle = '#fff';
-            ctx.fillText(`${i + 1}`, bx + boxW / 2, by + 55);
+            if (isBonusLvl) {
+                ctx.font = 'bold 28px monospace';
+                ctx.fillStyle = '#ffd700';
+                ctx.fillText('🪙', bx + boxW / 2, by + 52);
+                ctx.font = 'bold 11px monospace';
+                ctx.fillStyle = '#eebb88';
+                ctx.fillText('БОНУС', bx + boxW / 2, by + 72);
+            } else {
+                ctx.font = 'bold 40px monospace';
+                ctx.fillStyle = '#fff';
+                ctx.fillText(`${i + 1}`, bx + boxW / 2, by + 55);
+            }
             ctx.font = 'bold 13px monospace';
-            ctx.fillStyle = '#ddd';
-            ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 82);
+            ctx.fillStyle = isBonusLvl ? '#ffd700' : '#ddd';
+            ctx.fillText(isBonusLvl ? 'ПЕЩЕРА' : `УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 82);
             // Feature 59: letter grade badge
             const savedGrade = levelGrades[i];
             if (savedGrade) {
@@ -6001,9 +6224,13 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера'];
     if (selectedLevelIdx < unlockedLevels) {
-        drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
+        const nameColor = selectedLevelIdx === COIN_CAVE_LEVEL_INDEX ? '#ffd700' : '#88ffaa';
+        drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, nameColor);
+        if (selectedLevelIdx === COIN_CAVE_LEVEL_INDEX) {
+            drawTitle('БОНУС: собери монеты за 30 секунд!', 335, 13, '#cc88ff');
+        }
     }
 
     const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : difficulty === 'hardcore' ? '💀 ХАРДКОР' : '😐 НОРМА';
@@ -6140,6 +6367,13 @@ function update() {
             if (isEscape() && !escapeWasPressed) {
                 gameState = 'MENU';
             }
+            // Feature 81: M key toggles mirror mode
+            if (keys['KeyM'] && !keys['_mDiffWas']) {
+                mirrorMode = !mirrorMode;
+                localStorage.setItem('mushroomMirrorMode', String(mirrorMode));
+                playSound('coin'); // brief feedback sound
+            }
+            keys['_mDiffWas'] = keys['KeyM'];
             break;
         }
 
@@ -6300,9 +6534,37 @@ function update() {
                 }
             }
 
+            // Feature 82: Coin Cave countdown — level ends when timer hits 0 or all coins collected
+            if (coinCaveMode) {
+                coinCaveCountdown--;
+                // Early finish if all coins collected
+                if (coins.length === 0 && levelCoinsTotal > 0 && coinCaveCountdown > 0) {
+                    coinCaveCountdown = 0;
+                    particles.push(new Particle(W / 2 - 60, H / 2 - 60, '🪙 ВСЕ МОНЕТЫ!', '#ffd700'));
+                }
+                if (coinCaveCountdown <= 0) {
+                    coinCaveCountdown = 0;
+                    if (levelCoinsCollected > coinCaveBestCoins) {
+                        coinCaveBestCoins = levelCoinsCollected;
+                        localStorage.setItem('mushroomCoinCaveBest', String(coinCaveBestCoins));
+                    }
+                    // Grade by coins collected vs total
+                    const pct = levelCoinsTotal > 0 ? levelCoinsCollected / levelCoinsTotal : 0;
+                    currentLevelGrade = pct >= 0.9 ? 'S' : pct >= 0.7 ? 'A' : pct >= 0.5 ? 'B' : pct >= 0.25 ? 'C' : 'D';
+                    levelGrades[currentLevel] = currentLevelGrade;
+                    localStorage.setItem('mushroomLevelGrades', JSON.stringify(levelGrades));
+                    levelCompletionTime = 30;
+                    isNewLevelTimeRecord = false;
+                    // coinCaveMode stays true until loadLevel resets it — prevents normal completion check below from also firing
+                    gameState = 'LEVEL_COMPLETE';
+                    levelCompleteTimer = 60;
+                    playSound('levelup');
+                }
+            }
+
             // Check level complete (boss level needs boss defeated, regular needs all marios dead)
             const bossCleared = !isBossLevel || bossMarco === null;
-            if (!survivalMode && marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
+            if (!survivalMode && !coinCaveMode && marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
                 const timeBonusMult = difficulty === 'easy' ? 2.0 : difficulty === 'hard' ? 0.5 : difficulty === 'hardcore' ? 0 : 1.0;
@@ -6315,9 +6577,10 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
-                // Feature 79: Achievements on level complete
+                // Feature 79 & 81: Achievements on level complete
                 if (levelDeathCount === 0) unlockAchievement('noDeaths');
                 if ((levelTimer / 60) < 30) unlockAchievement('speedRunner');
+                if (mirrorMode) unlockAchievement('mirrorHero'); // Feature 81
                 // Feature 59: calculate and save letter grade
                 levelCompletionTime = levelTimer / 60;
                 currentLevelGrade = calcLevelGrade(levelDeathCount, levelCoinsCollected, levelCoinsTotal, levelCompletionTime);
@@ -6363,9 +6626,21 @@ function update() {
                         unlockedLevels = currentLevel + 1;
                         localStorage.setItem('mushroomUnlockedLevels', String(unlockedLevels));
                     }
-                    loadLevel(currentLevel);
-                    gameState = 'LEVEL_TRANSITION';
-                    levelTransitionTimer = 0;
+                    // Feature 82: After bonus level (last level) → go back to menu
+                    if (currentLevel >= LEVELS.length) {
+                        if (totalScore > highScore) {
+                            highScore = totalScore;
+                            localStorage.setItem('mushroomHighScore', String(highScore));
+                        }
+                        stopBGM();
+                        gameState = 'VICTORY';
+                        spawnConfetti();
+                        playSound('victory');
+                    } else {
+                        loadLevel(currentLevel);
+                        gameState = 'LEVEL_TRANSITION';
+                        levelTransitionTimer = 0;
+                    }
                 }
             }
             break;
