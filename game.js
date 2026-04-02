@@ -1862,6 +1862,135 @@ class Fireball {
 
 let fireballs = [];
 
+// === LOOT CHEST — Feature 63 ===
+class Chest {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 28;
+        this.h = 28;
+        this.opened = false;
+        this.animTimer = Math.random() * 60;
+        this.bounceOffset = 0;
+        this.bounceTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        if (this.bounceTimer > 0) {
+            this.bounceTimer--;
+            this.bounceOffset = -Math.sin((1 - this.bounceTimer / 18) * Math.PI) * 10;
+        } else {
+            this.bounceOffset = 0;
+        }
+    }
+
+    open() {
+        if (this.opened) return;
+        this.opened = true;
+        this.bounceTimer = 18;
+        const types = ['coin', 'coin', 'shield', 'star', 'speed', 'freeze', 'magnet'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        const px = this.x + this.w / 2 - 9;
+        const py = this.y - 32;
+        switch (type) {
+            case 'coin':
+                for (let i = 0; i < 3; i++) {
+                    const c = new Coin(px + (i - 1) * 14, py);
+                    c.isDropped = true;
+                    c.vx = (i - 1) * 1.5;
+                    c.vy = -5 - Math.random() * 3;
+                    coins.push(c);
+                }
+                break;
+            case 'shield': shields.push(new Shield(px, py)); break;
+            case 'star':   stars.push(new Star(px, py)); break;
+            case 'speed':  speedBoosts.push(new SpeedBoost(px, py)); break;
+            case 'freeze': freezes.push(new Freeze(px, py)); break;
+            case 'magnet': magnets.push(new Magnet(px, py)); break;
+        }
+        playSound('levelup');
+        for (let i = 0; i < 14; i++) {
+            const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
+            const speed = 2 + Math.random() * 5;
+            particles.push(new DeathParticle(
+                this.x + this.w / 2, this.y,
+                Math.cos(angle) * speed, Math.sin(angle) * speed,
+                ['#ffee44', '#ffcc00', '#ff8800', '#ffffff'][Math.floor(Math.random() * 4)], 4
+            ));
+        }
+        particles.push(new Particle(this.x - 14, this.y - 24, '❓ СЮРПРИЗ!', '#ffee44'));
+    }
+
+    render() {
+        const y = this.y + this.bounceOffset;
+        const t = this.animTimer;
+        ctx.save();
+        if (this.opened) {
+            ctx.fillStyle = '#776655';
+            ctx.fillRect(this.x, y, this.w, this.h);
+            ctx.strokeStyle = '#443322';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(this.x + 1, y + 1, this.w - 2, this.h - 2);
+            ctx.fillStyle = '#554433';
+            ctx.font = 'bold 14px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('□', this.x + this.w / 2, y + this.h / 2 + 1);
+        } else {
+            const grd = ctx.createLinearGradient(this.x, y, this.x, y + this.h);
+            grd.addColorStop(0, '#ffe066');
+            grd.addColorStop(0.45, '#ffcc00');
+            grd.addColorStop(1, '#cc8800');
+            ctx.fillStyle = grd;
+            ctx.fillRect(this.x, y, this.w, this.h);
+            ctx.strokeStyle = '#8a5c00';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(this.x, y, this.w, this.h);
+            ctx.strokeStyle = 'rgba(255,255,180,0.55)';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(this.x + 2, y + 2, this.w - 4, this.h - 4);
+            ctx.globalAlpha = 0.28 + Math.sin(t * 0.12) * 0.1;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(this.x + 3, y + 3, 6, this.h - 6);
+            ctx.globalAlpha = 1;
+            const pulse = 0.92 + Math.sin(t * 0.1) * 0.08;
+            ctx.save();
+            ctx.translate(this.x + this.w / 2, y + this.h / 2 + 1);
+            ctx.scale(pulse, pulse);
+            ctx.font = 'bold 16px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#885500';
+            ctx.strokeText('?', 0, 0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('?', 0, 0);
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+}
+
+let chests = [];
+
+function checkChestCollisions() {
+    if (!player) return;
+    for (const chest of chests) {
+        if (chest.opened) continue;
+        if (!aabb(player, chest)) continue;
+        const playerTop = player.y;
+        const chestBottom = chest.y + chest.h;
+        const overlapY = chestBottom - playerTop;
+        if (player.vy < 0 && overlapY >= 0 && overlapY <= 14 &&
+            player.x + player.w > chest.x + 2 && player.x < chest.x + chest.w - 2) {
+            chest.open();
+            player.vy = Math.abs(player.vy) * 0.3;
+            player.y = chest.y + chest.h + 1;
+        }
+    }
+}
+
 function checkFireballCollisions() {
     if (!player) return;
     for (const fb of fireballs) {
@@ -2811,6 +2940,7 @@ const LEVELS = [
             { x: 195, y: 345 }, { x: 545, y: 345 },
         ],
         doubleCoinSpawns: [{ x: 380, y: 435 }],
+        chestSpawns: [{ x: 308, y: 342 }],
     },
     {
         // Level 2: More platforms, 3 Marios
@@ -2835,6 +2965,7 @@ const LEVELS = [
         doubleCoinSpawns: [{ x: 360, y: 295 }],
         shieldSpawns: [{ x: 600, y: 435 }],
         springSpawns: [{ x: 370, y: 446 }],
+        chestSpawns: [{ x: 200, y: 292 }],
     },
     {
         // Level 3: Gaps, multi-tier
@@ -2867,6 +2998,7 @@ const LEVELS = [
         springSpawns: [{ x: 460, y: 446 }],
         speedBoostSpawns: [{ x: 90, y: 435 }],
         magnetSpawns: [{ x: 310, y: 195 }],
+        chestSpawns: [{ x: 450, y: 192 }],
     },
     {
         // Level 4: Complex layout with moving platforms
@@ -2905,6 +3037,7 @@ const LEVELS = [
         magnetSpawns: [{ x: 130, y: 350 }],
         freezeSpawns: [{ x: 390, y: 205 }],
         portalSpawns: [{ blue: { x: 30, y: 415 }, orange: { x: 650, y: 415 } }],
+        chestSpawns: [{ x: 300, y: 202 }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -2949,6 +3082,7 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 350, y: 90 }],
         // Feature 54: spike hazards
         spikeSpawns: [{ x: 275, y: 339, w: 28 }, { x: 635, y: 339, w: 28 }],
+        chestSpawns: [{ x: 560, y: 102 }, { x: 182, y: 232 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2998,6 +3132,7 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 450, y: 370 }],
         // Feature 54: spike hazards
         spikeSpawns: [{ x: 238, y: 244, w: 30 }, { x: 575, y: 234, w: 30 }],
+        chestSpawns: [{ x: 386, y: 82 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -3056,6 +3191,7 @@ const LEVELS = [
             { x: 80, y: 358, w: 155 },
             { x: 450, y: 310, w: 170 },
         ],
+        chestSpawns: [{ x: 436, y: 62 }, { x: 56, y: 292 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3121,6 +3257,7 @@ const LEVELS = [
             { x: 340, y: 328, w: 140 },
             { x: 650, y: 358, w: 100 },
         ],
+        chestSpawns: [{ x: 526, y: 82 }, { x: 170, y: 182 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3148,6 +3285,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 740, y: 446 }],
         speedBoostSpawns: [{ x: 450, y: 225 }],
         magnetSpawns: [{ x: 280, y: 225 }],
+        chestSpawns: [{ x: 356, y: 232 }],
     },
     {
         // Level 10: «Возмездие» — post-boss gauntlet with all enemy types
@@ -3208,6 +3346,7 @@ const LEVELS = [
             { x: 430, y: 308, w: 155 },
             { x: 620, y: 218, w: 140 },
         ],
+        chestSpawns: [{ x: 506, y: 72 }, { x: 158, y: 142 }],
     },
     {
         // Level 11: «Возрождение Хаоса» — Feature 58: ultimate final level
@@ -3278,6 +3417,7 @@ const LEVELS = [
             { x: 660, y: 343, w: 100 },
             { x: 200, y: 213, w: 120 },
         ],
+        chestSpawns: [{ x: 330, y: 62 }, { x: 560, y: 162 }],
     },
 ];
 
@@ -3347,6 +3487,37 @@ let levelBestTimes = [];
 try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || '[]'); } catch { levelBestTimes = []; }
 let levelCompletionTime = 0;   // seconds spent on last completed level
 let isNewLevelTimeRecord = false;
+
+// === LEVEL GRADE SYSTEM — Feature 64 ===
+let levelGrades = [];
+try { levelGrades = JSON.parse(localStorage.getItem('mushroomLevelGrades') || '[]'); } catch { levelGrades = []; }
+let currentLevelGrade = '';
+let levelEnemiesKilledCount = 0;
+let levelCoinsCollectedCount = 0;
+let levelComboMax = 0;
+
+function calculateLevelGrade() {
+    const elapsed = levelTimer / 60;
+    const allKilled = levelEnemiesKilledCount >= levelTotalMarios;
+    let grade;
+    if (allKilled && elapsed < 25 && levelComboMax >= 3 && levelCoinsCollectedCount >= 3) {
+        grade = 'S';
+    } else if (allKilled && elapsed < 50) {
+        grade = 'A';
+    } else if (allKilled) {
+        grade = 'B';
+    } else {
+        grade = 'C';
+    }
+    currentLevelGrade = grade;
+    const gradeOrder = ['C', 'B', 'A', 'S'];
+    const prev = levelGrades[currentLevel] || 'C';
+    if (gradeOrder.indexOf(grade) > gradeOrder.indexOf(prev)) {
+        levelGrades[currentLevel] = grade;
+        localStorage.setItem('mushroomLevelGrades', JSON.stringify(levelGrades));
+    }
+    return grade;
+}
 
 // === MUSHROOM COLOR CUSTOMIZATION ===
 const MUSHROOM_COLORS = [
@@ -3650,6 +3821,10 @@ function loadLevel(index) {
     coinsThisLevel = 0;
     hudScoreDisplay = 0;
     levelTotalMarios = marios.length;
+    levelEnemiesKilledCount = 0;
+    levelCoinsCollectedCount = 0;
+    levelComboMax = 0;
+    currentLevelGrade = '';
     coins = [
         ...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)),
         ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100)),
@@ -3671,6 +3846,7 @@ function loadLevel(index) {
     });
     checkpoints = (lvl.checkpointSpawns || []).map(c => new Checkpoint(c.x, c.y));
     lasers = (lvl.laserSpawns || []).map(l => new LaserTrap(l.x, l.y, l.w));
+    chests = (lvl.chestSpawns || []).map(c => new Chest(c.x, c.y));
     if (player) player.checkpointSpawn = null; // reset checkpoint on new level
     isBossLevel = !!lvl.isBossLevel;
     bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
@@ -3708,7 +3884,7 @@ function startScoreAttack() {
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = []; shields = []; bombs = []; springPads = [];
     speedBoosts = []; magnets = []; freezes = []; fireballs = [];
-    portalPairs = []; checkpoints = []; lasers = []; particles = [];
+    portalPairs = []; checkpoints = []; lasers = []; chests = []; particles = [];
     bossMarco = null; isBossLevel = false;
     comboCount = 0; comboDisplayTimer = 0; levelTimer = 0;
     initWeather(0);
@@ -3754,6 +3930,7 @@ function checkCoinCollisions() {
             totalCoinsCollectedRun++;
             runStats.coinsCollected++;
             coinsThisLevel++;
+            levelCoinsCollectedCount++;
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
             particles.push(new Particle(coin.x, coin.y - 5, `+${pts}`, pts > 50 ? '#ff9900' : '#ffcc00'));
             playSound('coin');
@@ -3772,7 +3949,10 @@ function checkPlayerMarioCollisions() {
         // Star power: kill on any contact
         if (player.starTimer > 0) {
             mario.stomp();
+            runStats.enemiesKilled++;
+            levelEnemiesKilledCount++;
             comboCount++;
+            if (comboCount > levelComboMax) levelComboMax = comboCount;
             const points = 100 * comboCount;
             player.score += points;
             totalScore += points;
@@ -3799,9 +3979,11 @@ function checkPlayerMarioCollisions() {
             player.vy = STOMP_BOUNCE;
             if (killed) {
                 runStats.enemiesKilled++;
+                levelEnemiesKilledCount++;
                 unlockAchievement('firstStomp');
                 comboCount++;
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
+                if (comboCount > levelComboMax) levelComboMax = comboCount;
                 if (comboCount >= 5) unlockAchievement('comboMaster');
                 const multiplier = comboCount;
                 const points = 100 * multiplier;
@@ -4637,6 +4819,32 @@ function renderLevelComplete() {
             drawTitle(`Рекорд: ${bestStr}`, 308, 14, '#888888');
         }
     }
+
+    // Feature 64: Level Grade display
+    if (currentLevelGrade) {
+        const gradeColors = { S: '#ffdd00', A: '#00eeff', B: '#88ff88', C: '#ffaa44' };
+        const gradeColor = gradeColors[currentLevelGrade] || '#ffffff';
+        const pulse = 0.88 + Math.sin(Date.now() * 0.009) * 0.12;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = `bold ${Math.round(68 * pulse)}px monospace`;
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        ctx.lineWidth = 7;
+        ctx.strokeText(currentLevelGrade, W - 80, 295);
+        ctx.fillStyle = gradeColor;
+        ctx.fillText(currentLevelGrade, W - 80, 295);
+        ctx.font = 'bold 13px monospace';
+        ctx.fillStyle = gradeColor;
+        ctx.fillText('ОЦЕНКА', W - 80, 314);
+        const bestGrade = levelGrades[currentLevel] || currentLevelGrade;
+        if (bestGrade !== currentLevelGrade) {
+            ctx.font = '11px monospace';
+            ctx.fillStyle = '#aaaaaa';
+            ctx.fillText(`Лучшая: ${bestGrade}`, W - 80, 330);
+        }
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
 }
 
 function renderDifficultySelect() {
@@ -4810,10 +5018,21 @@ function renderLevelSelect() {
             ctx.font = 'bold 13px monospace';
             ctx.fillStyle = '#ddd';
             ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 82);
-            // Stars for unlocked
-            ctx.font = '14px monospace';
-            ctx.fillStyle = '#ffdd00';
-            ctx.fillText('★ ★ ★', bx + boxW / 2, by + 102);
+            // Grade badge (Feature 64)
+            const savedGrade = levelGrades[i];
+            if (savedGrade) {
+                const gc = { S: '#ffdd00', A: '#00eeff', B: '#88ff88', C: '#ffaa44' }[savedGrade] || '#fff';
+                ctx.font = 'bold 20px monospace';
+                ctx.fillStyle = gc;
+                ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+                ctx.lineWidth = 3;
+                ctx.strokeText(savedGrade, bx + boxW / 2, by + 104);
+                ctx.fillText(savedGrade, bx + boxW / 2, by + 104);
+            } else {
+                ctx.font = '11px monospace';
+                ctx.fillStyle = '#aaaaaa';
+                ctx.fillText('—', bx + boxW / 2, by + 102);
+            }
         }
         ctx.restore();
     }
@@ -5026,6 +5245,8 @@ function update() {
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
+            chests.forEach(c => c.update());
+            checkChestCollisions();
             lasers.forEach(l => l.update());
             checkLaserCollisions();
             updateWeather();
@@ -5079,6 +5300,7 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
+                calculateLevelGrade();
                 // Save best level time
                 levelCompletionTime = levelTimer / 60;
                 if (!isBossLevel) {
@@ -5221,6 +5443,7 @@ function render() {
             stars.forEach(s => s.render());
             shields.forEach(s => s.render());
             checkpoints.forEach(cp => cp.render());
+            chests.forEach(c => c.render());
             springPads.forEach(sp => sp.render());
             speedBoosts.forEach(sb => sb.render());
             magnets.forEach(m => m.render());
