@@ -356,6 +356,8 @@ class Player extends Entity {
         this.freezeTimer = 0;
         // Ghost power-up (Feature 54)
         this.ghostTimer = 0;
+        // Score boost power-up (Feature 61)
+        this.scoreBoostTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -469,6 +471,8 @@ class Player extends Entity {
         if (this.magnetTimer > 0) this.magnetTimer--;
         // ghost timer (Feature 54)
         if (this.ghostTimer > 0) this.ghostTimer--;
+        // score boost timer (Feature 61)
+        if (this.scoreBoostTimer > 0) this.scoreBoostTimer--;
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
@@ -1119,6 +1123,7 @@ const MAGNET_DURATION = 420; // 7 seconds at 60fps
 const MAGNET_RADIUS = 180;
 const FREEZE_DURATION = 240; // 4 seconds at 60fps
 const GHOST_DURATION = 300; // Feature 54: 5 seconds at 60fps
+const SCORE_BOOST_DURATION = 480; // Feature 61: 8 seconds at 60fps
 
 class Star {
     constructor(x, y) {
@@ -1671,6 +1676,71 @@ function checkGhostCollisions() {
     ghosts = ghosts.filter(g => !g.collected);
 }
 
+
+// === FEATURE 61: SCORE BOOST POWER-UP ===
+class ScoreBoost {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.88 + Math.sin(t * 0.14) * 0.12;
+
+        ctx.save();
+        // Purple glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 15 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(180, 60, 255, ${0.30 * pulse})`;
+        ctx.fill();
+        // Body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#9922ee';
+        ctx.fill();
+        ctx.strokeStyle = '#dd88ff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Inner shine
+        ctx.beginPath();
+        ctx.arc(cx - 3, cy - 2.5, 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(240,200,255,0.45)';
+        ctx.fill();
+        // "x2" label
+        ctx.font = `bold ${Math.round(9 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('x2', cx, cy + 3.5);
+        ctx.restore();
+    }
+}
+
+let scoreBoosts = [];
+
+function checkScoreBoostCollisions() {
+    for (const sb of scoreBoosts) {
+        if (sb.collected) continue;
+        if (!aabb(player, sb)) continue;
+        sb.collected = true;
+        player.scoreBoostTimer = SCORE_BOOST_DURATION;
+        particles.push(new Particle(sb.x - 15, sb.y - 16, '✨ ДВОЙНЫЕ ОЧКИ!', '#dd88ff'));
+        playSound('levelup');
+    }
+    scoreBoosts = scoreBoosts.filter(s => !s.collected);
+}
 
 // === FIREBALL (Shooter enemy projectile) ===
 class Fireball {
@@ -2488,6 +2558,7 @@ const LEVELS = [
         doubleCoinSpawns: [{ x: 360, y: 295 }],
         shieldSpawns: [{ x: 600, y: 435 }],
         springSpawns: [{ x: 370, y: 446 }],
+        scoreBoostSpawns: [{ x: 245, y: 435 }], // Feature 61
     },
     {
         // Level 3: Gaps, multi-tier
@@ -2599,6 +2670,7 @@ const LEVELS = [
         flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
         shooterMarioSpawns: [{ x: 350, y: 90 }],
         ghostSpawns: [{ x: 300, y: 95 }],
+        scoreBoostSpawns: [{ x: 450, y: 200 }], // Feature 61
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2644,6 +2716,7 @@ const LEVELS = [
         flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
         shooterMarioSpawns: [{ x: 450, y: 370 }],
         ghostSpawns: [{ x: 490, y: 55 }],
+        scoreBoostSpawns: [{ x: 350, y: 375 }], // Feature 61
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -2692,6 +2765,7 @@ const LEVELS = [
         flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
         shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
         ghostSpawns: [{ x: 350, y: 65 }],
+        scoreBoostSpawns: [{ x: 480, y: 65 }], // Feature 61
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3273,6 +3347,7 @@ function loadLevel(index) {
     magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
     freezes = (lvl.freezeSpawns || []).map(f => new Freeze(f.x, f.y));
     ghosts = (lvl.ghostSpawns || []).map(g => new Ghost(g.x, g.y)); // Feature 54
+    scoreBoosts = (lvl.scoreBoostSpawns || []).map(s => new ScoreBoost(s.x, s.y)); // Feature 61
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -3287,6 +3362,7 @@ function loadLevel(index) {
     bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
     initWeather(index);
     initBirds(); // Feature 60: spawn background birds
+    shootingStars = []; // Feature 62: reset shooting stars on level load
     // Start BGM appropriate to this level's theme
     if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
 }
@@ -3339,7 +3415,8 @@ function checkPlayerMarioCollisions() {
         if (player.starTimer > 0) {
             mario.stomp();
             comboCount++;
-            const points = 100 * comboCount;
+            let points = 100 * comboCount;
+            if (player.scoreBoostTimer > 0) points *= 2; // Feature 61
             player.score += points;
             totalScore += points;
             comboDisplayTimer = 100;
@@ -3370,7 +3447,8 @@ function checkPlayerMarioCollisions() {
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
                 if (comboCount >= 5) unlockAchievement('comboMaster');
                 const multiplier = comboCount;
-                const points = 100 * multiplier;
+                let points = 100 * multiplier;
+                if (player.scoreBoostTimer > 0) points *= 2; // Feature 61
                 player.score += points;
                 totalScore += points;
                 comboDisplayTimer = 100;
@@ -3498,6 +3576,51 @@ function drawShadow(x, y, w) {
     ctx.restore();
 }
 
+// === FEATURE 62: SHOOTING STARS ===
+let shootingStars = [];
+
+function spawnShootingStar() {
+    const angle = (Math.random() * 0.35 + 0.05) * Math.PI; // downward arc
+    const speed = 6 + Math.random() * 8;
+    shootingStars.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.4,
+        vx: Math.cos(angle) * speed * (Math.random() > 0.5 ? 1 : -1),
+        vy: Math.sin(angle) * speed,
+        life: 40 + Math.floor(Math.random() * 30),
+        maxLife: 70,
+        len: 20 + Math.random() * 30,
+    });
+}
+
+function updateAndDrawShootingStars() {
+    // Occasional spawn
+    if (Math.random() < 0.008 && shootingStars.length < 4) spawnShootingStar();
+    shootingStars = shootingStars.filter(s => {
+        s.x += s.vx;
+        s.y += s.vy;
+        s.life--;
+        if (s.life <= 0) return false;
+        const alpha = Math.min(1, s.life / 15) * 0.85;
+        const nx = -s.vx / Math.hypot(s.vx, s.vy);
+        const ny = -s.vy / Math.hypot(s.vx, s.vy);
+        const grad = ctx.createLinearGradient(s.x, s.y, s.x + nx * s.len, s.y + ny * s.len);
+        grad.addColorStop(0, `rgba(255,255,220,${alpha})`);
+        grad.addColorStop(1, 'rgba(255,255,220,0)');
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x + nx * s.len, s.y + ny * s.len);
+        ctx.stroke();
+        ctx.restore();
+        return true;
+    });
+}
+
 // === FEATURE 60: BACKGROUND BIRDS ===
 let backgroundBirds = [];
 
@@ -3616,6 +3739,8 @@ function drawBackground() {
             ctx.fill();
         }
         ctx.restore();
+        // Feature 62: Shooting stars on night levels
+        updateAndDrawShootingStars();
     }
 
     // Distant mountains (layer 1 — slowest parallax)
@@ -3913,6 +4038,32 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff';
         ctx.fillText('❄ ЗАМОРОЗКА', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 61: Score boost timer bar
+    if (player && player.scoreBoostTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0);
+        const frac = player.scoreBoostTimer / SCORE_BOOST_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.007) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(160,40,240,${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ee88ff';
+        ctx.fillText('✨ x2 ОЧКИ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -4699,6 +4850,8 @@ function update() {
             checkFreezeCollisions();
             ghosts = ghosts.filter(g => g.update()); // Feature 54
             checkGhostCollisions();
+            scoreBoosts = scoreBoosts.filter(s => s.update()); // Feature 61
+            checkScoreBoostCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
@@ -4879,6 +5032,7 @@ function render() {
             magnets.forEach(m => m.render());
             freezes.forEach(f => f.render());
             ghosts.forEach(g => g.render()); // Feature 54
+            scoreBoosts.forEach(s => s.render()); // Feature 61
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
