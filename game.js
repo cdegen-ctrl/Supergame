@@ -1139,6 +1139,10 @@ class Mario extends Entity {
             dc.vy = -5 - Math.random() * 3;
             coins.push(dc);
         }
+        // Feature 77: 10% chance to drop a random power-up
+        if (Math.random() < 0.10) {
+            droppedPowerups.push(new DroppedPowerup(this.x + this.w / 2 - 9, this.y));
+        }
         return true; // killed
     }
 
@@ -3545,7 +3549,208 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 200, y: -60 }, { x: 500, y: -90 }, { x: 700, y: -50 }, { x: 100, y: -120 }], // Feature 71
         slowMoSpawns: [{ x: 360, y: 20 }, { x: 580, y: 100 }], // Feature 75
     },
+    {
+        // Level 12: «Олимп» — Feature 78: sky-high olympus, airborne enemies, strategic platforms
+        platforms: [
+            // Tiny ground anchors — mostly airborne level
+            { x: 0,   y: 460, w: 40,  h: 40 },
+            { x: 760, y: 460, w: 40,  h: 40 },
+            // Lower cloud tier — wide but moving
+            { x: 80,  y: 420, w: 70,  h: 18, moveAxis: 'x', moveRange: 60, moveSpeed: 2.5 },
+            { x: 240, y: 400, w: 70,  h: 18, moveAxis: 'x', moveRange: 80, moveSpeed: 2.8 },
+            { x: 420, y: 420, w: 70,  h: 18, moveAxis: 'x', moveRange: 70, moveSpeed: 2.5 },
+            { x: 590, y: 400, w: 70,  h: 18, moveAxis: 'x', moveRange: 60, moveSpeed: 3.0 },
+            // Mid cloud tier — mix of crumble and ice
+            { x: 30,  y: 340, w: 80,  h: 18, crumble: true },
+            { x: 170, y: 315, w: 80,  h: 18, ice: true },
+            { x: 340, y: 330, w: 80,  h: 18, moveAxis: 'y', moveRange: 50, moveSpeed: 2.0 },
+            { x: 510, y: 310, w: 80,  h: 18, ice: true },
+            { x: 660, y: 330, w: 80,  h: 18, crumble: true },
+            // Upper tier — smaller, faster moving
+            { x: 60,  y: 230, w: 90,  h: 18, moveAxis: 'x', moveRange: 100, moveSpeed: 3.2 },
+            { x: 280, y: 210, w: 90,  h: 18, moveAxis: 'y', moveRange:  55, moveSpeed: 2.5 },
+            { x: 490, y: 225, w: 90,  h: 18, moveAxis: 'x', moveRange:  90, moveSpeed: 3.0 },
+            { x: 670, y: 210, w: 90,  h: 18, moveAxis: 'y', moveRange:  45, moveSpeed: 2.3 },
+            // Summit platform — safe zone at top
+            { x: 290, y: 110, w: 220, h: 20 },
+        ],
+        marioSpawns: [
+            { x: 100, y: 390 },
+            { x: 440, y: 390 },
+            { x: 680, y: 390 },
+            { x: 50,  y: 310 },
+            { x: 520, y: 280 },
+            { x: 300, y: 165 },
+        ],
+        marioTypes: ['fast', 'jumpy', 'fast', 'armored', 'jumpy', 'armored'],
+        marioSpeed: 3.8,
+        playerSpawn: { x: 5, y: 430 },
+        coinSpawns: [
+            { x: 110, y: 395 }, { x: 260, y: 375 }, { x: 450, y: 395 }, { x: 620, y: 375 },
+            { x: 55,  y: 315 }, { x: 200, y: 290 }, { x: 370, y: 305 }, { x: 540, y: 285 },
+            { x: 80,  y: 205 }, { x: 310, y: 185 }, { x: 520, y: 200 }, { x: 700, y: 185 },
+            { x: 340, y: 85  }, { x: 430, y: 85  },
+        ],
+        doubleCoinSpawns: [
+            { x: 390, y: 85 }, { x: 480, y: 85 },
+        ],
+        starSpawns:       [{ x: 360, y: 85 }, { x: 510, y: 85 }],
+        shieldSpawns:     [{ x: 720, y: 435 }],
+        bombSpawns:       [{ x: 190, y: 290 }, { x: 560, y: 280 }],
+        springSpawns:     [{ x: 0, y: 446 }, { x: 740, y: 446 }],
+        speedBoostSpawns: [{ x: 300, y: 185 }],
+        magnetSpawns:     [{ x: 460, y: 85  }],
+        freezeSpawns:     [{ x: 90,  y: 205 }, { x: 680, y: 185 }],
+        ghostSpawns:      [{ x: 540, y: 85  }],
+        electroSpawns:    [{ x: 410, y: 85  }, { x: 250, y: 185 }],
+        slowMoSpawns:     [{ x: 350, y: 185 }, { x: 630, y: 280 }], // Feature 75
+        scoreBoostSpawns: [{ x: 590, y: 85 }],
+        portalSpawns: [
+            { blue: { x: 0, y: 415 }, orange: { x: 310, y: 85 } },
+            { blue: { x: 440, y: 415 }, orange: { x: 160, y: 285 } },
+        ],
+        checkpointSpawns: [{ x: 395, y: 425 }],
+        flyingMarioSpawns:    [{ x: 140, y: 220 }, { x: 400, y: 200 }, { x: 640, y: 215 }, { x: 270, y: 140 }, { x: 520, y: 140 }],
+        shooterMarioSpawns:   [{ x: 310, y: 85  }, { x: 490, y: 100 }],
+        parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 380, y: -80 }, { x: 620, y: -50 }, { x: 50, y: -110 }, { x: 750, y: -90 }], // Feature 71
+    },
 ];
+
+// === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
+const DROP_TYPE_CONFIG = {
+    star:    { color: '#ffdd00', glow: 'rgba(255,220,0,0.35)',  icon: '⭐' },
+    shield:  { color: '#4488ff', glow: 'rgba(60,120,255,0.3)', icon: '🛡' },
+    speed:   { color: '#ff8800', glow: 'rgba(255,140,0,0.3)',  icon: '💨' },
+    freeze:  { color: '#88ddff', glow: 'rgba(100,200,255,0.3)',icon: '❄' },
+    slowmo:  { color: '#00ccff', glow: 'rgba(0,180,255,0.3)',  icon: '⏱' },
+};
+const DROP_TYPES = Object.keys(DROP_TYPE_CONFIG);
+const DROPPED_POWERUP_LIFE = 480; // 8 seconds
+
+class DroppedPowerup {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 18;
+        this.h = 18;
+        this.vx = (Math.random() - 0.5) * 3;
+        this.vy = -6 - Math.random() * 3;
+        this.type = DROP_TYPES[Math.floor(Math.random() * DROP_TYPES.length)];
+        this.grounded = false;
+        this.life = DROPPED_POWERUP_LIFE;
+        this.animTimer = 0;
+        this.collected = false;
+    }
+
+    update() {
+        if (this.collected) return false;
+        this.life--;
+        if (this.life <= 0) return false;
+        this.animTimer++;
+
+        if (!this.grounded) {
+            this.vy += GRAVITY;
+            if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vx *= 0.9;
+
+            // Land on platforms
+            for (const p of platforms) {
+                if (p.crumble && (p.crumbleState === 'falling' || p.crumbleState === 'respawning')) continue;
+                if (this.x + this.w > p.x && this.x < p.x + p.w &&
+                    this.y + this.h >= p.y && this.y + this.h <= p.y + 16 && this.vy >= 0) {
+                    this.y = p.y - this.h;
+                    this.vy = 0;
+                    this.vx = 0;
+                    this.grounded = true;
+                    break;
+                }
+            }
+            // Land at screen bottom
+            if (this.y + this.h >= H - 38) {
+                this.y = H - 38 - this.h;
+                this.vy = 0;
+                this.vx = 0;
+                this.grounded = true;
+            }
+            // Keep in bounds
+            if (this.x < 0) this.x = 0;
+            if (this.x + this.w > W) this.x = W - this.w;
+        }
+        return true;
+    }
+
+    render() {
+        const blinking = this.life < 120;
+        if (blinking && Math.floor(this.animTimer * 0.15) % 2 === 0) return;
+        const cfg = DROP_TYPE_CONFIG[this.type];
+        const bob = this.grounded ? Math.sin(this.animTimer * 0.09) * 2 : 0;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(this.animTimer * 0.14) * 0.15;
+
+        ctx.save();
+        // Glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = cfg.glow;
+        ctx.fill();
+        // Body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = cfg.color;
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        // Icon
+        ctx.font = `bold ${Math.round(9 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(cfg.icon, cx, cy + 3);
+        ctx.restore();
+    }
+}
+
+let droppedPowerups = [];
+
+function checkDroppedPowerupCollisions() {
+    for (const dp of droppedPowerups) {
+        if (dp.collected) continue;
+        if (!aabb(player, dp)) continue;
+        dp.collected = true;
+        switch (dp.type) {
+            case 'star':
+                player.starTimer = Math.min((player.starTimer || 0) + 180, STAR_DURATION);
+                particles.push(new Particle(dp.x - 10, dp.y - 14, '⭐ ЗВЕЗДА!', '#ffdd00'));
+                playSound('star');
+                break;
+            case 'shield':
+                player.hasShield = true;
+                particles.push(new Particle(dp.x - 10, dp.y - 14, '🛡 ЩИТ!', '#4488ff'));
+                playSound('shield');
+                break;
+            case 'speed':
+                player.speedBoostTimer = Math.min((player.speedBoostTimer || 0) + 180, SPEED_BOOST_DURATION);
+                particles.push(new Particle(dp.x - 10, dp.y - 14, '💨 СКОРОСТЬ!', '#ff8800'));
+                playSound('speedboost');
+                break;
+            case 'freeze':
+                player.freezeTimer = FREEZE_DURATION;
+                for (const m of marios) { if (m.isAlive) m.frozenTimer = FREEZE_DURATION; }
+                particles.push(new Particle(dp.x - 10, dp.y - 14, '❄ ЗАМОРОЗКА!', '#88ddff'));
+                playSound('freeze');
+                break;
+            case 'slowmo':
+                player.slowMoTimer = SLOW_MO_DURATION;
+                particles.push(new Particle(dp.x - 10, dp.y - 14, '⏱ ЗАМЕДЛЕНИЕ!', '#00ccff'));
+                playSound('freeze');
+                break;
+        }
+    }
+    droppedPowerups = droppedPowerups.filter(dp => !dp.collected);
+}
 
 // === FEATURE 56: VICTORY CONFETTI ===
 let confettiParticles = [];
@@ -4088,6 +4293,7 @@ function loadLevel(index) {
     }
 
     particles = [];
+    droppedPowerups = []; // Feature 77: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelTimer = 0;
@@ -5577,7 +5783,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп'];
     if (selectedLevelIdx < unlockedLevels) {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
@@ -5662,7 +5868,7 @@ function renderLevelTransition() {
         ctx.save();
         ctx.globalAlpha = alpha;
         drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
-        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС'];
+        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп'];
         const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
         drawTitle(name, H / 2 + 50, 20, '#aaffaa');
         ctx.restore();
@@ -5786,6 +5992,8 @@ function update() {
             updateElectroField();
             slowMos = slowMos.filter(sm => sm.update()); // Feature 75
             checkSlowMoCollisions();
+            droppedPowerups = droppedPowerups.filter(dp => dp.update()); // Feature 77
+            checkDroppedPowerupCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
@@ -6021,6 +6229,7 @@ function render() {
             scoreBoosts.forEach(s => s.render()); // Feature 61
             electricos.forEach(e => e.render()); // Feature 72
             slowMos.forEach(sm => sm.render()); // Feature 75
+            droppedPowerups.forEach(dp => dp.render()); // Feature 77
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
