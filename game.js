@@ -3947,6 +3947,22 @@ function drawHUD() {
     ctx.textAlign = 'left';
     ctx.restore();
 
+    // Feature 57: Pulsing red border when last life
+    if (player && player.lives === 1) {
+        const pulse = 0.4 + Math.abs(Math.sin(Date.now() * 0.004)) * 0.55;
+        ctx.save();
+        ctx.strokeStyle = `rgba(255, 0, 0, ${pulse})`;
+        ctx.lineWidth = 10;
+        ctx.strokeRect(2, 2, W - 4, H - 4);
+        // Inner vignette glow
+        const grad = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
+        grad.addColorStop(0, 'rgba(255,0,0,0)');
+        grad.addColorStop(1, `rgba(180,0,0,${pulse * 0.22})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+    }
+
     // Jump state indicator (double jump or wall jump)
     if (player && !player.isGrounded) {
         ctx.save();
