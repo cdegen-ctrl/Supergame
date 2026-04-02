@@ -447,6 +447,8 @@ class Player extends Entity {
         this.ghostTimer = 0;
         // Score boost power-up (Feature 61)
         this.scoreBoostTimer = 0;
+        // Electro power-up (Feature 72)
+        this.electroTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -619,6 +621,8 @@ class Player extends Entity {
         if (this.ghostTimer > 0) this.ghostTimer--;
         // score boost timer (Feature 61)
         if (this.scoreBoostTimer > 0) this.scoreBoostTimer--;
+        // electro timer (Feature 72)
+        if (this.electroTimer > 0) this.electroTimer--;
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
@@ -805,6 +809,41 @@ class Player extends Entity {
             ctx.restore();
         }
 
+        // Feature 72: Electro aura — rotating electric field around player
+        if (this.electroTimer > 0) {
+            const ecx = this.x + this.w / 2;
+            const ecy = this.y + this.h / 2;
+            const t = this.electroTimer;
+            const pulse = 0.85 + Math.sin(t * 0.12) * 0.15;
+            ctx.save();
+            // Outer ring glow
+            ctx.beginPath();
+            ctx.arc(ecx, ecy, ELECTRO_RADIUS * pulse * 0.5, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 255, 60, ${0.18 * pulse})`;
+            ctx.lineWidth = 8;
+            ctx.stroke();
+            // Inner field ring
+            ctx.beginPath();
+            ctx.arc(ecx, ecy, ELECTRO_RADIUS * 0.4 * pulse, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(50, 220, 255, ${0.55 * pulse})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            // Rotating sparks
+            ctx.strokeStyle = '#ffff44';
+            ctx.lineWidth = 1.5;
+            const elapsed = ELECTRO_DURATION - t;
+            for (let i = 0; i < 8; i++) {
+                const ang = (elapsed * 0.08) + (Math.PI / 4) * i;
+                const r1 = ELECTRO_RADIUS * 0.38 * pulse;
+                const r2 = r1 + 8;
+                ctx.beginPath();
+                ctx.moveTo(ecx + Math.cos(ang) * r1, ecy + Math.sin(ang) * r1);
+                ctx.lineTo(ecx + Math.cos(ang) * r2, ecy + Math.sin(ang) * r2);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
         // Feature 54: Ghost mode aura
         if (this.ghostTimer > 0) {
             const hue = (this.ghostTimer * 2) % 360;
@@ -879,6 +918,9 @@ class Mario extends Entity {
         this.wingFlap = Math.random() * Math.PI * 2; // random phase
         // shooter: fire rate timer
         this.shootTimer = type === 'shooter' ? 120 + Math.floor(Math.random() * 120) : 9999;
+        // parachute: oscillation timer and deployed flag (Feature 71)
+        this.parachuteDeployed = type === 'parachute';
+        this.parachuteOscTimer = Math.random() * Math.PI * 2;
         // freeze
         this.frozenTimer = 0;
     }
@@ -922,6 +964,38 @@ class Mario extends Entity {
                 ));
                 playSound('jump'); // reuse a sound
             }
+            return true;
+        }
+
+        // Feature 71: Parachute type — descends slowly from above
+        if (this.type === 'parachute' && this.parachuteDeployed) {
+            this.parachuteOscTimer += 0.025;
+            this.vx = Math.sin(this.parachuteOscTimer) * 1.4;
+            this.vy = 1.1;
+            this.x += this.vx;
+            this.y += this.vy;
+            // Clamp X to screen bounds
+            if (this.x < 0) this.x = 0;
+            if (this.x + this.w > W) this.x = W - this.w;
+            // Land on platforms
+            for (const p of platforms) {
+                if (p.crumble && (p.crumbleState === 'falling' || p.crumbleState === 'respawning')) continue;
+                if (this.x + this.w > p.x && this.x < p.x + p.w &&
+                    this.y + this.h >= p.y && this.y + this.h <= p.y + 14) {
+                    this.y = p.y - this.h;
+                    this.vy = 0;
+                    this.parachuteDeployed = false;
+                    break;
+                }
+            }
+            // Land at screen bottom
+            if (this.y + this.h >= H - 38) {
+                this.y = H - 38 - this.h;
+                this.vy = 0;
+                this.parachuteDeployed = false;
+            }
+            this.animTimer++;
+            if (this.animTimer > 18) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
             return true;
         }
 
@@ -1141,8 +1215,54 @@ class Mario extends Entity {
                 ctx.fillText('🎯', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#ff8800';
                 ctx.fillText('🎯', badgeX, badgeY);
+            } else if (this.type === 'parachute') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('🪂', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#ffeeaa';
+                ctx.fillText('🪂', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        // Feature 71: Parachute visual — drawn above the Mario sprite
+        if (this.isAlive && this.type === 'parachute' && this.parachuteDeployed) {
+            const cx = this.x + this.w / 2;
+            const py = this.y - 2;
+            const r = 26;
+            // Canopy (3 colored segments)
+            const colors = ['#ff4444', '#ffffff', '#ff4444'];
+            for (let i = 0; i < 3; i++) {
+                const startA = Math.PI + (i / 3) * Math.PI;
+                const endA   = Math.PI + ((i + 1) / 3) * Math.PI;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(cx, py);
+                ctx.arc(cx, py, r, startA, endA);
+                ctx.closePath();
+                ctx.fillStyle = colors[i];
+                ctx.globalAlpha = 0.92;
+                ctx.fill();
+                ctx.strokeStyle = '#aa2200';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.restore();
+            }
+            // Canopy outline
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, py, r, Math.PI, 0);
+            ctx.strokeStyle = '#cc3300';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.restore();
+            // Suspension lines
+            ctx.save();
+            ctx.strokeStyle = 'rgba(180,120,60,0.8)';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(cx - r * 0.7, py);     ctx.lineTo(this.x + 4, this.y); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx, py + 4);            ctx.lineTo(cx, this.y); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx + r * 0.7, py);     ctx.lineTo(this.x + this.w - 4, this.y); ctx.stroke();
             ctx.restore();
         }
 
@@ -1314,6 +1434,8 @@ const MAGNET_RADIUS = 180;
 const FREEZE_DURATION = 240; // 4 seconds at 60fps
 const GHOST_DURATION = 300; // Feature 54: 5 seconds at 60fps
 const SCORE_BOOST_DURATION = 480; // Feature 61: 8 seconds at 60fps
+const ELECTRO_DURATION = 360; // Feature 72: 6 seconds at 60fps
+const ELECTRO_RADIUS = 80; // px radius of electric field
 
 class Star {
     constructor(x, y) {
@@ -1930,6 +2052,121 @@ function checkScoreBoostCollisions() {
         playSound('levelup');
     }
     scoreBoosts = scoreBoosts.filter(s => !s.collected);
+}
+
+// === FEATURE 72: ELECTRO POWER-UP ===
+class Electro {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.15) * 0.15;
+
+        ctx.save();
+        // Outer electric glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 240, 50, ${0.25 * pulse})`;
+        ctx.fill();
+        // Inner body (bright yellow-cyan)
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#22ddff';
+        ctx.fill();
+        ctx.strokeStyle = '#ffff44';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Lightning bolt symbol
+        ctx.font = `bold ${Math.round(12 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('⚡', cx, cy + 4.5);
+        // Sparks (rotating lines)
+        ctx.strokeStyle = '#ffff00';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 6; i++) {
+            const angle = (t * 0.06) + (Math.PI / 3) * i;
+            const r1 = 11 * pulse;
+            const r2 = 15 * pulse;
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(angle) * r1, cy + Math.sin(angle) * r1);
+            ctx.lineTo(cx + Math.cos(angle) * r2, cy + Math.sin(angle) * r2);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+}
+
+let electricos = [];
+
+function checkElectroCollisions() {
+    for (const e of electricos) {
+        if (e.collected) continue;
+        if (!aabb(player, e)) continue;
+        e.collected = true;
+        player.electroTimer = ELECTRO_DURATION;
+        // Spark burst on pickup
+        for (let i = 0; i < 14; i++) {
+            const angle = (Math.PI * 2 * i) / 14;
+            const spd = 2.5 + Math.random() * 3;
+            particles.push(new DeathParticle(
+                e.x + e.w / 2, e.y + e.h / 2,
+                Math.cos(angle) * spd, Math.sin(angle) * spd,
+                i % 2 === 0 ? '#ffff44' : '#22ddff', 5
+            ));
+        }
+        particles.push(new Particle(e.x - 20, e.y - 16, '⚡ ЭЛЕКТРО!', '#ffff44'));
+        playSound('star');
+    }
+    electricos = electricos.filter(e => !e.collected);
+}
+
+function updateElectroField() {
+    if (!player || player.electroTimer <= 0) return;
+    // Kill enemies in radius
+    const pcx = player.x + player.w / 2;
+    const pcy = player.y + player.h / 2;
+    for (const m of marios) {
+        if (!m.isAlive) continue;
+        const mcx = m.x + m.w / 2;
+        const mcy = m.y + m.h / 2;
+        const dx = mcx - pcx;
+        const dy = mcy - pcy;
+        if (Math.sqrt(dx * dx + dy * dy) <= ELECTRO_RADIUS) {
+            // Zap enemy: instant kill (treated as stomp)
+            if (m.stomp()) {
+                player.score += 150;
+                totalScore += 150;
+                runStats.enemiesKilled++;
+                particles.push(new Particle(m.x, m.y - 10, '+150 ⚡', '#ffff44'));
+                // Spark at enemy position
+                for (let i = 0; i < 8; i++) {
+                    const ang = (Math.PI * 2 * i) / 8;
+                    particles.push(new DeathParticle(
+                        m.x + m.w / 2, m.y + m.h / 2,
+                        Math.cos(ang) * 3, Math.sin(ang) * 3,
+                        '#ffff00', 4
+                    ));
+                }
+                playSound('stomp');
+            }
+        }
+    }
 }
 
 // === FIREBALL (Shooter enemy projectile) ===
@@ -2819,6 +3056,7 @@ const LEVELS = [
         freezeSpawns: [{ x: 390, y: 205 }],
         portalSpawns: [{ blue: { x: 30, y: 415 }, orange: { x: 650, y: 415 } }],
         ghostSpawns: [{ x: 270, y: 200 }],
+        electroSpawns: [{ x: 460, y: 205 }], // Feature 72
     },
     {
         // Level 5: The gauntlet with moving + crumbling platforms
@@ -2861,6 +3099,8 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 350, y: 90 }],
         ghostSpawns: [{ x: 300, y: 95 }],
         scoreBoostSpawns: [{ x: 450, y: 200 }], // Feature 61
+        parachuteMarioSpawns: [{ x: 180, y: -60 }, { x: 560, y: -110 }], // Feature 71
+        electroSpawns: [{ x: 590, y: 230 }], // Feature 72
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2907,6 +3147,8 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 450, y: 370 }],
         ghostSpawns: [{ x: 490, y: 55 }],
         scoreBoostSpawns: [{ x: 350, y: 375 }], // Feature 61
+        parachuteMarioSpawns: [{ x: 300, y: -80 }, { x: 600, y: -50 }], // Feature 71
+        electroSpawns: [{ x: 680, y: 375 }], // Feature 72
     },
     {
         // Level 7: Chaos — all enemy types + moving + crumble + ice platforms
@@ -2956,6 +3198,8 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
         ghostSpawns: [{ x: 350, y: 65 }],
         scoreBoostSpawns: [{ x: 480, y: 65 }], // Feature 61
+        parachuteMarioSpawns: [{ x: 100, y: -70 }, { x: 450, y: -50 }, { x: 700, y: -90 }], // Feature 71
+        electroSpawns: [{ x: 300, y: 65 }], // Feature 72
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3011,6 +3255,8 @@ const LEVELS = [
         flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
         shooterMarioSpawns: [{ x: 310, y: 85 }, { x: 530, y: 265 }],
         ghostSpawns: [{ x: 400, y: 85 }],
+        parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 620, y: -80 }], // Feature 71
+        electroSpawns: [{ x: 210, y: 85 }, { x: 600, y: 185 }], // Feature 72
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3039,6 +3285,7 @@ const LEVELS = [
         speedBoostSpawns: [{ x: 450, y: 225 }],
         magnetSpawns: [{ x: 280, y: 225 }],
         ghostSpawns: [{ x: 340, y: 225 }],
+        electroSpawns: [{ x: 500, y: 225 }], // Feature 72
     },
     {
         // Level 10: «Возмездие» — post-boss gauntlet with all enemy types
@@ -3091,6 +3338,8 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 180, y: 155 }, { x: 480, y: 140 }, { x: 660, y: 165 }],
         shooterMarioSpawns: [{ x: 120, y: 170 }, { x: 620, y: 165 }],
+        parachuteMarioSpawns: [{ x: 400, y: -60 }, { x: 200, y: -100 }, { x: 600, y: -80 }], // Feature 71
+        electroSpawns: [{ x: 530, y: 75 }, { x: 300, y: 75 }], // Feature 72
     },
 ];
 
@@ -3229,7 +3478,7 @@ function startSurvivalMode() {
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
-    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = [];
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = [];
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -3594,6 +3843,9 @@ function loadLevel(index) {
     // Shooter Marios (stationary, fires fireballs)
     const shooterMarios = (lvl.shooterMarioSpawns || []).map(s => new Mario(s.x, s.y, 0, 'shooter'));
     marios = [...marios, ...shooterMarios];
+    // Feature 71: Parachute Marios (descend slowly from above)
+    const parachuteMarios = (lvl.parachuteMarioSpawns || []).map(s => new Mario(s.x, s.y, speed * 0.6, 'parachute'));
+    marios = [...marios, ...parachuteMarios];
     fireballs = [];
 
     const sp = lvl.playerSpawn;
@@ -3632,6 +3884,7 @@ function loadLevel(index) {
     freezes = (lvl.freezeSpawns || []).map(f => new Freeze(f.x, f.y));
     ghosts = (lvl.ghostSpawns || []).map(g => new Ghost(g.x, g.y)); // Feature 54
     scoreBoosts = (lvl.scoreBoostSpawns || []).map(s => new ScoreBoost(s.x, s.y)); // Feature 61
+    electricos = (lvl.electroSpawns || []).map(e => new Electro(e.x, e.y)); // Feature 72
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -4351,6 +4604,33 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ee88ff';
         ctx.fillText('✨ x2 ОЧКИ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 72: Electro timer bar
+    if (player && player.electroTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0);
+        const frac = player.electroTimer / ELECTRO_DURATION;
+        const pulse = 0.8 + Math.sin(Date.now() * 0.015) * 0.2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(50,220,255,${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffff88';
+        ctx.fillText('⚡ ЭЛЕКТРО', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -5211,6 +5491,9 @@ function update() {
             checkGhostCollisions();
             scoreBoosts = scoreBoosts.filter(s => s.update()); // Feature 61
             checkScoreBoostCollisions();
+            electricos = electricos.filter(e => e.update()); // Feature 72
+            checkElectroCollisions();
+            updateElectroField();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
@@ -5264,6 +5547,11 @@ function update() {
                         marios.push(new Mario(sx, 420, waveSpeed, t));
                     }
                     particles.push(new Particle(W / 2 - 50, H / 2 - 80, `ВОЛНА ${survivalWave}!`, '#ffaa00'));
+                    // Feature 71: Every 3 waves, spawn a parachute Mario
+                    if (survivalWave % 3 === 0) {
+                        const px = 100 + Math.floor(Math.random() * 600);
+                        marios.push(new Mario(px, -60, waveSpeed * 0.6, 'parachute'));
+                    }
                     // Respawn some coins each wave
                     const arena = SURVIVAL_ARENA;
                     if (coins.filter(c => !c.collected).length < 3) {
@@ -5430,6 +5718,7 @@ function render() {
             freezes.forEach(f => f.render());
             ghosts.forEach(g => g.render()); // Feature 54
             scoreBoosts.forEach(s => s.render()); // Feature 61
+            electricos.forEach(e => e.render()); // Feature 72
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
