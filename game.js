@@ -2829,6 +2829,53 @@ const LEVELS = [
     },
 ];
 
+// === FEATURE 56: VICTORY CONFETTI ===
+let confettiParticles = [];
+const CONFETTI_COLORS = ['#ff3333', '#ffcc00', '#33ff66', '#3399ff', '#cc33ff', '#ff9900', '#ffffff'];
+
+class ConfettiParticle {
+    constructor() {
+        this.x = Math.random() * W;
+        this.y = -10 - Math.random() * 60;
+        this.vx = (Math.random() - 0.5) * 3;
+        this.vy = 1.5 + Math.random() * 2.5;
+        this.color = CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
+        this.w = 6 + Math.random() * 6;
+        this.h = 4 + Math.random() * 4;
+        this.rot = Math.random() * Math.PI * 2;
+        this.rotSpeed = (Math.random() - 0.5) * 0.18;
+        this.life = 260 + Math.floor(Math.random() * 120);
+        this.maxLife = this.life;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vx += (Math.random() - 0.5) * 0.1; // slight wind wobble
+        this.rot += this.rotSpeed;
+        this.life--;
+        return this.life > 0 && this.y < H + 20;
+    }
+
+    render() {
+        const alpha = Math.min(1, this.life / 30);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rot);
+        ctx.fillStyle = this.color;
+        ctx.fillRect(-this.w / 2, -this.h / 2, this.w, this.h);
+        ctx.restore();
+    }
+}
+
+function spawnConfetti() {
+    confettiParticles = [];
+    for (let i = 0; i < 90; i++) {
+        confettiParticles.push(new ConfettiParticle());
+    }
+}
+
 // === GAME STATE ===
 let gameState = 'MENU';
 let currentLevel = 0;
@@ -3151,7 +3198,7 @@ function loadLevel(index) {
 
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed));
 
-    const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : 1;
+    const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     const speed = lvl.marioSpeed * speedMult * diffMult;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
 
@@ -3233,7 +3280,7 @@ function startGameFromLevel(level) {
     player = null;
     stars = [];
     loadLevel(level);
-    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : 3;
+    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
     player.score = 0;
     gameState = 'PLAYING';
 }
@@ -4093,6 +4140,9 @@ function renderVictory() {
     ctx.textAlign = 'left';
     ctx.restore();
 
+    // Feature 56: Confetti
+    confettiParticles.forEach(p => p.render());
+
     drawTitle('ENTER — В меню', H - 12, 16, C.text);
 }
 
@@ -4141,16 +4191,16 @@ function renderDifficultySelect() {
             selColor: 'rgba(60,180,255,0.92)',
             border: '#88ccff',
             icon: '😊',
-            lines: ['Скорость врагов ×0.7', '5 жизней', 'Бонус времени ×2', 'Для новичков'],
+            lines: ['Скорость ×0.7', '5 жизней', 'Бонус ×2', 'Для новичков'],
         },
         {
             key: 'normal',
-            name: 'НОРМАЛЬНО',
+            name: 'НОРМА',
             color: 'rgba(30,130,60,0.85)',
             selColor: 'rgba(60,200,80,0.92)',
             border: '#88ffaa',
             icon: '😐',
-            lines: ['Стандартная скорость', '3 жизни', 'Обычный бонус', 'Оригинальный баланс'],
+            lines: ['Стандартно', '3 жизни', 'Обычный бонус', 'Баланс'],
         },
         {
             key: 'hard',
@@ -4159,13 +4209,22 @@ function renderDifficultySelect() {
             selColor: 'rgba(230,60,60,0.92)',
             border: '#ff8888',
             icon: '😤',
-            lines: ['Скорость врагов ×1.3', '2 жизни', 'Бонус времени ×0.5', 'Для мастеров'],
+            lines: ['Скорость ×1.3', '2 жизни', 'Бонус ×0.5', 'Для мастеров'],
+        },
+        {
+            key: 'hardcore',
+            name: 'ХАРДКОР',
+            color: 'rgba(40,0,60,0.92)',
+            selColor: 'rgba(100,0,150,0.95)',
+            border: '#ff00ff',
+            icon: '💀',
+            lines: ['Скорость ×1.6', '1 жизнь', 'Нет бонуса', 'Только смерть'],
         },
     ];
 
-    const cardW = 195;
+    const cardW = 165;
     const cardH = 200;
-    const gap = 18;
+    const gap = 14;
     const totalW = opts.length * cardW + (opts.length - 1) * gap;
     const startX = (W - totalW) / 2;
     const startY = 160;
@@ -4223,8 +4282,8 @@ function renderDifficultySelect() {
     drawTitle('← → — Выбор   ENTER — Начать   ESC — Назад', 390, 13, '#aaaaaa');
 
     // Show current difficulty label
-    const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ' };
-    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, '#ffffaa');
+    const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ', hardcore: '💀 ХАРДКОР' };
+    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, difficulty === 'hardcore' ? '#ff44ff' : '#ffffaa');
 }
 
 function renderLevelSelect() {
@@ -4305,7 +4364,7 @@ function renderLevelSelect() {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
 
-    const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : '😐 НОРМА';
+    const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : difficulty === 'hardcore' ? '💀 ХАРДКОР' : '😐 НОРМА';
     drawTitle(`Сложность: ${diffLabel}  (ESC → изменить)`, 350, 12, '#aaddff');
     drawTitle('← → — Выбор   ENTER — Играть   ESC — Назад', 380, 13, '#aaaaaa');
     if (selectedLevelIdx >= unlockedLevels) {
@@ -4405,13 +4464,13 @@ function update() {
             break;
 
         case 'DIFFICULTY_SELECT': {
-            const opts = ['easy', 'normal', 'hard'];
+            const opts = ['easy', 'normal', 'hard', 'hardcore'];
             const idx = opts.indexOf(difficulty);
             if (isLeft() && !leftWasPressed && idx > 0) {
                 difficulty = opts[idx - 1];
                 localStorage.setItem('mushroomDifficulty', difficulty);
             }
-            if (isRight() && !rightWasPressed && idx < 2) {
+            if (isRight() && !rightWasPressed && idx < opts.length - 1) {
                 difficulty = opts[idx + 1];
                 localStorage.setItem('mushroomDifficulty', difficulty);
             }
@@ -4523,7 +4582,7 @@ function update() {
             if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
-                const timeBonusMult = difficulty === 'easy' ? 2.0 : difficulty === 'hard' ? 0.5 : 1.0;
+                const timeBonusMult = difficulty === 'easy' ? 2.0 : difficulty === 'hard' ? 0.5 : difficulty === 'hardcore' ? 0 : 1.0;
                 const timeBonus = Math.max(0, Math.round(TIME_BONUS_MAX * timeBonusMult * (1 - elapsed / 60)));
                 if (timeBonus > 0) {
                     player.score += timeBonus;
@@ -4565,6 +4624,8 @@ function update() {
                     submitScore(totalScore);
                     stopBGM();
                     gameState = 'VICTORY';
+                    spawnConfetti(); // Feature 56
+                    playSound('victory'); // Feature 58
                 } else {
                     currentLevel++;
                     // Unlock next level (up to LEVELS.length)
@@ -4580,7 +4641,13 @@ function update() {
             break;
 
         case 'VICTORY':
+            // Continuously spawn new confetti so it never runs out
+            if (confettiParticles.length < 60) {
+                for (let i = 0; i < 3; i++) confettiParticles.push(new ConfettiParticle());
+            }
+            confettiParticles = confettiParticles.filter(p => p.update());
             if (isEnter() && !enterWasPressed) {
+                confettiParticles = [];
                 gameState = 'MENU';
             }
             break;
