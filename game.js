@@ -719,6 +719,9 @@ class Player extends Entity {
         this.lives--;
         levelDeathCount++;  // Feature 59: track per-level deaths
         runStats.deaths++;  // Feature 63: track total deaths this run
+        // Feature 83: reset kill streak on damage
+        killStreakCount = 0;
+        killStreakTimer = 0;
         deathFlashTimer = 35;
         shakeTimer = 20;
         shakeIntensity = 10;
@@ -1155,6 +1158,21 @@ class Mario extends Entity {
     }
 
     render() {
+        // Feature 84: ghost_mario — transparency based on distance to player
+        let _ghostWrap = false;
+        if (this.type === 'ghost_mario' && this.isAlive) {
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            const dist = player
+                ? Math.hypot((player.x + player.w / 2) - cx, (player.y + player.h / 2) - cy)
+                : 999;
+            const baseAlpha = Math.max(0.07, Math.min(0.92, 1 - (dist - 55) / 160));
+            const flicker = dist < 130 ? (0.55 + Math.abs(Math.sin(Date.now() * 0.009 + this.x * 0.05)) * 0.45) : 1;
+            ctx.save();
+            ctx.globalAlpha = baseAlpha * flicker;
+            _ghostWrap = true;
+        }
+
         // 3D shadow
         if (this.isAlive) {
             drawShadow(this.x, this.y + this.h, this.w);
@@ -1240,6 +1258,13 @@ class Mario extends Entity {
                 ctx.fillText('🪂', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#ffeeaa';
                 ctx.fillText('🪂', badgeX, badgeY);
+            } else if (this.type === 'ghost_mario') {
+                // Feature 84: ghost badge only visible when nearby
+                const gdist = player ? Math.hypot((player.x + player.w/2) - badgeX, (player.y + player.h/2) - (this.y + this.h/2)) : 999;
+                if (gdist < 130) {
+                    ctx.fillStyle = 'rgba(180,100,255,0.7)';
+                    ctx.fillText('👻', badgeX, badgeY);
+                }
             }
             ctx.textAlign = 'left';
             ctx.restore();
@@ -1362,6 +1387,9 @@ class Mario extends Entity {
             ctx.fillRect(this.x - 3, this.y - 3, this.w + 6, this.h + 6);
             ctx.restore();
         }
+
+        // Feature 84: close ghost_mario transparency wrapper
+        if (_ghostWrap) ctx.restore();
     }
 }
 
@@ -4041,6 +4069,11 @@ let coinCaveBestCoins = parseInt(localStorage.getItem('mushroomCoinCaveBest') ||
 const COIN_CAVE_DURATION = 30 * 60; // 30 seconds in frames
 const COIN_CAVE_LEVEL_INDEX = 12;   // bonus level 13 is index 12
 
+// === FEATURE 83: KILL STREAK ===
+let killStreakCount = 0;
+let killStreakTimer = 0;          // frames since last kill
+const KILL_STREAK_WINDOW = 180;  // 3 seconds to continue streak
+
 // === FEATURE 68: SURVIVAL MODE ===
 let survivalMode = false;
 let survivalTimer = 0;          // frames survived
@@ -4428,11 +4461,17 @@ function getMarioType(levelIndex, spawnIdx) {
     }
     if (levelIndex >= 10) {
         // Level 11 "Apocalypse": marioTypes array from level data takes priority (handled in loadLevel)
-        const types = ['armored', 'fast', 'armored', 'jumpy', 'armored', 'fast', 'jumpy', 'armored'];
+        const types = ['armored', 'ghost_mario', 'armored', 'jumpy', 'armored', 'fast', 'ghost_mario', 'armored'];
         return types[spawnIdx % types.length];
     }
-    if (levelIndex >= 7) {
-        const types = ['armored', 'armored', 'fast', 'jumpy', 'armored', 'fast', 'jumpy', 'armored', 'fast'];
+    if (levelIndex === 8) {
+        // Boss level — keep regular enemy types, no ghost_mario
+        const types = ['normal', 'fast', 'armored', 'jumpy', 'armored'];
+        return types[spawnIdx % types.length];
+    }
+    if (levelIndex >= 6) {
+        // Night levels 7-10: introduce ghost_mario (Feature 84)
+        const types = ['armored', 'ghost_mario', 'fast', 'jumpy', 'armored', 'ghost_mario', 'armored', 'fast'];
         return types[spawnIdx % types.length];
     }
     const types = ['armored', 'fast', 'jumpy', 'fast', 'armored', 'fast'];
@@ -4535,6 +4574,8 @@ function loadLevel(index) {
     droppedPowerups = []; // Feature 77: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
+    killStreakCount = 0; // Feature 83: reset streak on new level
+    killStreakTimer = 0;
     levelTimer = 0;
     hudScoreDisplay = 0;
     levelTotalMarios = marios.length;
@@ -4575,6 +4616,29 @@ function loadLevel(index) {
     shootingStars = []; // Feature 62: reset shooting stars on level load
     // Start BGM appropriate to this level's theme
     if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
+}
+
+// Feature 83: Kill Streak — call on every confirmed enemy kill
+function onEnemyKilledStreak(x, y) {
+    killStreakTimer = 0;
+    killStreakCount++;
+    if (killStreakCount < 3) return;
+
+    let bonus = 0;
+    let msg = '';
+    let color = '#ff6600';
+    if (killStreakCount >= 8) {
+        bonus = 1000; msg = `🌟 ЛЕГЕНДА x${killStreakCount}!`; color = '#ffd700';
+    } else if (killStreakCount >= 5) {
+        bonus = 500; msg = `💥 ОГОНЬ! x${killStreakCount}`; color = '#ff4400';
+    } else {
+        bonus = 200; msg = `🔥 СТРИК x${killStreakCount}!`; color = '#ff8800';
+    }
+    if (player && bonus > 0) {
+        player.score += bonus;
+        totalScore += bonus;
+    }
+    particles.push(new Particle(x - 30, y - 25, `${msg} +${bonus}`, color));
 }
 
 function startGame() {
@@ -4635,6 +4699,7 @@ function checkPlayerMarioCollisions() {
         // Star power: kill on any contact
         if (player.starTimer > 0) {
             mario.stomp();
+            onEnemyKilledStreak(mario.x, mario.y); // Feature 83
             comboCount++;
             let points = 100 * comboCount;
             if (player.scoreBoostTimer > 0) points *= 2; // Feature 61
@@ -4655,6 +4720,7 @@ function checkPlayerMarioCollisions() {
             mario.stomp();
             comboCount++;
             runStats.enemiesKilled++;
+            onEnemyKilledStreak(mario.x, mario.y); // Feature 83
             let points = 150 * comboCount; // bonus points for rocket kills
             if (player.scoreBoostTimer > 0) points *= 2;
             player.score += points;
@@ -4681,6 +4747,7 @@ function checkPlayerMarioCollisions() {
             player.vy = STOMP_BOUNCE;
             if (killed) {
                 runStats.enemiesKilled++;
+                onEnemyKilledStreak(mario.x, mario.y); // Feature 83
                 unlockAchievement('firstStomp');
                 comboCount++;
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
@@ -5583,6 +5650,30 @@ function drawHUD() {
         ctx.fillStyle = '#ffcc66';
         ctx.textAlign = 'center';
         ctx.fillText(`ВОЛНА ${survivalWave + 1}  РЕКОРД: ${survivalBestTime}с`, W / 2, 75);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 83: Kill Streak indicator (bottom-right, above mini-map area)
+    if (killStreakCount >= 2) {
+        const streakX = W - 80;
+        const streakY = H - 70;
+        const fadeFrames = KILL_STREAK_WINDOW;
+        const freshness = 1 - Math.max(0, killStreakTimer - fadeFrames * 0.6) / (fadeFrames * 0.4);
+        const alpha = Math.min(1, freshness + 0.35);
+        const color = killStreakCount >= 8 ? '#ffd700' : killStreakCount >= 5 ? '#ff4400' : '#ff8800';
+        const pulse = 1 + Math.sin(Date.now() * 0.012) * 0.07;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = 'center';
+        ctx.font = `bold ${Math.round(13 * pulse)}px monospace`;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText(killStreakCount >= 8 ? '🌟' : killStreakCount >= 5 ? '💥' : '🔥', streakX + 1, streakY - 11);
+        ctx.fillStyle = color;
+        ctx.fillText(killStreakCount >= 8 ? '🌟' : killStreakCount >= 5 ? '💥' : '🔥', streakX, streakY - 12);
+        ctx.font = `bold ${Math.round(11 * pulse)}px monospace`;
+        ctx.fillStyle = color;
+        ctx.fillText(`СТРИК x${killStreakCount}`, streakX, streakY);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -6531,6 +6622,15 @@ function update() {
                     if (coins.filter(c => !c.collected).length < 3) {
                         coins.push(...(arena.coinSpawns || []).slice(0, 3).map(c => new Coin(c.x, c.y)));
                     }
+                }
+            }
+
+            // Feature 83: Kill streak decay — reset if no kill within time window
+            if (killStreakCount > 0) {
+                killStreakTimer++;
+                if (killStreakTimer > KILL_STREAK_WINDOW) {
+                    killStreakCount = 0;
+                    killStreakTimer = 0;
                 }
             }
 
