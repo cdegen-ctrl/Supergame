@@ -451,6 +451,8 @@ class Player extends Entity {
         this.electroTimer = 0;
         // Slow-Mo power-up (Feature 75)
         this.slowMoTimer = 0;
+        // Rocket power-up (Feature 80)
+        this.rocketTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -627,6 +629,12 @@ class Player extends Entity {
         if (this.electroTimer > 0) this.electroTimer--;
         // slow-mo timer (Feature 75)
         if (this.slowMoTimer > 0) this.slowMoTimer--;
+        // rocket timer (Feature 80)
+        if (this.rocketTimer > 0) {
+            this.rocketTimer--;
+            // Keep pushing upward during rocket flight
+            if (this.vy > -12) this.vy -= 1.5;
+        }
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
@@ -2244,6 +2252,102 @@ class SlowMo {
 
 let slowMos = [];
 
+// === ROCKET POWER-UP (Feature 80) ===
+const ROCKET_DURATION = 120; // 2 seconds at 60fps
+
+class RocketPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.88 + Math.sin(t * 0.14) * 0.12;
+
+        ctx.save();
+        // Outer glow (orange)
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 140, 0, ${0.3 * pulse})`;
+        ctx.fill();
+        // Inner body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#cc4400';
+        ctx.fill();
+        ctx.strokeStyle = '#ff8800';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Rocket icon
+        ctx.font = `${Math.round(14 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('🚀', cx, cy);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let rockets = [];
+
+function checkRocketCollisions() {
+    for (const r of rockets) {
+        if (r.collected) continue;
+        if (!aabb(player, r)) continue;
+        r.collected = true;
+        player.rocketTimer = ROCKET_DURATION;
+        player.vy = -20; // immediate upward launch
+        player.invincibleTimer = Math.max(player.invincibleTimer, ROCKET_DURATION);
+        unlockAchievement('rocketeer'); // Feature 79
+        for (let i = 0; i < 12; i++) {
+            const angle = (Math.PI * 2 * i) / 12;
+            const spd = 2 + Math.random() * 3;
+            particles.push(new DeathParticle(
+                r.x + r.w / 2, r.y + r.h / 2,
+                Math.cos(angle) * spd, Math.sin(angle) * spd,
+                i % 2 === 0 ? '#ff8800' : '#ffff00', 5
+            ));
+        }
+        particles.push(new Particle(r.x - 25, r.y - 16, '🚀 РАКЕТА!', '#ff8800'));
+        playSound('levelup');
+    }
+    rockets = rockets.filter(r => !r.collected);
+}
+
+function renderRocketTrail() {
+    if (!player || player.rocketTimer <= 0) return;
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h;
+    const intensity = Math.min(1, player.rocketTimer / 30);
+    ctx.save();
+    for (let i = 0; i < 4; i++) {
+        const ox = (Math.random() - 0.5) * 10;
+        const oy = Math.random() * 14;
+        const r = (3 + Math.random() * 5) * intensity;
+        const alpha = (0.4 + Math.random() * 0.5) * intensity;
+        ctx.beginPath();
+        ctx.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${Math.random() > 0.5 ? '255,140,0' : '255,60,0'}, ${alpha})`;
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
 function checkSlowMoCollisions() {
     for (const sm of slowMos) {
         if (sm.collected) continue;
@@ -3007,21 +3111,31 @@ function resetRunStats() {
     runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 };
 }
 
-// === ACHIEVEMENT SYSTEM ===
+// === ACHIEVEMENT SYSTEM (Feature 79: Persistent) ===
 const achievementDefs = [
     { id: 'firstStomp',   label: '🦶 Первый стомп!',       desc: 'Раздавь первого Марио' },
     { id: 'starPower',    label: '⭐ Звёздная мощь!',      desc: 'Подбери звезду' },
     { id: 'comboMaster',  label: '🔥 Комбо-мастер!',       desc: 'Combo x5' },
     { id: 'coinCollector',label: '💰 Коллекционер!',       desc: 'Собери 10 монет за игру' },
     { id: 'shieldUser',   label: '🛡 Непробиваемый!',      desc: 'Щит поглотил удар' },
+    // Feature 79: New persistent achievements
+    { id: 'bigSpender',   label: '🪙 Бездонный карман!',   desc: 'Собери 50 монет за игру' },
+    { id: 'noDeaths',     label: '💎 Без потерь!',         desc: 'Пройди уровень без смертей' },
+    { id: 'rocketeer',    label: '🚀 Ракетчик!',           desc: 'Подбери ракету' },
+    { id: 'mirrorHero',   label: '🪞 Зеркальный воин!',   desc: 'Пройди уровень в режиме Зеркало' },
+    { id: 'speedRunner',  label: '⚡ Спидраннер!',         desc: 'Пройди уровень быстрее 30 сек' },
 ];
 
-const achievementUnlocked = {};
+// Feature 79: Load persistent achievements from localStorage
+let persistentAchievements = {};
+try { persistentAchievements = JSON.parse(localStorage.getItem('mushroomAchievements') || '{}'); } catch { persistentAchievements = {}; }
+
+const achievementUnlocked = { ...persistentAchievements };
 let achievementToasts = []; // { label, timer }
 let totalCoinsCollectedRun = 0;
 
 function resetAchievements() {
-    Object.keys(achievementUnlocked).forEach(k => delete achievementUnlocked[k]);
+    // Feature 79: Don't clear persistent achievements — only per-run counters
     achievementToasts = [];
     totalCoinsCollectedRun = 0;
 }
@@ -3029,6 +3143,9 @@ function resetAchievements() {
 function unlockAchievement(id) {
     if (achievementUnlocked[id]) return;
     achievementUnlocked[id] = true;
+    // Feature 79: Save to localStorage
+    persistentAchievements[id] = true;
+    localStorage.setItem('mushroomAchievements', JSON.stringify(persistentAchievements));
     const def = achievementDefs.find(d => d.id === id);
     if (def) {
         achievementToasts.push({ label: def.label, timer: 180 });
@@ -3234,6 +3351,7 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 180, y: -60 }, { x: 560, y: -110 }], // Feature 71
         electroSpawns: [{ x: 590, y: 230 }], // Feature 72
         slowMoSpawns: [{ x: 160, y: 235 }], // Feature 75
+        rocketSpawns: [{ x: 520, y: 105 }], // Feature 80
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -3334,6 +3452,7 @@ const LEVELS = [
         scoreBoostSpawns: [{ x: 480, y: 65 }], // Feature 61
         parachuteMarioSpawns: [{ x: 100, y: -70 }, { x: 450, y: -50 }, { x: 700, y: -90 }], // Feature 71
         electroSpawns: [{ x: 300, y: 65 }], // Feature 72
+        rocketSpawns: [{ x: 640, y: 155 }], // Feature 80
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3476,6 +3595,7 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 400, y: -60 }, { x: 200, y: -100 }, { x: 600, y: -80 }], // Feature 71
         electroSpawns: [{ x: 530, y: 75 }, { x: 300, y: 75 }], // Feature 72
         slowMoSpawns: [{ x: 650, y: 75 }, { x: 100, y: 185 }], // Feature 75
+        rocketSpawns: [{ x: 450, y: 75 }], // Feature 80
     },
     {
         // Level 11: «Апокалипсис» — Feature 74: megafinal with all mechanics
@@ -3548,6 +3668,7 @@ const LEVELS = [
         shooterMarioSpawns:   [{ x: 320, y: 25  }, { x: 540, y: 100 }, { x: 110, y: 105 }],
         parachuteMarioSpawns: [{ x: 200, y: -60 }, { x: 500, y: -90 }, { x: 700, y: -50 }, { x: 100, y: -120 }], // Feature 71
         slowMoSpawns: [{ x: 360, y: 20 }, { x: 580, y: 100 }], // Feature 75
+        rocketSpawns: [{ x: 160, y: 85 }, { x: 490, y: 85 }], // Feature 80
     },
     {
         // Level 12: «Олимп» — Feature 78: sky-high olympus, airborne enemies, strategic platforms
@@ -3604,6 +3725,7 @@ const LEVELS = [
         ghostSpawns:      [{ x: 540, y: 85  }],
         electroSpawns:    [{ x: 410, y: 85  }, { x: 250, y: 185 }],
         slowMoSpawns:     [{ x: 350, y: 185 }, { x: 630, y: 280 }], // Feature 75
+        rocketSpawns:     [{ x: 200, y: 285 }], // Feature 80
         scoreBoostSpawns: [{ x: 590, y: 85 }],
         portalSpawns: [
             { blue: { x: 0, y: 415 }, orange: { x: 310, y: 85 } },
@@ -3901,7 +4023,7 @@ function startSurvivalMode() {
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
-    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = [];
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = [];
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -4318,6 +4440,7 @@ function loadLevel(index) {
     scoreBoosts = (lvl.scoreBoostSpawns || []).map(s => new ScoreBoost(s.x, s.y)); // Feature 61
     electricos = (lvl.electroSpawns || []).map(e => new Electro(e.x, e.y)); // Feature 72
     slowMos = (lvl.slowMoSpawns || []).map(s => new SlowMo(s.x, s.y)); // Feature 75
+    rockets = (lvl.rocketSpawns || []).map(r => new RocketPU(r.x, r.y)); // Feature 80
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -4375,6 +4498,7 @@ function checkCoinCollisions() {
             runStats.coinsCollected++;
             levelCoinsCollected++;  // Feature 59
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
+            if (totalCoinsCollectedRun >= 50) unlockAchievement('bigSpender');
             const pColor = coinFrenzyTimer > 0 ? '#ff8800' : (pts > 50 ? '#ff9900' : '#ffcc00');
             const pText = coinFrenzyTimer > 0 ? `x3 +${pts}` : `+${pts}`;
             particles.push(new Particle(coin.x, coin.y - 5, pText, pColor));
@@ -4406,6 +4530,24 @@ function checkPlayerMarioCollisions() {
             particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
             shakeTimer = Math.min(6 + comboCount, 12);
             shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            continue;
+        }
+
+        // Feature 80: Rocket power — kill on any contact while flying
+        if (player.rocketTimer > 0) {
+            mario.stomp();
+            comboCount++;
+            runStats.enemiesKilled++;
+            let points = 150 * comboCount; // bonus points for rocket kills
+            if (player.scoreBoostTimer > 0) points *= 2;
+            player.score += points;
+            totalScore += points;
+            comboDisplayTimer = 100;
+            const pColor = '#ff8800';
+            const pText = `🚀 +${points}`;
+            particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+            shakeTimer = Math.min(8 + comboCount, 14);
+            shakeIntensity = Math.min(4 + comboCount * 0.5, 8);
             continue;
         }
 
@@ -5114,6 +5256,35 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 80: Rocket timer bar
+    if (player && player.rocketTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0);
+        const frac = player.rocketTimer / ROCKET_DURATION;
+        const pulse = 0.8 + Math.sin(Date.now() * 0.02) * 0.2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255,${Math.round(80 + 80 * pulse)},0,${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffcc88';
+        ctx.fillText('🚀 РАКЕТА', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Boss HP bar at top center (when in boss level)
     if (isBossLevel && bossMarco && bossMarco.isAlive) {
         const bw = 320;
@@ -5372,7 +5543,7 @@ function renderMenu() {
     ctx.restore();
 
     drawTitle("ENTER — Начать игру", 400, 18, C.text);
-    drawTitle("S — 🏟 Режим Выживания", 425, 16, '#ffaa44');
+    drawTitle("S — 🏟 Режим Выживания    A — 🏆 Достижения", 425, 15, '#ffaa44');
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
     drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
     if (survivalBestTime > 0) {
@@ -5396,6 +5567,53 @@ function renderMenu() {
         ctx.textAlign = 'left';
         ctx.restore();
     }
+}
+
+// Feature 79: Achievements screen
+function renderAchievements() {
+    drawBackground();
+    drawTitle('🏆 ДОСТИЖЕНИЯ', 80, 28, '#ffcc00');
+
+    const unlockedCount = achievementDefs.filter(d => achievementUnlocked[d.id]).length;
+    drawTitle(`Выполнено: ${unlockedCount} / ${achievementDefs.length}`, 112, 14, '#aaffaa');
+
+    const colW = 360;
+    const rowH = 38;
+    const startX = (W - colW * 2 - 20) / 2;
+    const startY = 138;
+
+    achievementDefs.forEach((def, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const bx = startX + col * (colW + 20);
+        const by = startY + row * rowH;
+        const done = !!achievementUnlocked[def.id];
+
+        ctx.save();
+        // Background box
+        ctx.fillStyle = done ? 'rgba(30,80,30,0.85)' : 'rgba(20,20,40,0.7)';
+        ctx.beginPath();
+        ctx.roundRect(bx, by, colW, rowH - 4, 8);
+        ctx.fill();
+        ctx.strokeStyle = done ? '#44ff88' : '#444466';
+        ctx.lineWidth = done ? 2 : 1;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, colW, rowH - 4, 8);
+        ctx.stroke();
+
+        // Icon + label
+        ctx.font = 'bold 13px monospace';
+        ctx.fillStyle = done ? '#ccffcc' : '#777799';
+        ctx.fillText(done ? def.label : `🔒 ${def.desc}`, bx + 12, by + 16);
+        if (done) {
+            ctx.font = '10px monospace';
+            ctx.fillStyle = '#88cc88';
+            ctx.fillText(def.desc, bx + 12, by + 29);
+        }
+        ctx.restore();
+    });
+
+    drawTitle('ESC — Назад', H - 30, 12, '#888888');
 }
 
 function renderGameOver() {
@@ -5891,6 +6109,17 @@ function update() {
                 startSurvivalMode();
             }
             keys['_sWas'] = keys['KeyS'];
+            // Feature 79: A key opens achievements screen
+            if (keys['KeyA'] && !keys['_aMenuWas']) {
+                gameState = 'ACHIEVEMENTS';
+            }
+            keys['_aMenuWas'] = keys['KeyA'];
+            break;
+
+        case 'ACHIEVEMENTS':
+            if (isEscape() && !escapeWasPressed) {
+                gameState = 'MENU';
+            }
             break;
 
         case 'DIFFICULTY_SELECT': {
@@ -5992,6 +6221,8 @@ function update() {
             updateElectroField();
             slowMos = slowMos.filter(sm => sm.update()); // Feature 75
             checkSlowMoCollisions();
+            rockets = rockets.filter(r => r.update()); // Feature 80
+            checkRocketCollisions();
             droppedPowerups = droppedPowerups.filter(dp => dp.update()); // Feature 77
             checkDroppedPowerupCollisions();
             fireballs = fireballs.filter(fb => fb.update());
@@ -6084,6 +6315,9 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
+                // Feature 79: Achievements on level complete
+                if (levelDeathCount === 0) unlockAchievement('noDeaths');
+                if ((levelTimer / 60) < 30) unlockAchievement('speedRunner');
                 // Feature 59: calculate and save letter grade
                 levelCompletionTime = levelTimer / 60;
                 currentLevelGrade = calcLevelGrade(levelDeathCount, levelCoinsCollected, levelCoinsTotal, levelCompletionTime);
@@ -6205,6 +6439,10 @@ function render() {
             renderMenu();
             break;
 
+        case 'ACHIEVEMENTS':
+            renderAchievements();
+            break;
+
         case 'DIFFICULTY_SELECT':
             renderDifficultySelect();
             break;
@@ -6229,6 +6467,7 @@ function render() {
             scoreBoosts.forEach(s => s.render()); // Feature 61
             electricos.forEach(e => e.render()); // Feature 72
             slowMos.forEach(sm => sm.render()); // Feature 75
+            rockets.forEach(r => r.render()); // Feature 80
             droppedPowerups.forEach(dp => dp.render()); // Feature 77
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
@@ -6236,6 +6475,7 @@ function render() {
             marios.forEach(m => m.render());
             if (bossMarco) bossMarco.render();
             renderAfterimages(); // Feature 53: speed boost afterimage trail
+            renderRocketTrail(); // Feature 80: rocket flame trail
             player.render();
             particles.forEach(p => p.render());
             // Feature 48: red flash overlay on player death
