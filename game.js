@@ -541,6 +541,7 @@ class Player extends Entity {
 
     die() {
         this.lives--;
+        levelDeathCount++;  // Feature 59: track per-level deaths
         deathFlashTimer = 35;
         shakeTimer = 20;
         shakeIntensity = 10;
@@ -2913,6 +2914,23 @@ try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || 
 let levelCompletionTime = 0;   // seconds spent on last completed level
 let isNewLevelTimeRecord = false;
 
+// === FEATURE 59: LETTER GRADE ===
+let levelGrades = [];
+try { levelGrades = JSON.parse(localStorage.getItem('mushroomLevelGrades') || '[]'); } catch { levelGrades = []; }
+let levelDeathCount = 0;       // deaths during current level
+let levelCoinsTotal = 0;       // total coins available at level start
+let levelCoinsCollected = 0;   // coins collected this level
+let currentLevelGrade = '';    // grade calculated on level completion
+
+function calcLevelGrade(deaths, coinsCollected, coinsTotal, timeSecs) {
+    if (deaths > 0) return 'D';
+    const pct = coinsTotal > 0 ? coinsCollected / coinsTotal : 1;
+    if (pct >= 1.0 && timeSecs < 25) return 'S';
+    if (pct >= 0.75 && timeSecs < 50) return 'A';
+    if (pct >= 0.50) return 'B';
+    return 'C';
+}
+
 // === MUSHROOM COLOR CUSTOMIZATION ===
 const MUSHROOM_COLORS = [
     { name: 'Красный',   cap: '#e02020', capLight: '#ff4444' },
@@ -3239,6 +3257,10 @@ function loadLevel(index) {
     levelTimer = 0;
     hudScoreDisplay = 0;
     levelTotalMarios = marios.length;
+    // Feature 59: reset per-level grade tracking
+    levelDeathCount = 0;
+    levelCoinsCollected = 0;
+    levelCoinsTotal = (lvl.coinSpawns || []).length + (lvl.doubleCoinSpawns || []).length;
     coins = [
         ...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)),
         ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100)),
@@ -3264,6 +3286,7 @@ function loadLevel(index) {
     isBossLevel = !!lvl.isBossLevel;
     bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
     initWeather(index);
+    initBirds(); // Feature 60: spawn background birds
     // Start BGM appropriate to this level's theme
     if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
 }
@@ -3296,6 +3319,7 @@ function checkCoinCollisions() {
             totalScore += pts;
             totalCoinsCollectedRun++;
             runStats.coinsCollected++;
+            levelCoinsCollected++;  // Feature 59
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
             particles.push(new Particle(coin.x, coin.y - 5, `+${pts}`, pts > 50 ? '#ff9900' : '#ffcc00'));
             playSound('coin');
@@ -3474,6 +3498,65 @@ function drawShadow(x, y, w) {
     ctx.restore();
 }
 
+// === FEATURE 60: BACKGROUND BIRDS ===
+let backgroundBirds = [];
+
+function spawnBird() {
+    const dir = Math.random() > 0.5 ? 1 : -1;
+    const baseY = 28 + Math.random() * 155;
+    backgroundBirds.push({
+        x: dir > 0 ? -50 - Math.random() * 300 : W + 50 + Math.random() * 300,
+        baseY,
+        y: baseY,
+        vx: (0.45 + Math.random() * 0.75) * dir,
+        waveT: Math.random() * Math.PI * 2,
+        waveAmp: 5 + Math.random() * 9,
+        waveSpeed: 0.016 + Math.random() * 0.018,
+        flapTimer: Math.random() * 30,
+        size: 0.55 + Math.random() * 0.55,
+        dir,
+    });
+}
+
+function initBirds() {
+    backgroundBirds = [];
+    for (let i = 0; i < 4; i++) spawnBird();
+}
+
+function updateBirds() {
+    for (const b of backgroundBirds) {
+        b.x += b.vx;
+        b.waveT += b.waveSpeed;
+        b.y = b.baseY + Math.sin(b.waveT) * b.waveAmp;
+        b.flapTimer++;
+    }
+    // Remove birds that left the screen
+    backgroundBirds = backgroundBirds.filter(b => b.x > -120 && b.x < W + 120);
+    // Occasionally spawn a new bird to keep the sky lively
+    if (Math.random() < 0.005 && backgroundBirds.length < 7) spawnBird();
+}
+
+function drawBird(x, y, flapTimer, size) {
+    const flap = 0.35 + Math.sin(flapTimer * 0.23) * 0.5; // 0-1
+    const s = size * 7;
+    const wingUp = flap * s * 0.7;
+    ctx.strokeStyle = 'rgba(15,30,15,0.62)';
+    ctx.lineWidth = 1.4 * size;
+    ctx.lineCap = 'round';
+
+    // Left wing
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x - s * 0.7, y - wingUp, x - s * 1.45, y - wingUp * 0.35);
+    ctx.stroke();
+
+    // Right wing
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + s * 0.7, y - wingUp, x + s * 1.45, y - wingUp * 0.35);
+    ctx.stroke();
+}
+
 // === BACKGROUND DRAWING ===
 // Parallax offset based on player position
 function prlx(factor) {
@@ -3552,6 +3635,16 @@ function drawBackground() {
     drawCloud3D(600 + co, 50, 55);
     drawCloud3D(750 + co, 110, 35);
     ctx.restore();
+
+    // Feature 60: Background birds (day levels only)
+    if (gameState === 'PLAYING' && currentLevel < 4 && backgroundBirds.length) {
+        ctx.save();
+        ctx.globalAlpha = 0.72;
+        for (const b of backgroundBirds) {
+            drawBird(b.x, b.y, b.flapTimer, b.size);
+        }
+        ctx.restore();
+    }
 
     // Hills (layer 3 — fastest parallax)
     const ho = prlx(-0.14);
@@ -4193,6 +4286,33 @@ function renderLevelComplete() {
             drawTitle(`Рекорд: ${bestStr}`, 308, 14, '#888888');
         }
     }
+
+    // Feature 59: Letter grade display
+    if (currentLevelGrade) {
+        const gradeColors = { S: '#ffdd00', A: '#00ff88', B: '#55bbff', C: '#aaaaaa', D: '#ff4444' };
+        const gradeColor = gradeColors[currentLevelGrade] || '#ffffff';
+        const pulse = 1 + Math.sin(Date.now() * 0.006) * 0.06;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = `bold ${Math.round(72 * pulse)}px monospace`;
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(currentLevelGrade, W / 2 + 4, 185 + 4);
+        // Glow halo
+        ctx.shadowColor = gradeColor;
+        ctx.shadowBlur = 24;
+        ctx.fillStyle = gradeColor;
+        ctx.fillText(currentLevelGrade, W / 2, 185);
+        ctx.shadowBlur = 0;
+
+        // Grade label
+        const gradeLabels = { S: 'ИДЕАЛЬНО!', A: 'ОТЛИЧНО!', B: 'ХОРОШО', C: 'НОРМАЛЬНО', D: 'ПОПРОБУЙ ЕЩЁ' };
+        ctx.font = 'bold 14px monospace';
+        ctx.fillStyle = gradeColor;
+        ctx.fillText(gradeLabels[currentLevelGrade] || '', W / 2, 215);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
 }
 
 function renderDifficultySelect() {
@@ -4366,10 +4486,18 @@ function renderLevelSelect() {
             ctx.font = 'bold 13px monospace';
             ctx.fillStyle = '#ddd';
             ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 82);
-            // Stars for unlocked
-            ctx.font = '14px monospace';
-            ctx.fillStyle = '#ffdd00';
-            ctx.fillText('★ ★ ★', bx + boxW / 2, by + 102);
+            // Feature 59: letter grade badge
+            const savedGrade = levelGrades[i];
+            if (savedGrade) {
+                const gc = { S: '#ffdd00', A: '#00ff88', B: '#55bbff', C: '#aaaaaa', D: '#ff4444' }[savedGrade] || '#fff';
+                ctx.font = 'bold 16px monospace';
+                ctx.fillStyle = gc;
+                ctx.fillText(savedGrade, bx + boxW / 2, by + 102);
+            } else {
+                ctx.font = '14px monospace';
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillText('—', bx + boxW / 2, by + 102);
+            }
         }
         ctx.restore();
     }
@@ -4577,6 +4705,7 @@ function update() {
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
             updateWeather();
+            if (currentLevel < 4) updateBirds(); // Feature 60
             updateAchievementToasts();
 
             if (shakeTimer > 0) shakeTimer--;
@@ -4608,8 +4737,12 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
-                // Save best level time
+                // Feature 59: calculate and save letter grade
                 levelCompletionTime = levelTimer / 60;
+                currentLevelGrade = calcLevelGrade(levelDeathCount, levelCoinsCollected, levelCoinsTotal, levelCompletionTime);
+                levelGrades[currentLevel] = currentLevelGrade;
+                localStorage.setItem('mushroomLevelGrades', JSON.stringify(levelGrades));
+                // Save best level time
                 if (!isBossLevel) {
                     const prev = levelBestTimes[currentLevel];
                     if (prev === undefined || prev === null || levelCompletionTime < prev) {
