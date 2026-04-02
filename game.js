@@ -449,6 +449,8 @@ class Player extends Entity {
         this.scoreBoostTimer = 0;
         // Electro power-up (Feature 72)
         this.electroTimer = 0;
+        // Slow-Mo power-up (Feature 75)
+        this.slowMoTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -623,6 +625,8 @@ class Player extends Entity {
         if (this.scoreBoostTimer > 0) this.scoreBoostTimer--;
         // electro timer (Feature 72)
         if (this.electroTimer > 0) this.electroTimer--;
+        // slow-mo timer (Feature 75)
+        if (this.slowMoTimer > 0) this.slowMoTimer--;
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
@@ -1003,7 +1007,8 @@ class Mario extends Entity {
         // Flying type: no gravity, fixed altitude
         if (this.type === 'flying') {
             this.wingFlap += 0.18;
-            this.vx = this.speed * this.direction;
+            const flySlowMult = (player && player.slowMoTimer > 0) ? SLOW_MO_FACTOR : 1;
+            this.vx = this.speed * this.direction * flySlowMult;
             this.x += this.vx;
             this.y = this.flyingY;
             this.vy = 0;
@@ -1026,7 +1031,9 @@ class Mario extends Entity {
             return true;
         }
 
-        this.vx = this.speed * this.direction;
+        // Feature 75: Slow-Mo — reduce enemy movement speed
+        const slowMoMult = (player && player.slowMoTimer > 0) ? SLOW_MO_FACTOR : 1;
+        this.vx = this.speed * this.direction * slowMoMult;
 
         // gravity
         this.vy += GRAVITY;
@@ -1299,6 +1306,20 @@ class Mario extends Entity {
             ctx.restore();
         }
 
+        // Feature 75: Slow-Mo aura — cyan ring around slowed enemies
+        if (this.isAlive && player && player.slowMoTimer > 0 && this.frozenTimer <= 0) {
+            const pulse = 0.25 + Math.abs(Math.sin(Date.now() * 0.006)) * 0.3;
+            ctx.save();
+            ctx.globalAlpha = pulse;
+            ctx.strokeStyle = '#55ddff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.rect(this.x - 2, this.y - 2, this.w + 4, this.h + 4);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        }
+
         // Frozen overlay: ice-blue tint + snowflake icon
         if (this.isAlive && this.frozenTimer > 0) {
             ctx.save();
@@ -1452,6 +1473,8 @@ const GHOST_DURATION = 300; // Feature 54: 5 seconds at 60fps
 const SCORE_BOOST_DURATION = 480; // Feature 61: 8 seconds at 60fps
 const ELECTRO_DURATION = 360; // Feature 72: 6 seconds at 60fps
 const ELECTRO_RADIUS = 80; // px radius of electric field
+const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
+const SLOW_MO_FACTOR = 0.4;   // enemies move at 40% speed
 
 class Star {
     constructor(x, y) {
@@ -2150,6 +2173,93 @@ function checkElectroCollisions() {
         playSound('star');
     }
     electricos = electricos.filter(e => !e.collected);
+}
+
+// === FEATURE 75: SLOW-MO POWER-UP ===
+class SlowMo {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.88 + Math.sin(t * 0.13) * 0.12;
+
+        ctx.save();
+        // Teal/cyan outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0, 200, 255, ${0.28 * pulse})`;
+        ctx.fill();
+        // Inner body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#0088cc';
+        ctx.fill();
+        ctx.strokeStyle = '#55ddff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Rotating clock hands
+        const angle = t * 0.04;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle) * 6 * pulse, cy + Math.sin(angle) * 6 * pulse);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle * 0.5) * 4 * pulse, cy + Math.sin(angle * 0.5) * 4 * pulse);
+        ctx.stroke();
+        // Clock tick marks
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+            const a = (Math.PI / 2) * i;
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(a) * 8 * pulse, cy + Math.sin(a) * 8 * pulse);
+            ctx.lineTo(cx + Math.cos(a) * 10 * pulse, cy + Math.sin(a) * 10 * pulse);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+}
+
+let slowMos = [];
+
+function checkSlowMoCollisions() {
+    for (const sm of slowMos) {
+        if (sm.collected) continue;
+        if (!aabb(player, sm)) continue;
+        sm.collected = true;
+        player.slowMoTimer = SLOW_MO_DURATION;
+        // Burst particles
+        for (let i = 0; i < 10; i++) {
+            const angle = (Math.PI * 2 * i) / 10;
+            const spd = 1.5 + Math.random() * 2.5;
+            particles.push(new DeathParticle(
+                sm.x + sm.w / 2, sm.y + sm.h / 2,
+                Math.cos(angle) * spd, Math.sin(angle) * spd,
+                '#55ddff', 4
+            ));
+        }
+        particles.push(new Particle(sm.x - 20, sm.y - 16, '⏱ ЗАМЕДЛЕНИЕ!', '#55ddff'));
+        playSound('freeze');
+    }
+    slowMos = slowMos.filter(sm => !sm.collected);
 }
 
 function updateElectroField() {
@@ -3034,6 +3144,7 @@ const LEVELS = [
         springSpawns: [{ x: 460, y: 446 }],
         speedBoostSpawns: [{ x: 90, y: 435 }],
         magnetSpawns: [{ x: 310, y: 195 }],
+        slowMoSpawns: [{ x: 420, y: 300 }], // Feature 75
     },
     {
         // Level 4: Complex layout with moving platforms + crumbling platforms
@@ -3073,6 +3184,7 @@ const LEVELS = [
         portalSpawns: [{ blue: { x: 30, y: 415 }, orange: { x: 650, y: 415 } }],
         ghostSpawns: [{ x: 270, y: 200 }],
         electroSpawns: [{ x: 460, y: 205 }], // Feature 72
+        slowMoSpawns: [{ x: 210, y: 350 }], // Feature 75
     },
     {
         // Level 5: The gauntlet with moving + crumbling platforms
@@ -3117,6 +3229,7 @@ const LEVELS = [
         scoreBoostSpawns: [{ x: 450, y: 200 }], // Feature 61
         parachuteMarioSpawns: [{ x: 180, y: -60 }, { x: 560, y: -110 }], // Feature 71
         electroSpawns: [{ x: 590, y: 230 }], // Feature 72
+        slowMoSpawns: [{ x: 160, y: 235 }], // Feature 75
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -3165,6 +3278,7 @@ const LEVELS = [
         scoreBoostSpawns: [{ x: 350, y: 375 }], // Feature 61
         parachuteMarioSpawns: [{ x: 300, y: -80 }, { x: 600, y: -50 }], // Feature 71
         electroSpawns: [{ x: 680, y: 375 }], // Feature 72
+        slowMoSpawns: [{ x: 490, y: 125 }], // Feature 75
     },
     {
         // Level 7: Chaos — all enemy types + moving + crumble + ice platforms
@@ -3273,6 +3387,7 @@ const LEVELS = [
         ghostSpawns: [{ x: 400, y: 85 }],
         parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 620, y: -80 }], // Feature 71
         electroSpawns: [{ x: 210, y: 85 }, { x: 600, y: 185 }], // Feature 72
+        slowMoSpawns: [{ x: 460, y: 85 }], // Feature 75
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3356,6 +3471,7 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 120, y: 170 }, { x: 620, y: 165 }],
         parachuteMarioSpawns: [{ x: 400, y: -60 }, { x: 200, y: -100 }, { x: 600, y: -80 }], // Feature 71
         electroSpawns: [{ x: 530, y: 75 }, { x: 300, y: 75 }], // Feature 72
+        slowMoSpawns: [{ x: 650, y: 75 }, { x: 100, y: 185 }], // Feature 75
     },
     {
         // Level 11: «Апокалипсис» — Feature 74: megafinal with all mechanics
@@ -3427,6 +3543,7 @@ const LEVELS = [
         flyingMarioSpawns:    [{ x: 100, y: 170 }, { x: 350, y: 155 }, { x: 600, y: 165 }, { x: 220, y: 130 }],
         shooterMarioSpawns:   [{ x: 320, y: 25  }, { x: 540, y: 100 }, { x: 110, y: 105 }],
         parachuteMarioSpawns: [{ x: 200, y: -60 }, { x: 500, y: -90 }, { x: 700, y: -50 }, { x: 100, y: -120 }], // Feature 71
+        slowMoSpawns: [{ x: 360, y: 20 }, { x: 580, y: 100 }], // Feature 75
     },
 ];
 
@@ -3497,6 +3614,16 @@ let comboDisplayTimer = 0;
 let coinFrenzyTimer = 0;        // frames remaining (300 = 5 sec)
 const COIN_FRENZY_DURATION = 300;
 let coinFrenzyActivated = false; // flag to show activation text once
+
+// Feature 76: Score Milestone Banners
+const SCORE_MILESTONES = [1000, 5000, 10000, 25000];
+const MILESTONE_TEXTS  = ['ХОРОШО!', 'ОТЛИЧНО!', 'НЕВЕРОЯТНО!', 'ЛЕГЕНДА!'];
+const MILESTONE_COLORS = ['#44ff88', '#ffdd00', '#ff8800', '#dd44ff'];
+let nextMilestoneIdx = 0;
+let milestoneBannerTimer = 0;   // frames remaining (180 = 3 sec)
+let milestoneBannerText  = '';
+let milestoneBannerColor = '#ffffff';
+
 let levelTimer = 0;       // frames elapsed in current level
 const TIME_BONUS_MAX = 3000; // max bonus at 0 seconds
 const TIME_PER_FRAME = 1 / 60;
@@ -3569,7 +3696,7 @@ function startSurvivalMode() {
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
-    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = [];
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = [];
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -3984,6 +4111,7 @@ function loadLevel(index) {
     ghosts = (lvl.ghostSpawns || []).map(g => new Ghost(g.x, g.y)); // Feature 54
     scoreBoosts = (lvl.scoreBoostSpawns || []).map(s => new ScoreBoost(s.x, s.y)); // Feature 61
     electricos = (lvl.electroSpawns || []).map(e => new Electro(e.x, e.y)); // Feature 72
+    slowMos = (lvl.slowMoSpawns || []).map(s => new SlowMo(s.x, s.y)); // Feature 75
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -4015,6 +4143,8 @@ function startGameFromLevel(level) {
     rageModeWarningTimer = 0;
     currentLevel = level;
     totalScore = 0;
+    nextMilestoneIdx = 0; // Feature 76: reset milestones on new game
+    milestoneBannerTimer = 0;
     player = null;
     stars = [];
     loadLevel(level);
@@ -4746,6 +4876,34 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffff88';
         ctx.fillText('⚡ ЭЛЕКТРО', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 75: Slow-Mo timer bar
+    if (player && player.slowMoTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0);
+        const frac = player.slowMoTimer / SLOW_MO_DURATION;
+        const pulse = 0.8 + Math.sin(Date.now() * 0.010) * 0.2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(0,180,255,${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#aaeeff';
+        ctx.fillText('⏱ ЗАМЕДЛЕНИЕ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -5626,6 +5784,8 @@ function update() {
             electricos = electricos.filter(e => e.update()); // Feature 72
             checkElectroCollisions();
             updateElectroField();
+            slowMos = slowMos.filter(sm => sm.update()); // Feature 75
+            checkSlowMoCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
@@ -5638,6 +5798,14 @@ function update() {
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
             if (coinFrenzyTimer > 0) { coinFrenzyTimer--; if (coinFrenzyTimer === 0) coinFrenzyActivated = false; } // Feature 73
+            // Feature 76: check score milestones
+            if (nextMilestoneIdx < SCORE_MILESTONES.length && totalScore >= SCORE_MILESTONES[nextMilestoneIdx]) {
+                milestoneBannerText = MILESTONE_TEXTS[nextMilestoneIdx];
+                milestoneBannerColor = MILESTONE_COLORS[nextMilestoneIdx];
+                milestoneBannerTimer = 180;
+                nextMilestoneIdx++;
+            }
+            if (milestoneBannerTimer > 0) milestoneBannerTimer--;
             levelTimer++;
             // Animate HUD score display
             if (hudScoreDisplay < player.score) {
@@ -5852,6 +6020,7 @@ function render() {
             ghosts.forEach(g => g.render()); // Feature 54
             scoreBoosts.forEach(s => s.render()); // Feature 61
             electricos.forEach(e => e.render()); // Feature 72
+            slowMos.forEach(sm => sm.render()); // Feature 75
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
@@ -5873,6 +6042,23 @@ function render() {
             }
             drawHUD();
             renderAchievementToasts();
+            // Feature 76: Score milestone banner
+            if (milestoneBannerTimer > 0) {
+                const fadeFrames = 25;
+                const alpha = milestoneBannerTimer < fadeFrames ? milestoneBannerTimer / fadeFrames
+                            : milestoneBannerTimer > 155 ? (180 - milestoneBannerTimer) / 25 : 1;
+                const scale = 1 + Math.sin(milestoneBannerTimer * 0.08) * 0.04;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.textAlign = 'center';
+                ctx.font = `bold ${Math.round(34 * scale)}px monospace`;
+                ctx.fillStyle = 'rgba(0,0,0,0.45)';
+                ctx.fillText(milestoneBannerText, W / 2 + 2, H / 2 - 58);
+                ctx.fillStyle = milestoneBannerColor;
+                ctx.fillText(milestoneBannerText, W / 2, H / 2 - 60);
+                ctx.textAlign = 'left';
+                ctx.restore();
+            }
             break;
 
         case 'LEVEL_COMPLETE':
