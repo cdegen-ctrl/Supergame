@@ -453,6 +453,11 @@ class Player extends Entity {
         this.slowMoTimer = 0;
         // Rocket power-up (Feature 80)
         this.rocketTimer = 0;
+        // Feature 85: MagBoots power-up
+        this.magBootsTimer = 0;
+        this.ceilingLocked = false;
+        this.ceilingLockPlatform = null;
+        this.ceilingLockTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -533,9 +538,19 @@ class Player extends Entity {
             else                { this.vx = 0; }
         }
 
-        // jump (only on press, not hold) — supports double jump + wall jump
+        // jump (only on press, not hold) — supports double jump + wall jump + ceiling detach
         if (isJump() && !jumpWasPressed) {
-            if (this.isGrounded) {
+            if (this.ceilingLocked) {
+                // Feature 85: Detach from ceiling — dive down to stomp enemies!
+                this.ceilingLocked = false;
+                this.ceilingLockPlatform = null;
+                this.vy = -PLAYER_JUMP * 0.75; // fast downward (PLAYER_JUMP is negative)
+                this.isGrounded = false;
+                this.jumpCount = 1;
+                this.canDoubleJump = false;
+                this.scaleX = 0.7; this.scaleY = 1.3;
+                playSound('jump');
+            } else if (this.isGrounded) {
                 this.vy = PLAYER_JUMP;
                 this.isGrounded = false;
                 this.jumpCount = 1;
@@ -574,6 +589,19 @@ class Player extends Entity {
         // gravity
         this.vy += GRAVITY;
         if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+
+        // Feature 85: Ceiling lock — override gravity, hold player to platform underside
+        if (this.ceilingLocked) {
+            this.vy = 0;
+            this.ceilingLockTimer--;
+            if (this.ceilingLockTimer <= 0) {
+                this.ceilingLocked = false;
+                this.ceilingLockPlatform = null;
+                this.vy = 2;
+            } else if (this.ceilingLockPlatform) {
+                this.y = this.ceilingLockPlatform.y + this.ceilingLockPlatform.h;
+            }
+        }
 
         // Wall slide: slow down fall when pressing against a wall in air
         if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 1.5) {
@@ -634,6 +662,15 @@ class Player extends Entity {
             this.rocketTimer--;
             // Keep pushing upward during rocket flight
             if (this.vy > -12) this.vy -= 1.5;
+        }
+        // Feature 85: MagBoots timer — release ceiling lock when boots expire
+        if (this.magBootsTimer > 0) {
+            this.magBootsTimer--;
+            if (this.magBootsTimer <= 0 && this.ceilingLocked) {
+                this.ceilingLocked = false;
+                this.ceilingLockPlatform = null;
+                this.vy = 2;
+            }
         }
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
@@ -710,6 +747,14 @@ class Player extends Entity {
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
+                    // Feature 85: MagBoots — stick to ceiling on upward hit
+                    if (this.magBootsTimer > 0 && !this.ceilingLocked) {
+                        this.ceilingLocked = true;
+                        this.ceilingLockPlatform = p;
+                        this.ceilingLockTimer = 90; // 1.5 seconds
+                        this.isGrounded = false;
+                        this.canDoubleJump = false;
+                    }
                 }
             }
         }
@@ -2376,6 +2421,94 @@ function renderRocketTrail() {
     ctx.restore();
 }
 
+// === MAGBOOTS POWER-UP (Feature 85) ===
+const MAG_BOOTS_DURATION = 180; // 3 seconds
+
+class MagBootsPU {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 20; this.h = 20;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() { this.animTimer++; return !this.collected; }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.14) * 0.15;
+        ctx.save();
+        // Blue glow halo
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(30,100,255,${0.22 * pulse})`;
+        ctx.fill();
+        // Boot body
+        ctx.fillStyle = '#1155ee';
+        ctx.beginPath();
+        ctx.roundRect(cx - 7, cy - 5, 14, 10, 3);
+        ctx.fill();
+        ctx.fillStyle = '#4488ff';
+        ctx.fillRect(cx - 8, cy + 4, 16, 4);
+        // Orbiting sparks
+        for (let i = 0; i < 5; i++) {
+            const a = (Math.PI * 2 / 5) * i + t * 0.09;
+            const sr = 13 * pulse;
+            ctx.fillStyle = `rgba(120,200,255,${0.5 + Math.sin(t * 0.2 + i) * 0.3})`;
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(a) * sr, cy + Math.sin(a) * sr * 0.6, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#aaddff';
+        ctx.fillText('🦶', cx, cy - 9);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let magBootsList = [];
+
+function checkMagBootsCollisions() {
+    for (const mb of magBootsList) {
+        if (mb.collected) continue;
+        if (!aabb(player, mb)) continue;
+        mb.collected = true;
+        player.magBootsTimer = MAG_BOOTS_DURATION;
+        particles.push(new Particle(mb.x - 30, mb.y - 16, '🦶 МАГЛАПТИ!', '#4488ff'));
+        for (let i = 0; i < 8; i++) {
+            const a = (Math.PI * 2 * i) / 8;
+            const spd = 2 + Math.random() * 2;
+            particles.push(new DeathParticle(mb.x + mb.w/2, mb.y + mb.h/2, Math.cos(a) * spd, Math.sin(a) * spd, '#4488ff', 4));
+        }
+        playSound('coin');
+    }
+    magBootsList = magBootsList.filter(mb => !mb.collected);
+}
+
+function renderMagBootsEffect() {
+    if (!player || player.magBootsTimer <= 0) return;
+    const cx = player.x + player.w / 2;
+    const cy = player.ceilingLocked ? player.y : player.y + player.h;
+    const t = Date.now();
+    ctx.save();
+    for (let i = 0; i < 6; i++) {
+        const a = (Math.PI * 2 / 6) * i + t * 0.005;
+        const r = 18 + Math.sin(t * 0.007 + i) * 4;
+        const alpha = 0.3 + Math.abs(Math.sin(t * 0.009 + i * 0.7)) * 0.45;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = player.ceilingLocked ? '#00ff88' : '#4488ff';
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.5, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+}
+
 function checkSlowMoCollisions() {
     for (const sm of slowMos) {
         if (sm.collected) continue;
@@ -3539,6 +3672,7 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 620, y: -80 }], // Feature 71
         electroSpawns: [{ x: 210, y: 85 }, { x: 600, y: 185 }], // Feature 72
         slowMoSpawns: [{ x: 460, y: 85 }], // Feature 75
+        magBootsSpawns: [{ x: 540, y: 165 }], // Feature 85
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3624,6 +3758,7 @@ const LEVELS = [
         electroSpawns: [{ x: 530, y: 75 }, { x: 300, y: 75 }], // Feature 72
         slowMoSpawns: [{ x: 650, y: 75 }, { x: 100, y: 185 }], // Feature 75
         rocketSpawns: [{ x: 450, y: 75 }], // Feature 80
+        magBootsSpawns: [{ x: 240, y: 75 }], // Feature 85
     },
     {
         // Level 11: «Апокалипсис» — Feature 74: megafinal with all mechanics
@@ -3697,6 +3832,7 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 200, y: -60 }, { x: 500, y: -90 }, { x: 700, y: -50 }, { x: 100, y: -120 }], // Feature 71
         slowMoSpawns: [{ x: 360, y: 20 }, { x: 580, y: 100 }], // Feature 75
         rocketSpawns: [{ x: 160, y: 85 }, { x: 490, y: 85 }], // Feature 80
+        magBootsSpawns: [{ x: 420, y: 20 }], // Feature 85
     },
     {
         // Level 12: «Олимп» — Feature 78: sky-high olympus, airborne enemies, strategic platforms
@@ -4069,6 +4205,40 @@ let coinCaveBestCoins = parseInt(localStorage.getItem('mushroomCoinCaveBest') ||
 const COIN_CAVE_DURATION = 30 * 60; // 30 seconds in frames
 const COIN_CAVE_LEVEL_INDEX = 12;   // bonus level 13 is index 12
 
+// === FEATURE 86: DAILY CHALLENGE ===
+let dailyChallengeMode = false;
+let dailyChallengeLevelIdx = 0;
+let dailyChallengeModifiers = [];       // e.g. ['mirror', 'fast_enemies', 'no_shield']
+let dailyChallengeDate = '';            // 'YYYY-MM-DD' of the current challenge
+let dailyChallengeBest = parseInt(localStorage.getItem('mushroomDailyBest') || '0');
+let dailyChallengeBestDate = localStorage.getItem('mushroomDailyBestDate') || '';
+
+function getDailyChallenge() {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+    const seed = now.getFullYear() * 10000 + (now.getMonth()+1) * 100 + now.getDate();
+    // Simple LCG seeded RNG
+    let s = seed;
+    const rng = () => { s = (s * 1664525 + 1013904223) & 0xFFFFFFFF; return (s >>> 0) / 0x100000000; };
+    const lvlIdx = Math.floor(rng() * 12); // levels 0-11 (skip bonus)
+    const modPool = ['mirror', 'fast_enemies', 'no_shield', 'no_star', 'x2_score'];
+    const modCount = 1 + Math.floor(rng() * 3);
+    const mods = [];
+    while (mods.length < modCount) {
+        const m = modPool[Math.floor(rng() * modPool.length)];
+        if (!mods.includes(m)) mods.push(m);
+    }
+    return { dateStr, lvlIdx, mods };
+}
+
+const MOD_LABELS = {
+    mirror:       '🪞 Зеркальный режим',
+    fast_enemies: '⚡ Враги ×1.6',
+    no_shield:    '🛡✗ Нет щитов',
+    no_star:      '⭐✗ Нет звёзд',
+    x2_score:     '✨ Очки ×2',
+};
+
 // === FEATURE 83: KILL STREAK ===
 let killStreakCount = 0;
 let killStreakTimer = 0;          // frames since last kill
@@ -4131,7 +4301,7 @@ function startSurvivalMode() {
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
-    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = [];
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = [];
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -4503,6 +4673,7 @@ function mirrorLevelData(lvl) {
         electroSpawns:        (lvl.electroSpawns        || []).map(msp),
         slowMoSpawns:         (lvl.slowMoSpawns         || []).map(msp),
         rocketSpawns:         (lvl.rocketSpawns         || []).map(msp),
+        magBootsSpawns:       (lvl.magBootsSpawns       || []).map(msp), // Feature 85
         checkpointSpawns:     (lvl.checkpointSpawns     || []).map(msp),
         flyingMarioSpawns:    (lvl.flyingMarioSpawns    || []).map(msp),
         shooterMarioSpawns:   (lvl.shooterMarioSpawns   || []).map(msp),
@@ -4523,6 +4694,12 @@ function loadLevel(index) {
     const lvl = (mirrorMode && !rawLvl.isBonusLevel) ? mirrorLevelData(rawLvl) : rawLvl;
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
+    // Feature 86: Apply Daily Challenge modifier — strip certain powerup spawns
+    if (dailyChallengeMode) {
+        if (dailyChallengeModifiers.includes('no_shield')) lvl = { ...lvl, shieldSpawns: [] };
+        if (dailyChallengeModifiers.includes('no_star'))   lvl = { ...lvl, starSpawns: [] };
+    }
+
     // Feature 82: Coin Cave setup
     coinCaveMode = !!lvl.isBonusLevel;
     coinCaveCountdown = coinCaveMode ? COIN_CAVE_DURATION : 0;
@@ -4530,7 +4707,8 @@ function loadLevel(index) {
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice));
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
-    const speed = lvl.marioSpeed * speedMult * diffMult;
+    const dailySpeedMult = (dailyChallengeMode && dailyChallengeModifiers.includes('fast_enemies')) ? 1.6 : 1;
+    const speed = lvl.marioSpeed * speedMult * diffMult * dailySpeedMult;
     marios = lvl.marioSpawns.map((s, i) => {
         const type = lvl.marioTypes ? (lvl.marioTypes[i] || getMarioType(index, i)) : getMarioType(index, i);
         return new Mario(s.x, s.y, speed, type);
@@ -4599,6 +4777,7 @@ function loadLevel(index) {
     electricos = (lvl.electroSpawns || []).map(e => new Electro(e.x, e.y)); // Feature 72
     slowMos = (lvl.slowMoSpawns || []).map(s => new SlowMo(s.x, s.y)); // Feature 75
     rockets = (lvl.rocketSpawns || []).map(r => new RocketPU(r.x, r.y)); // Feature 80
+    magBootsList = (lvl.magBootsSpawns || []).map(m => new MagBootsPU(m.x, m.y)); // Feature 85
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -4642,6 +4821,8 @@ function onEnemyKilledStreak(x, y) {
 }
 
 function startGame() {
+    dailyChallengeMode = false; // Feature 86: clear daily challenge on new game
+    mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true'; // restore persisted mirror
     resetAchievements();
     resetRunStats();
     startGameFromLevel(0);
@@ -5495,6 +5676,36 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 85: MagBoots timer bar
+    if (player && player.magBootsTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0);
+        const frac = player.magBootsTimer / MAG_BOOTS_DURATION;
+        const pulse = 0.8 + Math.sin(Date.now() * 0.014) * 0.2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = player.ceilingLocked ? `rgba(0,255,136,${pulse})` : `rgba(30,100,255,${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = player.ceilingLocked ? '#aaffcc' : '#aaddff';
+        ctx.fillText(player.ceilingLocked ? '🦶 ПОТОЛОК!' : '🦶 МАГЛАПТИ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Feature 81: Mirror mode HUD indicator
     if (mirrorMode) {
         ctx.save();
@@ -5654,6 +5865,21 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 86: Daily Challenge indicator
+    if (dailyChallengeMode) {
+        ctx.save();
+        const pulse = 0.7 + Math.abs(Math.sin(Date.now() * 0.004)) * 0.3;
+        ctx.globalAlpha = pulse;
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText('📅 ИСПЫТАНИЕ ДНЯ', W / 2 + 1, 89);
+        ctx.fillStyle = '#ffcc44';
+        ctx.fillText('📅 ИСПЫТАНИЕ ДНЯ', W / 2, 88);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Feature 83: Kill Streak indicator (bottom-right, above mini-map area)
     if (killStreakCount >= 2) {
         const streakX = W - 80;
@@ -5803,6 +6029,48 @@ function drawTitle(text, y, size, color) {
     ctx.textAlign = 'left';
 }
 
+// Feature 86: Daily Challenge preview screen
+function renderDailyChallenge() {
+    drawBackground();
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп'];
+    const lvlName = levelNames[dailyChallengeLevelIdx] || `Уровень ${dailyChallengeLevelIdx + 1}`;
+    const dateStr = dailyChallengeDate;
+
+    drawTitle('📅 ИСПЫТАНИЕ ДНЯ', 130, 30, '#ffcc44');
+    drawTitle(dateStr, 168, 14, '#888888');
+
+    // Level display
+    const cx = W / 2;
+    ctx.save();
+    ctx.fillStyle = 'rgba(80,60,120,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(cx - 160, 190, 320, 60, 12);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillStyle = '#aaaaaa';
+    ctx.fillText('УРОВЕНЬ', cx, 214);
+    ctx.font = 'bold 22px monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(lvlName, cx, 238);
+    ctx.restore();
+
+    // Modifiers
+    drawTitle('МОДИФИКАТОРЫ:', 278, 14, '#ffaa44');
+    dailyChallengeModifiers.forEach((mod, i) => {
+        const label = MOD_LABELS[mod] || mod;
+        const colors = { mirror: '#44eeff', fast_enemies: '#ff6600', no_shield: '#ff4444', no_star: '#ff8800', x2_score: '#cc44ff' };
+        drawTitle(label, 300 + i * 24, 16, colors[mod] || '#ffffff');
+    });
+
+    // Best score today
+    if (dailyChallengeBestDate === dateStr && dailyChallengeBest > 0) {
+        drawTitle(`Лучший результат сегодня: ${dailyChallengeBest}`, 400, 14, '#ffcc44');
+    }
+
+    drawTitle('ENTER — Начать   ESC — Назад', 445, 14, '#aaaaaa');
+}
+
 function renderMenu() {
     drawBackground();
 
@@ -5817,7 +6085,7 @@ function renderMenu() {
     ctx.restore();
 
     drawTitle("ENTER — Начать игру", 400, 18, C.text);
-    drawTitle("S — 🏟 Режим Выживания    A — 🏆 Достижения", 425, 15, '#ffaa44');
+    drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня", 425, 14, '#ffaa44');
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
     drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
     if (survivalBestTime > 0) {
@@ -6432,11 +6700,47 @@ function update() {
                 gameState = 'ACHIEVEMENTS';
             }
             keys['_aMenuWas'] = keys['KeyA'];
+            // Feature 86: D key opens Daily Challenge preview
+            if (keys['KeyD'] && !keys['_dMenuWas']) {
+                initAudio();
+                const ch = getDailyChallenge();
+                dailyChallengeLevelIdx = ch.lvlIdx;
+                dailyChallengeModifiers = ch.mods;
+                dailyChallengeDate = ch.dateStr;
+                gameState = 'DAILY_CHALLENGE';
+            }
+            keys['_dMenuWas'] = keys['KeyD'];
             break;
 
         case 'ACHIEVEMENTS':
             if (isEscape() && !escapeWasPressed) {
                 gameState = 'MENU';
+            }
+            break;
+
+        case 'DAILY_CHALLENGE':
+            if (isEscape() && !escapeWasPressed) {
+                gameState = 'MENU';
+            }
+            if (isEnter() && !enterWasPressed) {
+                // Apply modifiers and start
+                dailyChallengeMode = true;
+                const hasMirror = dailyChallengeModifiers.includes('mirror');
+                if (hasMirror) mirrorMode = true;
+                // Start the level; other modifiers applied in loadLevel via dailyChallengeModifiers
+                resetRunStats();
+                survivalMode = false;
+                currentLevel = dailyChallengeLevelIdx;
+                totalScore = 0; nextMilestoneIdx = 0; milestoneBannerTimer = 0;
+                player = null;
+                stars = []; loadLevel(currentLevel);
+                player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
+                player.score = 0;
+                // Apply x2_score modifier by giving player a permanent score boost
+                if (dailyChallengeModifiers.includes('x2_score')) {
+                    player.scoreBoostTimer = 99999; // effectively permanent for this level
+                }
+                gameState = 'PLAYING';
             }
             break;
 
@@ -6547,6 +6851,8 @@ function update() {
             slowMos = slowMos.filter(sm => sm.update()); // Feature 75
             checkSlowMoCollisions();
             rockets = rockets.filter(r => r.update()); // Feature 80
+            magBootsList = magBootsList.filter(mb => mb.update()); // Feature 85
+            checkMagBootsCollisions();
             checkRocketCollisions();
             droppedPowerups = droppedPowerups.filter(dp => dp.update()); // Feature 77
             checkDroppedPowerupCollisions();
@@ -6677,6 +6983,17 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
+                // Feature 86: Save daily challenge best score
+                if (dailyChallengeMode && dailyChallengeDate) {
+                    if (dailyChallengeDate !== dailyChallengeBestDate || totalScore > dailyChallengeBest) {
+                        dailyChallengeBest = totalScore;
+                        dailyChallengeBestDate = dailyChallengeDate;
+                        localStorage.setItem('mushroomDailyBest', String(dailyChallengeBest));
+                        localStorage.setItem('mushroomDailyBestDate', dailyChallengeBestDate);
+                    }
+                    dailyChallengeMode = false;
+                    mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true'; // restore mirror setting
+                }
                 // Feature 79 & 81: Achievements on level complete
                 if (levelDeathCount === 0) unlockAchievement('noDeaths');
                 if ((levelTimer / 60) < 30) unlockAchievement('speedRunner');
@@ -6818,6 +7135,10 @@ function render() {
             renderAchievements();
             break;
 
+        case 'DAILY_CHALLENGE':
+            renderDailyChallenge();
+            break;
+
         case 'DIFFICULTY_SELECT':
             renderDifficultySelect();
             break;
@@ -6843,6 +7164,7 @@ function render() {
             electricos.forEach(e => e.render()); // Feature 72
             slowMos.forEach(sm => sm.render()); // Feature 75
             rockets.forEach(r => r.render()); // Feature 80
+            magBootsList.forEach(mb => mb.render()); // Feature 85
             droppedPowerups.forEach(dp => dp.render()); // Feature 77
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
@@ -6851,6 +7173,7 @@ function render() {
             if (bossMarco) bossMarco.render();
             renderAfterimages(); // Feature 53: speed boost afterimage trail
             renderRocketTrail(); // Feature 80: rocket flame trail
+            renderMagBootsEffect(); // Feature 85: mag boots aura
             player.render();
             particles.forEach(p => p.render());
             // Feature 48: red flash overlay on player death
