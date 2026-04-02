@@ -2149,6 +2149,103 @@ function checkSpikeCollisions() {
     }
 }
 
+// === LASER TRAPS (Feature 60) ===
+class LaserTrap {
+    constructor(x, y, w) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = 8;
+        this.WARN_DUR = 60;
+        this.ACTIVE_DUR = 90;
+        this.OFF_DUR = 110;
+        this.timer = Math.floor(Math.random() * (60 + 90 + 110));
+        this.state = 'off';
+    }
+
+    update() {
+        this.timer++;
+        const cycle = this.WARN_DUR + this.ACTIVE_DUR + this.OFF_DUR;
+        const t = this.timer % cycle;
+        if (t < this.WARN_DUR) {
+            this.state = 'warn';
+        } else if (t < this.WARN_DUR + this.ACTIVE_DUR) {
+            this.state = 'active';
+        } else {
+            this.state = 'off';
+        }
+    }
+
+    render() {
+        if (this.state === 'off') return;
+        ctx.save();
+        if (this.state === 'warn') {
+            if (Math.floor(Date.now() / 180) % 2) {
+                ctx.globalAlpha = 0.75;
+                ctx.fillStyle = '#ff8800';
+                ctx.fillRect(this.x, this.y, this.w, this.h);
+                ctx.font = '11px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#ffcc00';
+                ctx.fillText('⚠', this.x + 6, this.y + this.h + 13);
+                ctx.fillText('⚠', this.x + this.w - 6, this.y + this.h + 13);
+                ctx.textAlign = 'left';
+            }
+        } else {
+            // Outer glow
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = '#ff0000';
+            ctx.fillRect(this.x, this.y - 5, this.w, this.h + 10);
+            // Main beam
+            ctx.globalAlpha = 0.92;
+            ctx.fillStyle = '#ff2020';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            // Bright core
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(this.x, this.y + 2, this.w, 4);
+            // Emitter nodes
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#ff6600';
+            ctx.beginPath();
+            ctx.arc(this.x + 4, this.y + this.h / 2, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(this.x + this.w - 4, this.y + this.h / 2, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(this.x + 4, this.y + this.h / 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(this.x + this.w - 4, this.y + this.h / 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+let lasers = [];
+
+function checkLaserCollisions() {
+    if (!player || player.invincibleTimer > 0 || player.starTimer > 0) return;
+    for (const laser of lasers) {
+        if (laser.state !== 'active') continue;
+        if (aabb(player, laser)) {
+            if (player.shieldActive) {
+                player.shieldActive = false;
+                player.shieldBreakTimer = 20;
+                player.invincibleTimer = 60;
+                unlockAchievement('shieldUser');
+                particles.push(new Particle(player.x, player.y - 10, '🛡 ЩИТ!', '#4488ff'));
+                playSound('hurt');
+            } else {
+                player.die();
+            }
+            break;
+        }
+    }
+}
+
 // === TELEPORT PORTALS (Feature 49) ===
 class Portal {
     constructor(x, y, color, linkedPortal = null) {
@@ -2900,6 +2997,11 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
         // Feature 53+54: crumbling & spikes
         spikeSpawns: [{ x: 325, y: 74, w: 50 }, { x: 215, y: 274, w: 30 }, { x: 582, y: 264, w: 28 }],
+        // Feature 60: laser traps
+        laserSpawns: [
+            { x: 80, y: 358, w: 155 },
+            { x: 450, y: 310, w: 170 },
+        ],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -2959,6 +3061,12 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 310, y: 85 }, { x: 530, y: 265 }],
         // Feature 54: spike hazards
         spikeSpawns: [{ x: 290, y: 94, w: 50 }, { x: 400, y: 94, w: 50 }, { x: 340, y: 184, w: 30 }],
+        // Feature 60: laser traps
+        laserSpawns: [
+            { x: 40, y: 358, w: 140 },
+            { x: 340, y: 328, w: 140 },
+            { x: 650, y: 358, w: 100 },
+        ],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3040,6 +3148,12 @@ const LEVELS = [
         shooterMarioSpawns: [{ x: 120, y: 170 }, { x: 620, y: 165 }],
         // Feature 53+54: crumbling platforms & spikes
         spikeSpawns: [{ x: 300, y: 84, w: 50 }, { x: 540, y: 175, w: 30 }],
+        // Feature 60: laser traps
+        laserSpawns: [
+            { x: 50, y: 358, w: 165 },
+            { x: 430, y: 308, w: 155 },
+            { x: 620, y: 218, w: 140 },
+        ],
     },
     {
         // Level 11: «Возрождение Хаоса» — Feature 58: ultimate final level
@@ -3102,6 +3216,13 @@ const LEVELS = [
             { x: 450, y: 89,  w: 42 },
             { x: 345, y: 175, w: 28 },
             { x: 110, y: 195, w: 24 },
+        ],
+        // Feature 60: laser traps
+        laserSpawns: [
+            { x: 40, y: 353, w: 130 },
+            { x: 360, y: 323, w: 130 },
+            { x: 660, y: 343, w: 100 },
+            { x: 200, y: 213, w: 120 },
         ],
     },
 ];
@@ -3429,7 +3550,7 @@ function loadLevel(index) {
     platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumbling, p.icy));
     spikeStrips = (lvl.spikeSpawns || []).map(s => new SpikeStrip(s.x, s.y, s.w, s.pointUp));
 
-    const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : 1;
+    const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.5 : 1;
     const speed = lvl.marioSpeed * speedMult * diffMult;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
 
@@ -3490,6 +3611,7 @@ function loadLevel(index) {
         return [pA, pB];
     });
     checkpoints = (lvl.checkpointSpawns || []).map(c => new Checkpoint(c.x, c.y));
+    lasers = (lvl.laserSpawns || []).map(l => new LaserTrap(l.x, l.y, l.w));
     if (player) player.checkpointSpawn = null; // reset checkpoint on new level
     isBossLevel = !!lvl.isBossLevel;
     bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
@@ -3527,7 +3649,7 @@ function startScoreAttack() {
     coins = (lvl.coinSpawns || []).map(c => new Coin(c.x, c.y));
     stars = []; shields = []; bombs = []; springPads = [];
     speedBoosts = []; magnets = []; freezes = []; fireballs = [];
-    portalPairs = []; checkpoints = []; particles = [];
+    portalPairs = []; checkpoints = []; lasers = []; particles = [];
     bossMarco = null; isBossLevel = false;
     comboCount = 0; comboDisplayTimer = 0; levelTimer = 0;
     initWeather(0);
@@ -3556,7 +3678,7 @@ function startGameFromLevel(level) {
     player = null;
     stars = [];
     loadLevel(level);
-    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : 3;
+    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
     player.score = 0;
     gameState = 'PLAYING';
 }
@@ -3888,6 +4010,19 @@ function drawHUD() {
         ctx.font = '20px monospace';
         ctx.fillStyle = i < player.lives ? '#ff3333' : 'rgba(120,40,40,0.45)';
         ctx.fillText('♥', 20 + i * 22, 57);
+    }
+
+    // Feature 59: Hardcore badge
+    if (difficulty === 'hardcore') {
+        const pulse = 0.85 + Math.abs(Math.sin(Date.now() * 0.005)) * 0.15;
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = '#000000';
+        ctx.fillText('💀 ХАРДКОР', 21, 73);
+        ctx.fillStyle = '#ff44ff';
+        ctx.fillText('💀 ХАРДКОР', 20, 72);
+        ctx.restore();
     }
 
     // Feature 55: Score Attack HUD override
@@ -4461,11 +4596,20 @@ function renderDifficultySelect() {
             icon: '😤',
             lines: ['Скорость врагов ×1.3', '2 жизни', 'Бонус времени ×0.5', 'Для мастеров'],
         },
+        {
+            key: 'hardcore',
+            name: 'ХАРДКОР',
+            color: 'rgba(80,0,80,0.85)',
+            selColor: 'rgba(150,0,150,0.92)',
+            border: '#ff44ff',
+            icon: '💀',
+            lines: ['Скорость врагов ×1.5', '1 жизнь', 'Одна смерть = конец', 'Для безумцев'],
+        },
     ];
 
-    const cardW = 195;
+    const cardW = 162;
     const cardH = 200;
-    const gap = 18;
+    const gap = 13;
     const totalW = opts.length * cardW + (opts.length - 1) * gap;
     const startX = (W - totalW) / 2;
     const startY = 160;
@@ -4523,8 +4667,8 @@ function renderDifficultySelect() {
     drawTitle('← → — Выбор   ENTER — Начать   ESC — Назад', 390, 13, '#aaaaaa');
 
     // Show current difficulty label
-    const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ' };
-    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, '#ffffaa');
+    const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ', hardcore: '💀 ХАРДКОР' };
+    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, difficulty === 'hardcore' ? '#ff44ff' : '#ffffaa');
 }
 
 function renderLevelSelect() {
@@ -4605,7 +4749,7 @@ function renderLevelSelect() {
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, '#88ffaa');
     }
 
-    const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : '😐 НОРМА';
+    const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : difficulty === 'hardcore' ? '💀 ХАРДКОР' : '😐 НОРМА';
     drawTitle(`Сложность: ${diffLabel}  (ESC → изменить)`, 350, 12, '#aaddff');
     drawTitle('← → — Выбор   ENTER — Играть   ESC — Назад', 380, 13, '#aaaaaa');
     if (selectedLevelIdx >= unlockedLevels) {
@@ -4711,13 +4855,13 @@ function update() {
             break;
 
         case 'DIFFICULTY_SELECT': {
-            const opts = ['easy', 'normal', 'hard'];
+            const opts = ['easy', 'normal', 'hard', 'hardcore'];
             const idx = opts.indexOf(difficulty);
             if (isLeft() && !leftWasPressed && idx > 0) {
                 difficulty = opts[idx - 1];
                 localStorage.setItem('mushroomDifficulty', difficulty);
             }
-            if (isRight() && !rightWasPressed && idx < 2) {
+            if (isRight() && !rightWasPressed && idx < 3) {
                 difficulty = opts[idx + 1];
                 localStorage.setItem('mushroomDifficulty', difficulty);
             }
@@ -4807,6 +4951,8 @@ function update() {
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
+            lasers.forEach(l => l.update());
+            checkLaserCollisions();
             updateWeather();
             updateAchievementToasts();
 
@@ -4997,6 +5143,7 @@ function render() {
             magnets.forEach(m => m.render());
             freezes.forEach(f => f.render());
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
+            lasers.forEach(l => l.render());
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
