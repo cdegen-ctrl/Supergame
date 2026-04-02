@@ -885,11 +885,11 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter'
+    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter' | 'ghost'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.speed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'shooter' ? 0 : speed;
+        this.speed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'shooter' ? 0 : type === 'ghost' ? speed * 0.6 : speed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
         this.deathTimer = 0;
@@ -904,6 +904,9 @@ class Mario extends Entity {
         this.wingFlap = Math.random() * Math.PI * 2; // random phase
         // shooter: fire rate timer
         this.shootTimer = type === 'shooter' ? 120 + Math.floor(Math.random() * 120) : 9999;
+        // ghost: haunts player
+        this.ghostPhase = Math.random() * Math.PI * 2; // wave animation
+        this.ghostTeleportTimer = type === 'ghost' ? 300 + Math.floor(Math.random() * 180) : 99999;
         // freeze
         this.frozenTimer = 0;
     }
@@ -970,6 +973,39 @@ class Mario extends Entity {
             }
             this.animTimer++;
             if (this.animTimer > 8) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+            return true;
+        }
+
+        // Feature 65: Ghost Mario — floats through everything toward the player
+        if (this.type === 'ghost') {
+            this.ghostPhase += 0.055;
+            this.ghostTeleportTimer--;
+            if (this.ghostTeleportTimer <= 0 && player) {
+                // Teleport to a random spot on same side as player but off-screen-ish
+                const side = player.x > W / 2 ? -1 : 1;
+                this.x = Math.max(0, Math.min(W - this.w, player.x + side * (160 + Math.random() * 80)));
+                this.y = Math.max(20, Math.min(H - this.h - 20, player.y + (Math.random() - 0.5) * 100));
+                this.ghostTeleportTimer = 360 + Math.floor(Math.random() * 180);
+                for (let i = 0; i < 8; i++) {
+                    particles.push(new DeathParticle(this.x + this.w / 2, this.y + this.h / 2,
+                        (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, '#8844ff', 5));
+                }
+            }
+            if (player) {
+                // Drift toward player slowly
+                const tx = player.x + player.w / 2 - (this.x + this.w / 2);
+                const ty = player.y + player.h / 2 - (this.y + this.h / 2);
+                const dist = Math.sqrt(tx * tx + ty * ty) || 1;
+                this.vx = (tx / dist) * this.speed;
+                this.vy = (ty / dist) * this.speed + Math.sin(this.ghostPhase) * 0.8;
+            }
+            this.x += this.vx;
+            this.y += this.vy;
+            this.x = Math.max(0, Math.min(W - this.w, this.x));
+            this.y = Math.max(0, Math.min(H - this.h, this.y));
+            this.direction = this.vx >= 0 ? 1 : -1;
+            this.animTimer++;
+            if (this.animTimer > 10) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
             return true;
         }
 
@@ -1082,6 +1118,45 @@ class Mario extends Entity {
     }
 
     render() {
+        // Feature 65: Ghost Mario special rendering
+        if (this.type === 'ghost' && this.isAlive) {
+            const alpha = 0.55 + Math.sin(this.ghostPhase) * 0.15;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            // Purple/blue overlay on ghost
+            const px = 2.5;
+            const spriteW = 12 * px;
+            const spriteH = 13 * px;
+            const drawX = this.x + (this.w - spriteW) / 2;
+            const drawY = this.y + this.h - spriteH;
+            // Draw with tint by drawing sprite then overlaying color
+            if (this.direction < 0) {
+                ctx.translate(drawX + spriteW, drawY);
+                ctx.scale(-1, 1);
+                drawPixelSprite(0, 0, px, MARIO_SPRITE);
+                ctx.globalAlpha = 0.5;
+                ctx.fillStyle = '#6633cc';
+                ctx.fillRect(-spriteW, 0, spriteW, spriteH);
+            } else {
+                ctx.translate(drawX, drawY);
+                drawPixelSprite(0, 0, px, MARIO_SPRITE);
+                ctx.globalAlpha = 0.5;
+                ctx.fillStyle = '#6633cc';
+                ctx.fillRect(0, 0, spriteW, spriteH);
+            }
+            ctx.restore();
+            // Ghost label
+            ctx.save();
+            ctx.globalAlpha = 0.7 + Math.sin(this.ghostPhase * 1.3) * 0.2;
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#cc88ff';
+            ctx.fillText('👻', this.x + this.w / 2, this.y - 4);
+            ctx.textAlign = 'left';
+            ctx.restore();
+            return;
+        }
+
         // 3D shadow
         if (this.isAlive) {
             drawShadow(this.x, this.y + this.h, this.w);
@@ -3083,6 +3158,7 @@ const LEVELS = [
         // Feature 54: spike hazards
         spikeSpawns: [{ x: 275, y: 339, w: 28 }, { x: 635, y: 339, w: 28 }],
         chestSpawns: [{ x: 560, y: 102 }, { x: 182, y: 232 }],
+        ghostMarioSpawns: [{ x: 400, y: 200 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -3133,6 +3209,7 @@ const LEVELS = [
         // Feature 54: spike hazards
         spikeSpawns: [{ x: 238, y: 244, w: 30 }, { x: 575, y: 234, w: 30 }],
         chestSpawns: [{ x: 386, y: 82 }],
+        ghostMarioSpawns: [{ x: 100, y: 300 }, { x: 650, y: 280 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -3192,6 +3269,7 @@ const LEVELS = [
             { x: 450, y: 310, w: 170 },
         ],
         chestSpawns: [{ x: 436, y: 62 }, { x: 56, y: 292 }],
+        ghostMarioSpawns: [{ x: 200, y: 150 }, { x: 580, y: 170 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3258,6 +3336,7 @@ const LEVELS = [
             { x: 650, y: 358, w: 100 },
         ],
         chestSpawns: [{ x: 526, y: 82 }, { x: 170, y: 182 }],
+        ghostMarioSpawns: [{ x: 100, y: 200 }, { x: 600, y: 200 }, { x: 380, y: 120 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3347,6 +3426,7 @@ const LEVELS = [
             { x: 620, y: 218, w: 140 },
         ],
         chestSpawns: [{ x: 506, y: 72 }, { x: 158, y: 142 }],
+        ghostMarioSpawns: [{ x: 300, y: 180 }, { x: 500, y: 150 }],
     },
     {
         // Level 11: «Возрождение Хаоса» — Feature 58: ultimate final level
@@ -3418,6 +3498,7 @@ const LEVELS = [
             { x: 200, y: 213, w: 120 },
         ],
         chestSpawns: [{ x: 330, y: 62 }, { x: 560, y: 162 }],
+        ghostMarioSpawns: [{ x: 150, y: 200 }, { x: 450, y: 160 }, { x: 650, y: 190 }],
     },
 ];
 
@@ -3495,6 +3576,22 @@ let currentLevelGrade = '';
 let levelEnemiesKilledCount = 0;
 let levelCoinsCollectedCount = 0;
 let levelComboMax = 0;
+
+// === COIN RAIN — Feature 66 ===
+let coinRainTriggered = false;
+
+function triggerCoinRain() {
+    for (let i = 0; i < 12; i++) {
+        const cx = 40 + Math.random() * (W - 80);
+        const c = new Coin(cx, -20 - Math.random() * 60);
+        c.isDropped = true;
+        c.vx = (Math.random() - 0.5) * 2.5;
+        c.vy = 2 + Math.random() * 3;
+        coins.push(c);
+    }
+    particles.push(new Particle(W / 2 - 60, H / 2 - 80, '💰 ДОЖДЬ МОНЕТ!', '#ffcc00'));
+    playSound('coin');
+}
 
 function calculateLevelGrade() {
     const elapsed = levelTimer / 60;
@@ -3799,6 +3896,10 @@ function loadLevel(index) {
     // Shooter Marios (stationary, fires fireballs)
     const shooterMarios = (lvl.shooterMarioSpawns || []).map(s => new Mario(s.x, s.y, 0, 'shooter'));
     marios = [...marios, ...shooterMarios];
+    // Ghost Marios (Feature 65: float through platforms toward player)
+    const ghostSpeed = speed * 0.6;
+    const ghostMarios = (lvl.ghostMarioSpawns || []).map(s => new Mario(s.x, s.y, ghostSpeed, 'ghost'));
+    marios = [...marios, ...ghostMarios];
     fireballs = [];
 
     const sp = lvl.playerSpawn;
@@ -3825,6 +3926,7 @@ function loadLevel(index) {
     levelCoinsCollectedCount = 0;
     levelComboMax = 0;
     currentLevelGrade = '';
+    coinRainTriggered = false;
     coins = [
         ...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)),
         ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100)),
@@ -3984,7 +4086,10 @@ function checkPlayerMarioCollisions() {
                 comboCount++;
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
                 if (comboCount > levelComboMax) levelComboMax = comboCount;
-                if (comboCount >= 5) unlockAchievement('comboMaster');
+                if (comboCount >= 5) {
+                    unlockAchievement('comboMaster');
+                    if (!coinRainTriggered) { coinRainTriggered = true; triggerCoinRain(); }
+                }
                 const multiplier = comboCount;
                 const points = 100 * multiplier;
                 player.score += points;
