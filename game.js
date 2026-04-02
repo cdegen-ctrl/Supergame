@@ -687,7 +687,7 @@ class Player extends Entity {
                     this.isGrounded = true;
                     this.jumpCount = 0;
                     this.canDoubleJump = false;
-                    if (comboCount > 0) comboCount = 0;
+                    if (comboCount > 0) { comboCount = 0; coinFrenzyActivated = false; } // Feature 73: reset frenzy flag
                     // Feature 66: start crumble timer when player lands
                     if (p.crumble && p.crumbleState === 'normal') {
                         p.crumbleState = 'shaking';
@@ -738,6 +738,7 @@ class Player extends Entity {
             this.invincibleTimer = 120; // 2 seconds
             comboCount = 0;
             comboDisplayTimer = 0;
+            coinFrenzyActivated = false; // Feature 73
             playSound('hurt');
         }
     }
@@ -1388,10 +1389,25 @@ class Coin {
         const r = isDouble ? 10 : 7;
         const cx = this.x + this.w / 2;
         const cy = this.y + this.h / 2 + bob;
-        const glow = Math.abs(Math.sin(this.animTimer * 0.05)) * 0.4 + 0.6;
+        // Feature 73: Coin Frenzy — extra pulse glow
+        const frenzyActive = coinFrenzyTimer > 0;
+        const frenzyPulse = frenzyActive ? 0.5 + Math.abs(Math.sin(Date.now() * 0.012)) * 0.5 : 0;
+        const glow = Math.abs(Math.sin(this.animTimer * 0.05)) * 0.4 + (frenzyActive ? 0.8 : 0.6);
         const spin = isDouble ? Math.cos(this.animTimer * 0.09) : 1; // spin effect (scale x)
 
         ctx.save();
+        // Feature 73: Frenzy outer ring
+        if (frenzyActive) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 7, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 140, 0, ${frenzyPulse * 0.4})`;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 5, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 220, 0, ${frenzyPulse})`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
         // Outer glow
         ctx.beginPath();
         ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
@@ -3341,6 +3357,77 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 400, y: -60 }, { x: 200, y: -100 }, { x: 600, y: -80 }], // Feature 71
         electroSpawns: [{ x: 530, y: 75 }, { x: 300, y: 75 }], // Feature 72
     },
+    {
+        // Level 11: «Апокалипсис» — Feature 74: megafinal with all mechanics
+        platforms: [
+            // Ground — tiny patches only
+            { x: 0,   y: 460, w: 50,  h: 40 },
+            { x: 750, y: 460, w: 50,  h: 40 },
+            // Low tier — moving chaos
+            { x: 60,  y: 430, w: 55,  h: 20, moveAxis: 'x', moveRange: 80,  moveSpeed: 3.0 },
+            { x: 200, y: 410, w: 55,  h: 20, moveAxis: 'y', moveRange: 40,  moveSpeed: 2.6 },
+            { x: 340, y: 430, w: 55,  h: 20, moveAxis: 'x', moveRange: 100, moveSpeed: 3.2 },
+            { x: 490, y: 410, w: 55,  h: 20, moveAxis: 'y', moveRange: 50,  moveSpeed: 2.8 },
+            { x: 640, y: 430, w: 55,  h: 20, moveAxis: 'x', moveRange: 75,  moveSpeed: 3.0 },
+            // Mid tier — crumble and ice mix
+            { x: 30,  y: 340, w: 70,  h: 20, crumble: true },
+            { x: 160, y: 315, w: 70,  h: 20, moveAxis: 'x', moveRange: 90,  moveSpeed: 3.5 },
+            { x: 310, y: 330, w: 70,  h: 20, crumble: true },
+            { x: 450, y: 305, w: 70,  h: 20, moveAxis: 'y', moveRange: 55,  moveSpeed: 3.0 },
+            { x: 590, y: 325, w: 70,  h: 20, ice: true },
+            { x: 700, y: 300, w: 70,  h: 20, moveAxis: 'x', moveRange: 60,  moveSpeed: 2.8 },
+            // Upper-mid tier
+            { x: 60,  y: 230, w: 80,  h: 20, moveAxis: 'x', moveRange: 100, moveSpeed: 3.2 },
+            { x: 230, y: 210, w: 80,  h: 20, ice: true },
+            { x: 390, y: 225, w: 80,  h: 20, moveAxis: 'y', moveRange: 60,  moveSpeed: 3.2 },
+            { x: 550, y: 210, w: 80,  h: 20, crumble: true },
+            { x: 680, y: 230, w: 80,  h: 20, moveAxis: 'x', moveRange: 70,  moveSpeed: 3.5 },
+            // Top tier — ice + crumble madness
+            { x: 100, y: 130, w: 100, h: 20, ice: true },
+            { x: 310, y: 110, w: 100, h: 20, crumble: true },
+            { x: 530, y: 125, w: 100, h: 20, ice: true },
+            { x: 320, y: 45,  w: 160, h: 20 }, // very top safe zone
+        ],
+        marioSpawns: [
+            { x: 5,   y: 430 },
+            { x: 755, y: 430 },
+            { x: 170, y: 390 },
+            { x: 360, y: 390 },
+            { x: 520, y: 390 },
+            { x: 40,  y: 310 },
+            { x: 480, y: 270 },
+            { x: 700, y: 265 },
+        ],
+        marioTypes: ['normal', 'normal', 'fast', 'armored', 'jumpy', 'armored', 'fast', 'armored'],
+        marioSpeed: 4.5,
+        playerSpawn: { x: 5, y: 400 },
+        coinSpawns: [
+            { x: 110, y: 405 }, { x: 260, y: 385 }, { x: 400, y: 405 }, { x: 545, y: 385 },
+            { x: 70,  y: 315 }, { x: 200, y: 290 }, { x: 380, y: 305 }, { x: 620, y: 300 },
+            { x: 90,  y: 205 }, { x: 265, y: 185 }, { x: 430, y: 200 }, { x: 600, y: 185 },
+            { x: 150, y: 105 }, { x: 360, y: 85  }, { x: 590, y: 100 },
+        ],
+        doubleCoinSpawns: [
+            { x: 380, y: 85  }, { x: 160, y: 85 }, { x: 560, y: 85 },
+        ],
+        starSpawns:       [{ x: 350, y: 20  }, { x: 130, y: 105 }],
+        shieldSpawns:     [{ x: 740, y: 435 }],
+        bombSpawns:       [{ x: 470, y: 185 }, { x: 230, y: 190 }],
+        springSpawns:     [{ x: 0,   y: 446 }, { x: 740, y: 446 }],
+        speedBoostSpawns: [{ x: 560, y: 100 }],
+        magnetSpawns:     [{ x: 320, y: 85  }],
+        freezeSpawns:     [{ x: 105, y: 105 }, { x: 540, y: 100 }],
+        ghostSpawns:      [{ x: 400, y: 85  }],
+        electroSpawns:    [{ x: 490, y: 20  }, { x: 200, y: 85  }],  // Feature 72
+        portalSpawns: [
+            { blue: { x: 0, y: 415 }, orange: { x: 340, y: 65 } },
+            { blue: { x: 430, y: 415 }, orange: { x: 130, y: 95 } },
+        ],
+        checkpointSpawns: [{ x: 395, y: 425 }],
+        flyingMarioSpawns:    [{ x: 100, y: 170 }, { x: 350, y: 155 }, { x: 600, y: 165 }, { x: 220, y: 130 }],
+        shooterMarioSpawns:   [{ x: 320, y: 25  }, { x: 540, y: 100 }, { x: 110, y: 105 }],
+        parachuteMarioSpawns: [{ x: 200, y: -60 }, { x: 500, y: -90 }, { x: 700, y: -50 }, { x: 100, y: -120 }], // Feature 71
+    },
 ];
 
 // === FEATURE 56: VICTORY CONFETTI ===
@@ -3406,6 +3493,10 @@ let afterimages = []; // Feature 53: speed boost afterimage trail
 let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
 let comboDisplayTimer = 0;
+// Feature 73: Coin Frenzy
+let coinFrenzyTimer = 0;        // frames remaining (300 = 5 sec)
+const COIN_FRENZY_DURATION = 300;
+let coinFrenzyActivated = false; // flag to show activation text once
 let levelTimer = 0;       // frames elapsed in current level
 const TIME_BONUS_MAX = 3000; // max bonus at 0 seconds
 const TIME_PER_FRAME = 1 / 60;
@@ -3806,6 +3897,11 @@ function getMarioType(levelIndex, spawnIdx) {
         const types = ['armored', 'fast', 'jumpy', 'armored', 'fast', 'jumpy'];
         return types[spawnIdx % types.length];
     }
+    if (levelIndex >= 10) {
+        // Level 11 "Apocalypse": marioTypes array from level data takes priority (handled in loadLevel)
+        const types = ['armored', 'fast', 'armored', 'jumpy', 'armored', 'fast', 'jumpy', 'armored'];
+        return types[spawnIdx % types.length];
+    }
     if (levelIndex >= 7) {
         const types = ['armored', 'armored', 'fast', 'jumpy', 'armored', 'fast', 'jumpy', 'armored', 'fast'];
         return types[spawnIdx % types.length];
@@ -3825,7 +3921,10 @@ function loadLevel(index) {
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     const speed = lvl.marioSpeed * speedMult * diffMult;
-    marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, speed, getMarioType(index, i)));
+    marios = lvl.marioSpawns.map((s, i) => {
+        const type = lvl.marioTypes ? (lvl.marioTypes[i] || getMarioType(index, i)) : getMarioType(index, i);
+        return new Mario(s.x, s.y, speed, type);
+    });
 
     // Extra Marios for levels beyond 5
     if (index >= LEVELS.length) {
@@ -3930,14 +4029,19 @@ function checkCoinCollisions() {
         if (coin.collected) continue;
         if (aabb(player, coin)) {
             coin.collected = true;
-            const pts = coin.bonus || 50;
+            let pts = coin.bonus || 50;
+            // Feature 73: Coin Frenzy — x3 multiplier
+            const frenzyMulti = coinFrenzyTimer > 0 ? 3 : 1;
+            pts *= frenzyMulti;
             player.score += pts;
             totalScore += pts;
             totalCoinsCollectedRun++;
             runStats.coinsCollected++;
             levelCoinsCollected++;  // Feature 59
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
-            particles.push(new Particle(coin.x, coin.y - 5, `+${pts}`, pts > 50 ? '#ff9900' : '#ffcc00'));
+            const pColor = coinFrenzyTimer > 0 ? '#ff8800' : (pts > 50 ? '#ff9900' : '#ffcc00');
+            const pText = coinFrenzyTimer > 0 ? `x3 +${pts}` : `+${pts}`;
+            particles.push(new Particle(coin.x, coin.y - 5, pText, pColor));
             playSound('coin');
         }
     }
@@ -3986,6 +4090,17 @@ function checkPlayerMarioCollisions() {
                 comboCount++;
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
                 if (comboCount >= 5) unlockAchievement('comboMaster');
+                // Feature 73: Coin Frenzy trigger at combo x8+
+                if (comboCount >= 8) {
+                    coinFrenzyTimer = COIN_FRENZY_DURATION;
+                    if (!coinFrenzyActivated) {
+                        coinFrenzyActivated = true;
+                        particles.push(new Particle(W / 2 - 60, H / 2 - 80, '💰 МОНЕТНАЯ ЛИХОРАДКА!', '#ffdd00'));
+                        playSound('levelup');
+                    }
+                } else {
+                    coinFrenzyActivated = false;
+                }
                 const multiplier = comboCount;
                 let points = 100 * multiplier;
                 if (player.scoreBoostTimer > 0) points *= 2; // Feature 61
@@ -4716,6 +4831,23 @@ function drawHUD() {
         ctx.fillText('🔥 ЯРОСТЬ!', W / 2 + 2, H / 2 - 98);
         ctx.fillStyle = '#ff3300';
         ctx.fillText('🔥 ЯРОСТЬ!', W / 2, H / 2 - 100);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 73: Coin Frenzy indicator
+    if (coinFrenzyTimer > 0) {
+        const frenzyAlpha = Math.min(1, coinFrenzyTimer / 30);
+        const frenzySecs = Math.ceil(coinFrenzyTimer / 60);
+        const frenzyPulse = 1 + Math.sin(Date.now() * 0.015) * 0.08;
+        ctx.save();
+        ctx.globalAlpha = frenzyAlpha;
+        ctx.font = `bold ${Math.round(20 * frenzyPulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText(`💰 ЛИХОРАДКА! x3 (${frenzySecs}с)`, W / 2 + 2, H / 2 - 122);
+        ctx.fillStyle = '#ffdd00';
+        ctx.fillText(`💰 ЛИХОРАДКА! x3 (${frenzySecs}с)`, W / 2, H / 2 - 124);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -5505,6 +5637,7 @@ function update() {
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
+            if (coinFrenzyTimer > 0) { coinFrenzyTimer--; if (coinFrenzyTimer === 0) coinFrenzyActivated = false; } // Feature 73
             levelTimer++;
             // Animate HUD score display
             if (hudScoreDisplay < player.score) {
