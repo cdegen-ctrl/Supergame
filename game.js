@@ -204,7 +204,7 @@ class Entity {
 }
 
 class Platform extends Entity {
-    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed) {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumble, ice) {
         super(x, y, w, h);
         // Moving platform support
         this.moveAxis = moveAxis || null;   // 'x' | 'y' | null
@@ -214,9 +214,44 @@ class Platform extends Entity {
         this.moveDir = 1;
         this._prevX = x;
         this._prevY = y;
+        // Feature 66: Crumbling platform
+        this.crumble = !!crumble;
+        this.crumbleState = 'normal'; // 'normal' | 'shaking' | 'falling' | 'respawning'
+        this.crumbleTimer = 0;
+        this.crumbleOrigY = y;
+        this.crumbleDy = 0;
+        // Feature 67: Ice platform
+        this.ice = !!ice;
     }
 
     update() {
+        // Feature 66: Crumble state machine
+        if (this.crumble) {
+            if (this.crumbleState === 'shaking') {
+                this.crumbleTimer--;
+                if (this.crumbleTimer <= 0) {
+                    this.crumbleState = 'falling';
+                    this.crumbleTimer = 50;
+                    this.crumbleDy = 0;
+                }
+            } else if (this.crumbleState === 'falling') {
+                this.crumbleDy += 0.9;
+                this.y += this.crumbleDy;
+                this.crumbleTimer--;
+                if (this.crumbleTimer <= 0 || this.y > H + 60) {
+                    this.crumbleState = 'respawning';
+                    this.crumbleTimer = 220;
+                    this.y = this.crumbleOrigY;
+                    this.crumbleDy = 0;
+                }
+            } else if (this.crumbleState === 'respawning') {
+                this.crumbleTimer--;
+                if (this.crumbleTimer <= 0) {
+                    this.crumbleState = 'normal';
+                    this.y = this.crumbleOrigY;
+                }
+            }
+        }
         if (!this.moveAxis) return;
         this._prevX = this.x;
         this._prevY = this.y;
@@ -232,14 +267,38 @@ class Platform extends Entity {
     }
 
     render() {
+        // Feature 66: Don't render while respawning
+        if (this.crumble && this.crumbleState === 'respawning') return;
+
         const d = DEPTH_3D;
+        // Feature 66: Shake crumbling platform visually
+        let shakeX = 0;
+        if (this.crumble && this.crumbleState === 'shaking') {
+            shakeX = Math.sin(Date.now() * 0.055) * Math.max(1, (65 - this.crumbleTimer) * 0.12);
+        }
+
+        ctx.save();
+        if (shakeX !== 0) ctx.translate(shakeX, 0);
+
+        // Choose colors based on platform type
+        const mainColor  = this.ice ? '#88ccee' : this.crumble ? '#8c7060' : C.brick;
+        const frontColor = this.ice ? '#5599bb' : this.crumble ? '#5c4030' : '#1a5c24';
+        const rightColor = this.ice ? '#6699cc' : this.crumble ? '#6b4838' : '#1e6b2b';
+        const topColor   = this.ice ? '#aaddff' : this.crumble ? '#a08070' : '#3aad4e';
+        const lineColor  = this.ice ? '#4488aa' : this.crumble ? '#4a3028' : C.brickLine;
+        const edgeColor  = this.ice ? '#cceeff' : this.crumble ? '#c0a090' : '#5cd670';
+
+        // Feature 66: fade out when falling
+        if (this.crumble && this.crumbleState === 'falling') {
+            ctx.globalAlpha = Math.max(0, this.crumbleTimer / 50);
+        }
 
         // 3D front face (bottom side)
-        ctx.fillStyle = '#1a5c24';
+        ctx.fillStyle = frontColor;
         ctx.fillRect(this.x, this.y + this.h, this.w, d);
 
         // 3D right face
-        ctx.fillStyle = '#1e6b2b';
+        ctx.fillStyle = rightColor;
         ctx.beginPath();
         ctx.moveTo(this.x + this.w, this.y);
         ctx.lineTo(this.x + this.w + d * 0.5, this.y - d * 0.3);
@@ -249,7 +308,7 @@ class Platform extends Entity {
         ctx.fill();
 
         // 3D top highlight face (slight perspective)
-        ctx.fillStyle = '#3aad4e';
+        ctx.fillStyle = topColor;
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
         ctx.lineTo(this.x + d * 0.5, this.y - d * 0.3);
@@ -259,8 +318,24 @@ class Platform extends Entity {
         ctx.fill();
 
         // Main top face
-        ctx.fillStyle = C.brick;
+        ctx.fillStyle = mainColor;
         ctx.fillRect(this.x, this.y, this.w, this.h);
+
+        // Feature 66: Draw cracks on crumbling platforms when shaking
+        if (this.crumble && this.crumbleState === 'shaking') {
+            ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+            ctx.lineWidth = 1.5;
+            const progress = 1 - this.crumbleTimer / 65;
+            const crackCount = Math.floor(progress * 5) + 1;
+            for (let i = 0; i < crackCount; i++) {
+                const cx = this.x + (i + 1) * this.w / (crackCount + 1);
+                ctx.beginPath();
+                ctx.moveTo(cx, this.y);
+                ctx.lineTo(cx + (Math.random() - 0.5) * 6, this.y + this.h * 0.5);
+                ctx.lineTo(cx + (Math.random() - 0.5) * 8, this.y + this.h);
+                ctx.stroke();
+            }
+        }
 
         // Brick pattern on top face
         const bw = 24; const bh = 12;
@@ -270,7 +345,7 @@ class Platform extends Entity {
                 const bx = this.x + col * bw + offset;
                 const by = this.y + row * bh;
                 if (bx + bw > this.x && bx < this.x + this.w) {
-                    ctx.strokeStyle = C.brickLine;
+                    ctx.strokeStyle = lineColor;
                     ctx.lineWidth = 1;
                     ctx.strokeRect(
                         Math.max(bx, this.x),
@@ -289,7 +364,7 @@ class Platform extends Entity {
                 const bx = this.x + col * bw + offset;
                 const by = this.y + this.h + row * bh;
                 if (bx + bw > this.x && bx < this.x + this.w) {
-                    ctx.strokeStyle = '#145020';
+                    ctx.strokeStyle = this.ice ? '#336688' : '#145020';
                     ctx.lineWidth = 1;
                     ctx.strokeRect(
                         Math.max(bx, this.x),
@@ -302,24 +377,38 @@ class Platform extends Entity {
         }
 
         // Top edge highlight
-        ctx.strokeStyle = '#5cd670';
+        ctx.strokeStyle = edgeColor;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(this.x, this.y + 1);
         ctx.lineTo(this.x + this.w, this.y + 1);
         ctx.stroke();
 
+        // Feature 67: Ice surface sheen
+        if (this.ice) {
+            ctx.globalAlpha = 0.35;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(this.x + 4, this.y + 2, this.w * 0.3, 3);
+            ctx.fillRect(this.x + this.w * 0.6, this.y + 2, this.w * 0.2, 2);
+            ctx.globalAlpha = 1;
+            // Snowflake label
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(200,240,255,0.8)';
+            ctx.fillText('❄', this.x + this.w / 2, this.y + this.h / 2 + 4);
+        }
+
         // Moving platform indicator (glowing arrows)
         if (this.moveAxis) {
-            ctx.save();
             ctx.globalAlpha = 0.75;
             ctx.font = 'bold 11px monospace';
             ctx.textAlign = 'center';
             ctx.fillStyle = '#ffee55';
             const label = this.moveAxis === 'x' ? '↔' : '↕';
             ctx.fillText(label, this.x + this.w / 2, this.y + this.h / 2 + 4);
-            ctx.restore();
         }
+
+        ctx.restore();
     }
 }
 
@@ -363,6 +452,17 @@ class Player extends Entity {
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
         // Checkpoint respawn
         this.checkpointSpawn = null;
+        // Feature 65: Dash ability
+        this.dashTimer = 0;        // active dash frames remaining
+        this.dashCooldown = 0;     // cooldown frames (90 = 1.5s)
+        this.dashDir = 1;          // direction of last dash
+        this.lastLeftTap = -999;
+        this.lastRightTap = -999;
+        this.leftWasDown = false;
+        this.rightWasDown = false;
+        this.shiftWasDown = false;
+        // Feature 67: Ice platform tracking
+        this.isOnIce = false;
     }
 
     update() {
@@ -371,14 +471,60 @@ class Player extends Entity {
 
         // horizontal movement
         const currentSpeed = this.speedBoostTimer > 0 ? PLAYER_SPEED * 2 : PLAYER_SPEED;
-        if (isLeft()) {
-            this.vx = -currentSpeed;
-            this.facingRight = false;
-        } else if (isRight()) {
-            this.vx = currentSpeed;
-            this.facingRight = true;
+        const leftDown  = isLeft();
+        const rightDown = isRight();
+        const shiftDown = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+
+        // Feature 65: Dash — double-tap direction or Shift key
+        if (leftDown && !this.leftWasDown) {
+            if (levelTimer - this.lastLeftTap < 16 && this.dashCooldown <= 0) {
+                this.dashTimer = 11; this.dashDir = -1; this.dashCooldown = 90;
+                this.invincibleTimer = Math.max(this.invincibleTimer, 12);
+                this.scaleX = 0.6; this.scaleY = 1.2;
+                playSound('dash');
+            }
+            this.lastLeftTap = levelTimer;
+        }
+        if (rightDown && !this.rightWasDown) {
+            if (levelTimer - this.lastRightTap < 16 && this.dashCooldown <= 0) {
+                this.dashTimer = 11; this.dashDir = 1; this.dashCooldown = 90;
+                this.invincibleTimer = Math.max(this.invincibleTimer, 12);
+                this.scaleX = 0.6; this.scaleY = 1.2;
+                playSound('dash');
+            }
+            this.lastRightTap = levelTimer;
+        }
+        if (shiftDown && !this.shiftWasDown && this.dashCooldown <= 0) {
+            this.dashTimer = 11; this.dashDir = this.facingRight ? 1 : -1;
+            this.dashCooldown = 90;
+            this.invincibleTimer = Math.max(this.invincibleTimer, 12);
+            this.scaleX = 0.6; this.scaleY = 1.2;
+            playSound('dash');
+        }
+        this.leftWasDown  = leftDown;
+        this.rightWasDown = rightDown;
+        this.shiftWasDown = shiftDown;
+        if (this.dashCooldown > 0) this.dashCooldown--;
+
+        if (this.dashTimer > 0) {
+            // Active dash: override movement
+            this.dashTimer--;
+            this.vx = this.dashDir * currentSpeed * 2.5;
+            this.facingRight = this.dashDir > 0;
+            // Cyan afterimage during dash
+            if (this.dashTimer % 2 === 0) {
+                afterimages.push({ x: this.x, y: this.y, scaleX: this.scaleX, scaleY: this.scaleY, facingRight: this.facingRight, alpha: 0.5, dashTint: true });
+                if (afterimages.length > 9) afterimages.shift();
+            }
+        } else if (this.isOnIce && this.isGrounded) {
+            // Feature 67: Ice platform — gradual acceleration / slow deceleration
+            if (leftDown)       { this.vx = Math.max(this.vx - 0.45, -currentSpeed); this.facingRight = false; }
+            else if (rightDown) { this.vx = Math.min(this.vx + 0.45,  currentSpeed); this.facingRight = true; }
+            else                { this.vx *= 0.93; if (Math.abs(this.vx) < 0.08) this.vx = 0; }
         } else {
-            this.vx = 0;
+            if (leftDown)       { this.vx = -currentSpeed; this.facingRight = false; }
+            else if (rightDown) { this.vx =  currentSpeed; this.facingRight = true; }
+            else                { this.vx = 0; }
         }
 
         // jump (only on press, not hold) — supports double jump + wall jump
@@ -521,7 +667,10 @@ class Player extends Entity {
     }
 
     resolveCollisionsY() {
+        this.isOnIce = false; // reset; set below if landing on ice platform
         for (const p of platforms) {
+            // Feature 66: skip falling/respawning crumble platforms
+            if (p.crumble && (p.crumbleState === 'falling' || p.crumbleState === 'respawning')) continue;
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
@@ -535,6 +684,13 @@ class Player extends Entity {
                     this.jumpCount = 0;
                     this.canDoubleJump = false;
                     if (comboCount > 0) comboCount = 0;
+                    // Feature 66: start crumble timer when player lands
+                    if (p.crumble && p.crumbleState === 'normal') {
+                        p.crumbleState = 'shaking';
+                        p.crumbleTimer = 65;
+                    }
+                    // Feature 67: detect ice platform
+                    if (p.ice) this.isOnIce = true;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -554,6 +710,15 @@ class Player extends Entity {
             if (totalScore > highScore) {
                 highScore = totalScore;
                 localStorage.setItem('mushroomHighScore', String(highScore));
+            }
+            // Feature 68: save survival best time
+            if (survivalMode) {
+                const survivedSecs = Math.floor(survivalTimer / 60);
+                if (survivedSecs > survivalBestTime) {
+                    survivalBestTime = survivedSecs;
+                    localStorage.setItem('mushroomSurvivalBest', String(survivalBestTime));
+                }
+                survivalMode = false;
             }
             submitScore(totalScore);
             gameState = 'GAME_OVER';
@@ -698,7 +863,8 @@ class Mario extends Entity {
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.speed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'shooter' ? 0 : speed;
+        this.baseSpeed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'shooter' ? 0 : speed;
+        this.speed = this.baseSpeed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
         this.deathTimer = 0;
@@ -729,6 +895,9 @@ class Mario extends Entity {
             this.frozenTimer--;
             return true;
         }
+
+        // Feature 69: Rage Mode speed boost
+        this.speed = rageModeActive ? this.baseSpeed * 1.5 : this.baseSpeed;
 
         // Shooter type: stands still, aims and fires toward player
         if (this.type === 'shooter') {
@@ -823,6 +992,8 @@ class Mario extends Entity {
 
     resolveCollisionsX() {
         for (const p of platforms) {
+            // Feature 66: skip falling/respawning crumble platforms
+            if (p.crumble && (p.crumbleState === 'falling' || p.crumbleState === 'respawning')) continue;
             if (aabb(this, p)) {
                 if (this.vx > 0) {
                     this.x = p.x - this.w;
@@ -836,6 +1007,8 @@ class Mario extends Entity {
 
     resolveCollisionsY() {
         for (const p of platforms) {
+            // Feature 66: skip falling/respawning crumble platforms
+            if (p.crumble && (p.crumbleState === 'falling' || p.crumbleState === 'respawning')) continue;
             if (aabb(this, p)) {
                 if (this.vy > 0) {
                     this.y = p.y - this.h;
@@ -1017,6 +1190,22 @@ class Mario extends Entity {
             ctx.fillStyle = '#ffffff';
             ctx.fillText('❄', this.x + this.w / 2, this.y - 2);
             ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        // Feature 69: Rage Mode — red glow on enraged enemies
+        if (this.isAlive && rageModeActive && this.type !== 'shooter') {
+            const pulse = 0.3 + Math.abs(Math.sin(Date.now() * 0.008)) * 0.4;
+            ctx.save();
+            ctx.globalAlpha = pulse;
+            ctx.strokeStyle = '#ff2200';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.roundRect(this.x - 3, this.y - 3, this.w + 6, this.h + 6, 4);
+            ctx.stroke();
+            ctx.globalAlpha = pulse * 0.25;
+            ctx.fillStyle = '#ff4400';
+            ctx.fillRect(this.x - 3, this.y - 3, this.w + 6, this.h + 6);
             ctx.restore();
         }
     }
@@ -2594,15 +2783,15 @@ const LEVELS = [
         magnetSpawns: [{ x: 310, y: 195 }],
     },
     {
-        // Level 4: Complex layout with moving platforms
+        // Level 4: Complex layout with moving platforms + crumbling platforms
         platforms: [
             { x: 0, y: 460, w: 160, h: 40 },
             { x: 240, y: 460, w: 160, h: 40 },
             { x: 480, y: 460, w: 160, h: 40 },
             { x: 680, y: 460, w: 120, h: 40 },
-            { x: 50, y: 375, w: 120, h: 20 },
+            { x: 50, y: 375, w: 120, h: 20, crumble: true }, // Feature 66: crumbling
             { x: 250, y: 340, w: 120, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.2 },
-            { x: 440, y: 375, w: 120, h: 20 },
+            { x: 440, y: 375, w: 120, h: 20, crumble: true }, // Feature 66: crumbling
             { x: 620, y: 340, w: 120, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.5 },
             { x: 200, y: 230, w: 160, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 0.8 },
             { x: 460, y: 230, w: 160, h: 20 },
@@ -2632,7 +2821,7 @@ const LEVELS = [
         ghostSpawns: [{ x: 270, y: 200 }],
     },
     {
-        // Level 5: The gauntlet with moving platforms
+        // Level 5: The gauntlet with moving + crumbling platforms
         platforms: [
             { x: 0, y: 460, w: 120, h: 40 },
             { x: 180, y: 460, w: 120, h: 40 },
@@ -2640,9 +2829,9 @@ const LEVELS = [
             { x: 540, y: 460, w: 120, h: 40 },
             { x: 700, y: 460, w: 100, h: 40 },
             { x: 80, y: 380, w: 100, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.4 },
-            { x: 260, y: 355, w: 100, h: 20 },
+            { x: 260, y: 355, w: 100, h: 20, crumble: true }, // Feature 66
             { x: 440, y: 380, w: 100, h: 20, moveAxis: 'x', moveRange: 70, moveSpeed: 1.6 },
-            { x: 620, y: 355, w: 100, h: 20 },
+            { x: 620, y: 355, w: 100, h: 20, crumble: true }, // Feature 66
             { x: 160, y: 260, w: 140, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.0 },
             { x: 380, y: 230, w: 140, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.3 },
             { x: 560, y: 260, w: 140, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 0.9 },
@@ -2720,7 +2909,7 @@ const LEVELS = [
         scoreBoostSpawns: [{ x: 350, y: 375 }], // Feature 61
     },
     {
-        // Level 7: Chaos — all enemy types + max moving platforms
+        // Level 7: Chaos — all enemy types + moving + crumble + ice platforms
         platforms: [
             { x: 0, y: 460, w: 80, h: 40 },
             { x: 720, y: 460, w: 80, h: 40 },
@@ -2728,14 +2917,14 @@ const LEVELS = [
             { x: 260, y: 380, w: 80, h: 20, moveAxis: 'y', moveRange: 40, moveSpeed: 1.5 },
             { x: 420, y: 420, w: 80, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 2.2 },
             { x: 580, y: 380, w: 80, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.8 },
-            { x: 50, y: 320, w: 80, h: 20, moveAxis: 'y', moveRange: 60, moveSpeed: 1.3 },
-            { x: 200, y: 290, w: 80, h: 20, moveAxis: 'x', moveRange: 90, moveSpeed: 2.5 },
+            { x: 50, y: 320, w: 80, h: 20, crumble: true }, // Feature 66
+            { x: 200, y: 290, w: 80, h: 20, crumble: true }, // Feature 66
             { x: 380, y: 310, w: 80, h: 20, moveAxis: 'y', moveRange: 45, moveSpeed: 1.6 },
-            { x: 560, y: 280, w: 80, h: 20, moveAxis: 'x', moveRange: 70, moveSpeed: 2.0 },
-            { x: 120, y: 200, w: 110, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 1.7 },
+            { x: 560, y: 280, w: 80, h: 20, ice: true }, // Feature 67
+            { x: 120, y: 200, w: 110, h: 20, ice: true }, // Feature 67
             { x: 380, y: 180, w: 110, h: 20, moveAxis: 'y', moveRange: 50, moveSpeed: 1.4 },
             { x: 620, y: 190, w: 110, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 2.1 },
-            { x: 300, y: 90, w: 200, h: 20 },
+            { x: 300, y: 90, w: 200, h: 20, ice: true }, // Feature 67
         ],
         marioSpawns: [
             { x: 20, y: 430 },
@@ -2983,6 +3172,75 @@ let selectedLevelIdx = 0;
 let soundMuted = false;
 let difficulty = localStorage.getItem('mushroomDifficulty') || 'normal';
 
+// === FEATURE 68: SURVIVAL MODE ===
+let survivalMode = false;
+let survivalTimer = 0;          // frames survived
+let survivalWaveTimer = 0;      // frames until next wave
+let survivalWave = 0;           // current wave number
+const SURVIVAL_WAVE_INTERVAL = 480; // 8 seconds per wave
+let survivalBestTime = parseInt(localStorage.getItem('mushroomSurvivalBest') || '0');
+
+const SURVIVAL_ARENA = {
+    platforms: [
+        { x: 0, y: 460, w: 800, h: 40 },
+        { x: 100, y: 360, w: 160, h: 20 },
+        { x: 330, y: 315, w: 140, h: 20 },
+        { x: 540, y: 360, w: 160, h: 20 },
+        { x: 200, y: 235, w: 130, h: 20, crumble: true },
+        { x: 470, y: 235, w: 130, h: 20, crumble: true },
+        { x: 335, y: 145, w: 130, h: 20, ice: true },
+    ],
+    playerSpawn: { x: 380, y: 420 },
+    coinSpawns: [
+        { x: 150, y: 435 }, { x: 400, y: 435 }, { x: 650, y: 435 },
+        { x: 175, y: 335 }, { x: 380, y: 290 }, { x: 625, y: 335 },
+    ],
+    doubleCoinSpawns: [{ x: 395, y: 120 }],
+    marioSpawns: [{ x: 200, y: 420 }, { x: 560, y: 420 }],
+    marioSpeed: 2.2,
+    starSpawns: [{ x: 350, y: 290 }],
+    bombSpawns: [{ x: 560, y: 295 }],
+    shieldSpawns: [{ x: 100, y: 315 }],
+};
+
+function startSurvivalMode() {
+    survivalMode = true;
+    survivalTimer = 0;
+    survivalWave = 0;
+    survivalWaveTimer = SURVIVAL_WAVE_INTERVAL;
+    const lvl = SURVIVAL_ARENA;
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, null, 0, 0, p.crumble, p.ice));
+    const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
+    marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, lvl.marioSpeed * diffMult, 'normal'));
+    fireballs = [];
+    const sp = lvl.playerSpawn;
+    player = new Player(sp.x, sp.y);
+    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
+    particles = [];
+    comboCount = 0;
+    comboDisplayTimer = 0;
+    levelTimer = 0;
+    hudScoreDisplay = 0;
+    levelTotalMarios = marios.length;
+    levelDeathCount = 0;
+    levelCoinsCollected = 0;
+    levelCoinsTotal = (lvl.coinSpawns || []).length + (lvl.doubleCoinSpawns || []).length;
+    coins = [...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)), ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100))];
+    stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
+    shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
+    bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = [];
+    portalPairs = []; checkpoints = [];
+    isBossLevel = false; bossMarco = null;
+    initWeather(4); initBirds(); shootingStars = [];
+    if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(4));
+    gameState = 'PLAYING';
+}
+
+// === FEATURE 69: RAGE MODE ===
+let rageModeActive = false;
+let rageModeWarningTimer = 0; // frames to show "ЯРОСТЬ!" warning
+
 // === LEVEL BEST TIMES ===
 let levelBestTimes = [];
 try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || '[]'); } catch { levelBestTimes = []; }
@@ -3163,6 +3421,25 @@ function playSound(type) {
             osc.start(now);
             osc.stop(now + 0.9);
             break;
+        case 'dash': // Feature 65: dash whoosh
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(800, now);
+            osc.frequency.linearRampToValueAtTime(200, now + 0.12);
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.13);
+            osc.start(now);
+            osc.stop(now + 0.13);
+            break;
+        case 'rage': // Feature 69: rage mode activation
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.linearRampToValueAtTime(350, now + 0.08);
+            osc.frequency.linearRampToValueAtTime(150, now + 0.18);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.22);
+            osc.start(now);
+            osc.stop(now + 0.22);
+            break;
     }
 }
 
@@ -3289,11 +3566,13 @@ function getMarioType(levelIndex, spawnIdx) {
 }
 
 function loadLevel(index) {
+    rageModeActive = false; // Feature 69: reset rage on level change
+    rageModeWarningTimer = 0;
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
     const lvl = LEVELS[lvlIndex];
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice));
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     const speed = lvl.marioSpeed * speedMult * diffMult;
@@ -3379,6 +3658,9 @@ function startGame() {
 }
 
 function startGameFromLevel(level) {
+    survivalMode = false; // ensure survival mode off in normal game
+    rageModeActive = false;
+    rageModeWarningTimer = 0;
     currentLevel = level;
     totalScore = 0;
     player = null;
@@ -3546,8 +3828,8 @@ function renderAfterimages() {
         const alpha = (i + 1) / afterimages.length * 0.42;
         ctx.save();
         ctx.globalAlpha = alpha;
-        // Tint green to match speed boost theme
-        ctx.filter = 'hue-rotate(90deg) saturate(2)';
+        // Feature 65: cyan tint for dash afterimages, green for speed boost
+        ctx.filter = img.dashTint ? 'hue-rotate(180deg) saturate(3)' : 'hue-rotate(90deg) saturate(2)';
         const pivotX = img.x + 16;
         const pivotY = img.y + 32;
         ctx.translate(pivotX, pivotY);
@@ -4131,14 +4413,74 @@ function drawHUD() {
     if (levelTotalMarios > 0 && !isBossLevel) {
         const aliveCount = marios.filter(m => m.isAlive).length;
         const isLast = aliveCount === 1;
-        const enemyColor = isLast ? '#ff4444' : '#ffffff';
-        const pulse = isLast ? 1 + Math.sin(Date.now() * 0.008) * 0.12 : 1;
+        const enemyColor = rageModeActive ? '#ff2200' : (isLast ? '#ff4444' : '#ffffff');
+        const pulse = (isLast || rageModeActive) ? 1 + Math.sin(Date.now() * 0.008) * 0.12 : 1;
         ctx.save();
         ctx.font = `bold ${Math.round(13 * pulse)}px monospace`;
         ctx.fillStyle = '#000';
         ctx.fillText(`ВРАГИ: ${aliveCount}/${levelTotalMarios}`, 22, H - 15);
         ctx.fillStyle = enemyColor;
         ctx.fillText(`ВРАГИ: ${aliveCount}/${levelTotalMarios}`, 20, H - 17);
+        ctx.restore();
+    }
+
+    // Feature 69: Rage Mode warning text
+    if (rageModeWarningTimer > 0) {
+        const alpha = Math.min(1, rageModeWarningTimer / 30);
+        const scale = 1 + Math.sin(rageModeWarningTimer * 0.15) * 0.06;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${Math.round(28 * scale)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText('🔥 ЯРОСТЬ!', W / 2 + 2, H / 2 - 98);
+        ctx.fillStyle = '#ff3300';
+        ctx.fillText('🔥 ЯРОСТЬ!', W / 2, H / 2 - 100);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 68: Survival Mode timer and wave info
+    if (survivalMode) {
+        const survivedSecs = Math.floor(survivalTimer / 60);
+        ctx.save();
+        ctx.font = 'bold 14px monospace';
+        ctx.fillStyle = '#000';
+        ctx.fillText(`⏱ ${survivedSecs}с`, W / 2 - 28, 57);
+        ctx.fillStyle = '#ffaa00';
+        ctx.fillText(`⏱ ${survivedSecs}с`, W / 2 - 30, 55);
+        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = '#ffcc66';
+        ctx.textAlign = 'center';
+        ctx.fillText(`ВОЛНА ${survivalWave + 1}  РЕКОРД: ${survivalBestTime}с`, W / 2, 75);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 65 & 70: Dash indicator in HUD (above enemy counter)
+    if (player) {
+        const dashReady = player.dashCooldown <= 0;
+        const dashX = 10; const dashY = H - 35;
+        ctx.save();
+        ctx.globalAlpha = dashReady ? 1 : 0.55;
+        ctx.fillStyle = dashReady ? '#44aaff' : '#223344';
+        ctx.beginPath();
+        ctx.roundRect(dashX, dashY, 52, 18, 4);
+        ctx.fill();
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = dashReady ? '#ffffff' : '#8899aa';
+        ctx.fillText('⚡ DASH', dashX + 26, dashY + 13);
+        if (!dashReady) {
+            // Cooldown arc
+            const cdFrac = 1 - player.dashCooldown / 90;
+            ctx.strokeStyle = '#44aaff';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(dashX + 38, dashY + 9, 7, -Math.PI / 2, -Math.PI / 2 + cdFrac * Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.textAlign = 'left';
         ctx.restore();
     }
 
@@ -4253,9 +4595,13 @@ function renderMenu() {
     drawPixelSprite(sx, 240, px, MUSHROOM_SPRITE);
     ctx.restore();
 
-    drawTitle("ENTER / Нажми — Начать", 400, 18, C.text);
-    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок", 428, 12, '#aaaaaa');
-    drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 447, 11, '#888888');
+    drawTitle("ENTER — Начать игру", 400, 18, C.text);
+    drawTitle("S — 🏟 Режим Выживания", 425, 16, '#ffaa44');
+    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
+    drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
+    if (survivalBestTime > 0) {
+        drawTitle(`Рекорд выживания: ${survivalBestTime} сек`, 482, 12, '#ffcc44');
+    }
 
     // Mini leaderboard on menu
     const board = loadLeaderboard();
@@ -4763,6 +5109,12 @@ function update() {
                 initAudio();
                 gameState = 'DIFFICULTY_SELECT';
             }
+            // Feature 68: S key starts survival mode
+            if (keys['KeyS'] && !keys['_sWas']) {
+                initAudio();
+                startSurvivalMode();
+            }
+            keys['_sWas'] = keys['KeyS'];
             break;
 
         case 'DIFFICULTY_SELECT': {
@@ -4882,9 +5234,47 @@ function update() {
             }
             keys['_muteWas'] = keys['KeyM'];
 
+            // Feature 69: Rage Mode — speed up remaining enemies when ≤3 left
+            {
+                const aliveNow = marios.filter(m => m.isAlive);
+                const wasRage = rageModeActive;
+                rageModeActive = aliveNow.length <= 3 && aliveNow.length > 0 && !isBossLevel;
+                if (rageModeActive && !wasRage) {
+                    rageModeWarningTimer = 120; // show warning 2 sec
+                    playSound('rage');
+                }
+                if (rageModeWarningTimer > 0) rageModeWarningTimer--;
+            }
+
+            // Feature 68: Survival Mode — spawn new waves and track time
+            if (survivalMode) {
+                survivalTimer++;
+                survivalWaveTimer--;
+                if (survivalWaveTimer <= 0) {
+                    survivalWave++;
+                    survivalWaveTimer = SURVIVAL_WAVE_INTERVAL;
+                    // Spawn a new wave of enemies (mix of types)
+                    const waveSpeed = (2.2 + survivalWave * 0.3) * (difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1);
+                    const waveSize = 2 + Math.floor(survivalWave / 2);
+                    const spawnXs = [80, 700, 380, 200, 600];
+                    for (let i = 0; i < waveSize; i++) {
+                        const sx = spawnXs[i % spawnXs.length];
+                        const types = ['normal', 'fast', 'jumpy', 'armored'];
+                        const t = types[Math.min(Math.floor(survivalWave / 2) + i % types.length, types.length - 1)];
+                        marios.push(new Mario(sx, 420, waveSpeed, t));
+                    }
+                    particles.push(new Particle(W / 2 - 50, H / 2 - 80, `ВОЛНА ${survivalWave}!`, '#ffaa00'));
+                    // Respawn some coins each wave
+                    const arena = SURVIVAL_ARENA;
+                    if (coins.filter(c => !c.collected).length < 3) {
+                        coins.push(...(arena.coinSpawns || []).slice(0, 3).map(c => new Coin(c.x, c.y)));
+                    }
+                }
+            }
+
             // Check level complete (boss level needs boss defeated, regular needs all marios dead)
             const bossCleared = !isBossLevel || bossMarco === null;
-            if (marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
+            if (!survivalMode && marios.filter(m => m.isAlive).length === 0 && marios.length === 0 && bossCleared) {
                 // Time bonus: max 3000 pts at <5s, scales to 0 at 60s
                 const elapsed = levelTimer / 60;
                 const timeBonusMult = difficulty === 'easy' ? 2.0 : difficulty === 'hard' ? 0.5 : difficulty === 'hardcore' ? 0 : 1.0;
