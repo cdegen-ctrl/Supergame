@@ -354,6 +354,8 @@ class Player extends Entity {
         this.magnetTimer = 0;
         // Freeze power-up (global freeze timer)
         this.freezeTimer = 0;
+        // Ghost power-up (Feature 54)
+        this.ghostTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
         this.wallJumpLockTimer = 0; // prevents re-triggering wall jump
@@ -456,8 +458,17 @@ class Player extends Entity {
         if (this.starTimer > 0) this.starTimer--;
         // speed boost timer
         if (this.speedBoostTimer > 0) this.speedBoostTimer--;
+        // Feature 53: afterimage trail when speed boost active
+        if (this.speedBoostTimer > 0 && this.animTimer % 3 === 0) {
+            afterimages.push({ x: this.x, y: this.y, scaleX: this.scaleX, scaleY: this.scaleY, facingRight: this.facingRight, alpha: 0.45 });
+            if (afterimages.length > 7) afterimages.shift();
+        } else if (this.speedBoostTimer <= 0 && afterimages.length > 0) {
+            afterimages = [];
+        }
         // magnet timer
         if (this.magnetTimer > 0) this.magnetTimer--;
+        // ghost timer (Feature 54)
+        if (this.ghostTimer > 0) this.ghostTimer--;
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
@@ -623,10 +634,27 @@ class Player extends Entity {
             ctx.restore();
         }
 
+        // Feature 54: Ghost mode aura
+        if (this.ghostTimer > 0) {
+            const hue = (this.ghostTimer * 2) % 360;
+            const pulse = 0.5 + Math.sin(this.ghostTimer * 0.08) * 0.2;
+            ctx.save();
+            ctx.globalAlpha = 0.35 * pulse;
+            ctx.strokeStyle = `hsl(${270 + hue * 0.2}, 100%, 70%)`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2, this.w * 0.75, this.h * 0.75, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         // 3D shadow
         drawShadow(this.x, this.y + this.h, this.w);
 
+        // Feature 54: Ghost mode — semi-transparent rendering
+        const ghostAlpha = this.ghostTimer > 0 ? 0.42 + Math.sin(this.ghostTimer * 0.1) * 0.08 : 1;
         ctx.save();
+        if (this.ghostTimer > 0) ctx.globalAlpha = ghostAlpha;
         const px = 2.5;
         const spriteW = 14 * px;
         const spriteH = 12 * px;
@@ -1089,6 +1117,7 @@ const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
 const MAGNET_DURATION = 420; // 7 seconds at 60fps
 const MAGNET_RADIUS = 180;
 const FREEZE_DURATION = 240; // 4 seconds at 60fps
+const GHOST_DURATION = 300; // Feature 54: 5 seconds at 60fps
 
 class Star {
     constructor(x, y) {
@@ -1573,6 +1602,75 @@ function checkFreezeCollisions() {
     freezes = freezes.filter(f => !f.collected);
 }
 
+// === FEATURE 54: GHOST POWER-UP ===
+class Ghost {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.75 + Math.sin(t * 0.1) * 0.25;
+
+        ctx.save();
+        // Purple glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(180, 100, 255, ${0.25 * pulse})`;
+        ctx.fill();
+        // Ghost body (teardrop shape)
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = `rgba(220, 200, 255, 0.9)`;
+        ctx.beginPath();
+        ctx.arc(cx, cy - 2, 9 * pulse, Math.PI, 0);
+        ctx.lineTo(cx + 9 * pulse, cy + 6 * pulse);
+        // Wavy bottom
+        ctx.quadraticCurveTo(cx + 6 * pulse, cy + 9 * pulse, cx + 3 * pulse, cy + 6 * pulse);
+        ctx.quadraticCurveTo(cx, cy + 10 * pulse, cx - 3 * pulse, cy + 6 * pulse);
+        ctx.quadraticCurveTo(cx - 6 * pulse, cy + 9 * pulse, cx - 9 * pulse, cy + 6 * pulse);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = `rgba(160, 80, 255, 0.6)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Eyes
+        ctx.fillStyle = '#6600cc';
+        ctx.beginPath();
+        ctx.ellipse(cx - 3 * pulse, cy - 3 * pulse, 2.5, 2, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx + 3 * pulse, cy - 3 * pulse, 2.5, 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+let ghosts = [];
+
+function checkGhostCollisions() {
+    for (const g of ghosts) {
+        if (g.collected) continue;
+        if (!aabb(player, g)) continue;
+        g.collected = true;
+        player.ghostTimer = GHOST_DURATION;
+        particles.push(new Particle(g.x - 10, g.y - 16, '👻 ПРИЗРАК!', '#cc88ff'));
+        playSound('ghost');
+    }
+    ghosts = ghosts.filter(g => !g.collected);
+}
+
+
 // === FIREBALL (Shooter enemy projectile) ===
 class Fireball {
     constructor(x, y, dir) {
@@ -1636,6 +1734,7 @@ let fireballs = [];
 
 function checkFireballCollisions() {
     if (!player) return;
+    if (player.ghostTimer > 0) { fireballs = fireballs.filter(fb => fb.alive); return; } // Feature 54: ghost passes through fireballs
     for (const fb of fireballs) {
         if (!fb.alive) continue;
         if (!aabb(player, fb)) continue;
@@ -2457,6 +2556,7 @@ const LEVELS = [
         magnetSpawns: [{ x: 130, y: 350 }],
         freezeSpawns: [{ x: 390, y: 205 }],
         portalSpawns: [{ blue: { x: 30, y: 415 }, orange: { x: 650, y: 415 } }],
+        ghostSpawns: [{ x: 270, y: 200 }],
     },
     {
         // Level 5: The gauntlet with moving platforms
@@ -2497,6 +2597,7 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 415 }],
         flyingMarioSpawns: [{ x: 120, y: 195 }, { x: 520, y: 175 }],
         shooterMarioSpawns: [{ x: 350, y: 90 }],
+        ghostSpawns: [{ x: 300, y: 95 }],
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -2541,6 +2642,7 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 165 }, { x: 550, y: 145 }],
         shooterMarioSpawns: [{ x: 450, y: 370 }],
+        ghostSpawns: [{ x: 490, y: 55 }],
     },
     {
         // Level 7: Chaos — all enemy types + max moving platforms
@@ -2588,6 +2690,7 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 150, y: 150 }, { x: 450, y: 135 }, { x: 620, y: 155 }],
         shooterMarioSpawns: [{ x: 100, y: 250 }, { x: 600, y: 230 }],
+        ghostSpawns: [{ x: 350, y: 65 }],
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -2642,6 +2745,7 @@ const LEVELS = [
         checkpointSpawns: [{ x: 395, y: 425 }],
         flyingMarioSpawns: [{ x: 200, y: 140 }, { x: 500, y: 125 }, { x: 380, y: 155 }],
         shooterMarioSpawns: [{ x: 310, y: 85 }, { x: 530, y: 265 }],
+        ghostSpawns: [{ x: 400, y: 85 }],
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -2669,6 +2773,7 @@ const LEVELS = [
         springSpawns: [{ x: 0, y: 446 }, { x: 740, y: 446 }],
         speedBoostSpawns: [{ x: 450, y: 225 }],
         magnetSpawns: [{ x: 280, y: 225 }],
+        ghostSpawns: [{ x: 340, y: 225 }],
     },
     {
         // Level 10: «Возмездие» — post-boss gauntlet with all enemy types
@@ -2736,6 +2841,7 @@ let particles = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let deathFlashTimer = 0; // red screen flash on player death
+let afterimages = []; // Feature 53: speed boost afterimage trail
 let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
 let comboDisplayTimer = 0;
@@ -2886,6 +2992,32 @@ function playSound(type) {
             gain.gain.linearRampToValueAtTime(0, now + 0.25);
             osc.start(now);
             osc.stop(now + 0.25);
+            break;
+        case 'ghost': // Feature 54: ghost mode pickup
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.linearRampToValueAtTime(400, now + 0.1);
+            osc.frequency.linearRampToValueAtTime(700, now + 0.2);
+            osc.frequency.linearRampToValueAtTime(300, now + 0.35);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0.08, now + 0.2);
+            gain.gain.linearRampToValueAtTime(0, now + 0.4);
+            osc.start(now);
+            osc.stop(now + 0.4);
+            break;
+        case 'victory': // Feature 58: victory fanfare
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(523, now);
+            osc.frequency.setValueAtTime(659, now + 0.12);
+            osc.frequency.setValueAtTime(784, now + 0.24);
+            osc.frequency.setValueAtTime(1046, now + 0.36);
+            osc.frequency.setValueAtTime(784, now + 0.52);
+            osc.frequency.setValueAtTime(1046, now + 0.62);
+            gain.gain.setValueAtTime(0.18, now);
+            gain.gain.setValueAtTime(0.18, now + 0.6);
+            gain.gain.linearRampToValueAtTime(0, now + 0.9);
+            osc.start(now);
+            osc.stop(now + 0.9);
             break;
     }
 }
@@ -3071,6 +3203,7 @@ function loadLevel(index) {
     speedBoosts = (lvl.speedBoostSpawns || []).map(s => new SpeedBoost(s.x, s.y));
     magnets = (lvl.magnetSpawns || []).map(m => new Magnet(m.x, m.y));
     freezes = (lvl.freezeSpawns || []).map(f => new Freeze(f.x, f.y));
+    ghosts = (lvl.ghostSpawns || []).map(g => new Ghost(g.x, g.y)); // Feature 54
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -3183,7 +3316,8 @@ function checkPlayerMarioCollisions() {
                 shakeIntensity = 3;
             }
         } else {
-            // Side hit
+            // Side hit — skip if ghost mode active (Feature 54)
+            if (player.ghostTimer > 0) continue;
             if (player.shieldActive) {
                 player.shieldActive = false;
                 player.shieldBreakTimer = 20;
@@ -3245,6 +3379,42 @@ function checkPlayerBossCollision() {
             player.die();
         }
     }
+}
+
+// === FEATURE 53: Afterimage trail ===
+function renderAfterimages() {
+    if (afterimages.length === 0) return;
+    const mc = getMushroomColors();
+    const px = 2.5;
+    const spriteW = 14 * px;
+    const spriteH = 12 * px;
+    afterimages.forEach((img, i) => {
+        const alpha = (i + 1) / afterimages.length * 0.42;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        // Tint green to match speed boost theme
+        ctx.filter = 'hue-rotate(90deg) saturate(2)';
+        const pivotX = img.x + 16;
+        const pivotY = img.y + 32;
+        ctx.translate(pivotX, pivotY);
+        ctx.scale(img.scaleX, img.scaleY);
+        ctx.translate(-pivotX, -pivotY);
+        const drawX = img.x + (32 - spriteW) / 2;
+        const drawY = img.y + (32 - spriteH);
+        const coloredSprite = MUSHROOM_SPRITE.map(row => row.map(cell => {
+            if (cell === C.mushroomCap) return mc.cap;
+            if (cell === C.mushroomCapLight) return mc.capLight;
+            return cell;
+        }));
+        if (!img.facingRight) {
+            ctx.translate(drawX + spriteW, drawY);
+            ctx.scale(-1, 1);
+            drawPixelSprite(0, 0, px, coloredSprite);
+        } else {
+            drawPixelSprite(drawX, drawY, px, coloredSprite);
+        }
+        ctx.restore();
+    });
 }
 
 // === 3D HELPERS ===
@@ -3559,6 +3729,30 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Ghost timer bar (Feature 54)
+    if (player && player.ghostTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0);
+        const frac = player.ghostTimer / GHOST_DURATION;
+        const hue = 270 + Math.sin(Date.now() * 0.004) * 30;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `hsl(${hue}, 80%, 65%)`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('👻 ПРИЗРАК', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Freeze timer bar
     if (player && player.freezeTimer > 0) {
         const barW = 140;
@@ -3567,7 +3761,8 @@ function drawHUD() {
         const barY = 68
             + (player.starTimer > 0 ? 18 : 0)
             + (player.speedBoostTimer > 0 ? 18 : 0)
-            + (player.magnetTimer > 0 ? 18 : 0);
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0);
         const frac = player.freezeTimer / FREEZE_DURATION;
         ctx.save();
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -4299,6 +4494,8 @@ function update() {
             checkMagnetCollisions();
             freezes = freezes.filter(f => f.update());
             checkFreezeCollisions();
+            ghosts = ghosts.filter(g => g.update()); // Feature 54
+            checkGhostCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
@@ -4465,11 +4662,13 @@ function render() {
             speedBoosts.forEach(sb => sb.render());
             magnets.forEach(m => m.render());
             freezes.forEach(f => f.render());
+            ghosts.forEach(g => g.render()); // Feature 54
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
             bombs.forEach(b => b.render());
             marios.forEach(m => m.render());
             if (bossMarco) bossMarco.render();
+            renderAfterimages(); // Feature 53: speed boost afterimage trail
             player.render();
             particles.forEach(p => p.render());
             // Feature 48: red flash overlay on player death
