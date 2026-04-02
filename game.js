@@ -546,6 +546,7 @@ class Player extends Entity {
     die() {
         this.lives--;
         levelDeathCount++;  // Feature 59: track per-level deaths
+        runStats.deaths++;  // Feature 63: track total deaths this run
         deathFlashTimer = 35;
         shakeTimer = 20;
         shakeIntensity = 10;
@@ -2445,9 +2446,9 @@ class Particle {
 }
 
 // === RUN STATISTICS ===
-let runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0 };
+let runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 }; // Feature 63: deaths counter
 function resetRunStats() {
-    runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0 };
+    runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 };
 }
 
 // === ACHIEVEMENT SYSTEM ===
@@ -3012,6 +3013,10 @@ const MUSHROOM_COLORS = [
     { name: 'Зелёный',   cap: '#20a030', capLight: '#44cc55' },
     { name: 'Жёлтый',    cap: '#ccaa00', capLight: '#ffdd22' },
     { name: 'Фиолетовый',cap: '#9020c0', capLight: '#cc55ee' },
+    // Feature 64: 3 new colors
+    { name: 'Оранжевый', cap: '#d04010', capLight: '#ff7733' },
+    { name: 'Розовый',   cap: '#cc2080', capLight: '#ff55bb' },
+    { name: 'Чёрный',    cap: '#111111', capLight: '#444444' },
 ];
 let mushroomColorIdx = parseInt(localStorage.getItem('mushroomColorIdx') || '0');
 function getMushroomColors() { return MUSHROOM_COLORS[mushroomColorIdx % MUSHROOM_COLORS.length]; }
@@ -4314,6 +4319,7 @@ function renderGameOver() {
         ['💰', 'Монет собрано', runStats.coinsCollected],
         ['🔥', 'Макс. комбо',   runStats.maxCombo],
         ['🏁', 'Уровней пройдено', runStats.levelsCleared],
+        ['💀', 'Смертей', runStats.deaths],  // Feature 63
     ];
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.beginPath();
@@ -4377,6 +4383,7 @@ function renderVictory() {
         ['💰', 'Монет собрано', runStats.coinsCollected],
         ['🔥', 'Макс. комбо',   runStats.maxCombo],
         ['🏁', 'Уровней пройдено', runStats.levelsCleared],
+        ['💀', 'Смертей', runStats.deaths],  // Feature 63
     ];
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
