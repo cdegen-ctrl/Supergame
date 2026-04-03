@@ -8,6 +8,7 @@ const W = 800;
 const H = 500;
 
 const GRAVITY = 0.5;
+let levelGravityMult = 1.0; // Feature 100: per-level gravity multiplier (1.0 = normal, <1 = low gravity)
 const MAX_FALL = 10;
 const PLAYER_SPEED = 3.5;
 const PLAYER_JUMP = -13.5;
@@ -459,6 +460,9 @@ class Player extends Entity {
         // Feature 87: Giant Mode power-up
         this.giantTimer = 0;
         this.ceilingLockPlatform = null;
+        // Feature 99: Jetpack power-up
+        this.jetpackTimer = 0;
+        this.jetpackThrust = false;
         this.ceilingLockTimer = 0;
         // Wall jump
         this.wallSlideDir = 0;      // -1 = left wall, 0 = none, 1 = right wall
@@ -588,9 +592,22 @@ class Player extends Entity {
         }
         jumpWasPressed = isJump();
 
-        // gravity
-        this.vy += GRAVITY;
-        if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+        // gravity (Feature 100: space level uses reduced gravity)
+        this.vy += GRAVITY * levelGravityMult;
+        if (this.vy > MAX_FALL * levelGravityMult) this.vy = MAX_FALL * levelGravityMult;
+
+        // Feature 99: Jetpack thrust — hold jump to fly up
+        if (this.jetpackTimer > 0) {
+            this.jetpackTimer--;
+            if (isJump() && !this.isGrounded) {
+                this.vy = Math.max(this.vy - 2.2, -9); // upward thrust
+                this.jetpackThrust = true;
+            } else {
+                this.jetpackThrust = false;
+            }
+        } else {
+            this.jetpackThrust = false;
+        }
 
         // Feature 85: Ceiling lock — override gravity, hold player to platform underside
         if (this.ceilingLocked) {
@@ -1032,7 +1049,7 @@ class Mario extends Entity {
             this.animTimer++;
             if (this.animTimer > 20) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
             // Apply gravity so it stays on platforms
-            this.vy += GRAVITY;
+            this.vy += GRAVITY * levelGravityMult;
             if (this.vy > MAX_FALL) this.vy = MAX_FALL;
             this.y += this.vy;
             this.resolveCollisionsY();
@@ -1055,7 +1072,7 @@ class Mario extends Entity {
             this.animTimer++;
             if (this.animTimer > 20) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
             // Apply gravity
-            this.vy += GRAVITY;
+            this.vy += GRAVITY * levelGravityMult;
             if (this.vy > MAX_FALL) this.vy = MAX_FALL;
             this.y += this.vy;
             this.resolveCollisionsY();
@@ -1146,7 +1163,7 @@ class Mario extends Entity {
         this.vx = this.speed * this.direction * slowMoMult;
 
         // gravity
-        this.vy += GRAVITY;
+        this.vy += GRAVITY * levelGravityMult;
         if (this.vy > MAX_FALL) this.vy = MAX_FALL;
 
         // animation
@@ -2574,6 +2591,107 @@ function renderRocketTrail() {
     ctx.restore();
 }
 
+// === FEATURE 99: JETPACK POWER-UP ===
+const JETPACK_DURATION = 300; // 5 seconds at 60fps
+
+class JetpackPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 24;
+        this.h = 24;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.12) * 0.15;
+
+        ctx.save();
+        // Outer glow (orange-red)
+        ctx.beginPath();
+        ctx.arc(cx, cy, 17 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 100, 0, ${0.28 * pulse})`;
+        ctx.fill();
+        // Body (drum shape)
+        ctx.fillStyle = '#cc5500';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 9 * pulse, 11 * pulse, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ff8800';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Flame nozzle at bottom
+        const flameH = 4 + Math.random() * 4;
+        const grad = ctx.createLinearGradient(cx, cy + 8, cx, cy + 8 + flameH);
+        grad.addColorStop(0, 'rgba(255,200,0,0.9)');
+        grad.addColorStop(1, 'rgba(255,60,0,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + 8 + flameH / 2, 5, flameH / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Icon
+        ctx.font = `${Math.round(13 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('🛸', cx, cy - 1);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let jetpacks = [];
+
+function checkJetpackCollisions() {
+    for (const j of jetpacks) {
+        if (j.collected) continue;
+        if (!aabb(player, j)) continue;
+        j.collected = true;
+        player.jetpackTimer = JETPACK_DURATION;
+        for (let i = 0; i < 10; i++) {
+            const angle = (Math.PI * 2 * i) / 10;
+            const spd = 2 + Math.random() * 3;
+            particles.push(new DeathParticle(
+                j.x + j.w / 2, j.y + j.h / 2,
+                Math.cos(angle) * spd, Math.sin(angle) * spd,
+                i % 2 === 0 ? '#ff8800' : '#ffdd00', 5
+            ));
+        }
+        particles.push(new Particle(j.x - 30, j.y - 16, '🛸 ДЖЕТПАК!', '#ff8800'));
+        playSound('levelup');
+    }
+    jetpacks = jetpacks.filter(j => !j.collected);
+}
+
+function renderJetpackFlame() {
+    if (!player || !player.jetpackThrust) return;
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h + 4;
+    ctx.save();
+    for (let i = 0; i < 5; i++) {
+        const ox = (Math.random() - 0.5) * 8;
+        const oy = Math.random() * 14;
+        const r = (4 + Math.random() * 5);
+        const alpha = 0.5 + Math.random() * 0.4;
+        ctx.beginPath();
+        ctx.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+        ctx.fillStyle = Math.random() > 0.4 ? `rgba(255,180,0,${alpha})` : `rgba(255,80,0,${alpha})`;
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
 // === MAGBOOTS POWER-UP (Feature 85) ===
 const MAG_BOOTS_DURATION = 180; // 3 seconds
 
@@ -3303,7 +3421,7 @@ class BossMarco extends Entity {
         this.vx = this.speed * speedMult * this.direction;
 
         // Gravity
-        this.vy += GRAVITY;
+        this.vy += GRAVITY * levelGravityMult;
         if (this.vy > MAX_FALL) this.vy = MAX_FALL;
 
         // Animation
@@ -3741,6 +3859,7 @@ const LEVELS = [
         electroSpawns: [{ x: 460, y: 205 }], // Feature 72
         slowMoSpawns: [{ x: 210, y: 350 }], // Feature 75
         giantSpawns: [{ x: 670, y: 350 }], // Feature 87
+        jetpackSpawns: [{ x: 350, y: 295 }], // Feature 99
     },
     {
         // Level 5: The gauntlet with moving + crumbling platforms
@@ -3788,6 +3907,7 @@ const LEVELS = [
         slowMoSpawns: [{ x: 160, y: 235 }], // Feature 75
         rocketSpawns: [{ x: 520, y: 105 }], // Feature 80
         giantSpawns: [{ x: 300, y: 105 }], // Feature 87
+        jetpackSpawns: [{ x: 400, y: 200 }], // Feature 99
         spikeSpawns: [{ x: 130, y: 444, count: 2 }, { x: 310, y: 444, count: 2 }], // Feature 91
         tripleCoinSpawns: [{ x: 400, y: 95 }], // Feature 92
     },
@@ -3895,6 +4015,7 @@ const LEVELS = [
         electroSpawns: [{ x: 300, y: 65 }], // Feature 72
         rocketSpawns: [{ x: 640, y: 155 }], // Feature 80
         giantSpawns: [{ x: 170, y: 200 }], // Feature 87
+        jetpackSpawns: [{ x: 380, y: 155 }], // Feature 99
         spikeSpawns: [{ x: 0, y: 444, count: 3 }, { x: 680, y: 444, count: 3 }], // Feature 91
         tripleCoinSpawns: [{ x: 380, y: 65 }], // Feature 92
     },
@@ -4409,6 +4530,69 @@ const LEVELS = [
             { blue: { x: 450, y: 420 }, orange: { x: 160, y: 130 } },
         ],
         spikeSpawns: [{ x: 52, y: 444, count: 3 }, { x: 360, y: 444, count: 2 }, { x: 620, y: 444, count: 3 }], // Feature 91
+    },
+    // === FEATURE 100: LEVEL 16 — КОСМОС (Space) ===
+    {
+        name: 'Космос',
+        lowGravity: true, // Feature 100: reduced gravity
+        platforms: [
+            { x: 0,   y: 460, w: 800, h: 40 },           // ground
+            { x: 80,  y: 380, w: 120, h: 14 },
+            { x: 270, y: 360, w: 100, h: 14 },
+            { x: 450, y: 380, w: 110, h: 14 },
+            { x: 620, y: 360, w: 130, h: 14 },
+            { x: 160, y: 285, w: 110, h: 14, moving: true, moveAxis: 'x', moveRange: 80, moveSpeed: 1.2 },
+            { x: 370, y: 270, w: 110, h: 14, moving: true, moveAxis: 'x', moveRange: 80, moveSpeed: -1.4 },
+            { x: 560, y: 285, w: 110, h: 14, moving: true, moveAxis: 'y', moveRange: 40, moveSpeed: 1.1 },
+            { x: 90,  y: 195, w: 100, h: 14 },
+            { x: 310, y: 180, w: 110, h: 14 },
+            { x: 540, y: 200, w: 100, h: 14 },
+            { x: 680, y: 185, w: 80,  h: 14 },
+            { x: 200, y: 100, w: 120, h: 14, ice: true },
+            { x: 420, y: 90,  w: 130, h: 14, ice: true },
+            { x: 620, y: 100, w: 80,  h: 14 },
+        ],
+        marioSpawns: [
+            { x: 100, y: 430 }, { x: 350, y: 430 }, { x: 600, y: 430 },
+            { x: 160, y: 250 }, { x: 540, y: 250 },
+        ],
+        marioTypes: ['fast', 'ghost_mario', 'teleporter', 'ghost_mario', 'armored'],
+        marioSpeed: 2.4,
+        playerSpawn: { x: 30, y: 430 },
+        coinSpawns: [
+            { x: 100, y: 435 }, { x: 350, y: 435 }, { x: 610, y: 435 },
+            { x: 100, y: 350 }, { x: 300, y: 335 }, { x: 490, y: 350 }, { x: 660, y: 335 },
+            { x: 175, y: 255 }, { x: 390, y: 240 }, { x: 590, y: 255 },
+            { x: 120, y: 165 }, { x: 345, y: 150 }, { x: 565, y: 170 }, { x: 700, y: 155 },
+            { x: 240, y: 70  }, { x: 450, y: 60  }, { x: 650, y: 70  },
+        ],
+        doubleCoinSpawns: [
+            { x: 250, y: 70 }, { x: 490, y: 60 },
+        ],
+        tripleCoinSpawns: [{ x: 480, y: 58 }],
+        starSpawns:       [{ x: 220, y: 68 }, { x: 640, y: 68 }],
+        shieldSpawns:     [{ x: 80,  y: 445 }, { x: 680, y: 445 }],
+        bombSpawns:       [{ x: 310, y: 248 }, { x: 555, y: 168 }],
+        springSpawns:     [{ x: 80,  y: 446 }],
+        speedBoostSpawns: [{ x: 380, y: 248 }],
+        magnetSpawns:     [{ x: 460, y: 58  }],
+        freezeSpawns:     [{ x: 95,  y: 163 }, { x: 555, y: 168 }],
+        ghostSpawns:      [{ x: 500, y: 58  }],
+        electroSpawns:    [{ x: 350, y: 148 }],
+        slowMoSpawns:     [{ x: 640, y: 98  }],
+        rocketSpawns:     [{ x: 200, y: 68  }, { x: 420, y: 58  }], // Feature 80
+        magBootsSpawns:   [{ x: 440, y: 58  }], // Feature 85
+        giantSpawns:      [{ x: 240, y: 68  }, { x: 600, y: 68  }], // Feature 87
+        jetpackSpawns:    [{ x: 330, y: 68  }, { x: 570, y: 68  }], // Feature 99
+        scoreBoostSpawns: [{ x: 680, y: 68  }],
+        checkpointSpawns: [{ x: 380, y: 435 }],
+        flyingMarioSpawns:     [{ x: 200, y: 140 }, { x: 460, y: 125 }, { x: 680, y: 145 }],
+        teleporterMarioSpawns: [{ x: 320, y: 430 }, { x: 630, y: 425 }],
+        parachuteMarioSpawns:  [{ x: 150, y: -60 }, { x: 450, y: -80 }, { x: 700, y: -50 }],
+        spikeSpawns: [{ x: 200, y: 444, count: 2 }, { x: 500, y: 444, count: 3 }],
+        portalSpawns: [
+            { blue: { x: 10, y: 420 }, orange: { x: 400, y: 58 } },
+        ],
     }
 ];
 
@@ -4445,7 +4629,7 @@ class DroppedPowerup {
         this.animTimer++;
 
         if (!this.grounded) {
-            this.vy += GRAVITY;
+            this.vy += GRAVITY * levelGravityMult;
             if (this.vy > MAX_FALL) this.vy = MAX_FALL;
             this.x += this.vx;
             this.y += this.vy;
@@ -5160,6 +5344,7 @@ function mirrorLevelData(lvl) {
         rocketSpawns:         (lvl.rocketSpawns         || []).map(msp),
         magBootsSpawns:       (lvl.magBootsSpawns       || []).map(msp), // Feature 85
         giantSpawns:          (lvl.giantSpawns          || []).map(msp), // Feature 87
+        jetpackSpawns:        (lvl.jetpackSpawns        || []).map(msp), // Feature 99
         checkpointSpawns:     (lvl.checkpointSpawns     || []).map(msp),
         flyingMarioSpawns:    (lvl.flyingMarioSpawns    || []).map(msp),
         shooterMarioSpawns:   (lvl.shooterMarioSpawns   || []).map(msp),
@@ -5175,6 +5360,8 @@ function mirrorLevelData(lvl) {
 function loadLevel(index) {
     rageModeActive = false; // Feature 69: reset rage on level change
     rageModeWarningTimer = 0;
+    const rawLvl0 = LEVELS[index < LEVELS.length ? index : (index % LEVELS.length)];
+    levelGravityMult = rawLvl0.lowGravity ? 0.38 : 1.0; // Feature 100: space level low gravity
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
     const rawLvl = LEVELS[lvlIndex];
     // Feature 81: apply horizontal mirror if mode is active
@@ -5271,6 +5458,7 @@ function loadLevel(index) {
     rockets = (lvl.rocketSpawns || []).map(r => new RocketPU(r.x, r.y)); // Feature 80
     magBootsList = (lvl.magBootsSpawns || []).map(m => new MagBootsPU(m.x, m.y)); // Feature 85
     giantPUs = (lvl.giantSpawns || []).map(g => new GiantPU(g.x, g.y)); // Feature 87
+    jetpacks = (lvl.jetpackSpawns || []).map(j => new JetpackPU(j.x, j.y)); // Feature 99
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -5719,6 +5907,54 @@ function prlx(factor) {
 }
 
 function drawBackground() {
+    // Feature 100: Space background for Cosmos level
+    if (gameState === 'PLAYING' && currentLevel === LEVELS.length - 1 && LEVELS[currentLevel].lowGravity) {
+        const spaceGrad = ctx.createLinearGradient(0, 0, 0, H);
+        spaceGrad.addColorStop(0, '#000010');
+        spaceGrad.addColorStop(0.6, '#050025');
+        spaceGrad.addColorStop(1, '#0a0535');
+        ctx.fillStyle = spaceGrad;
+        ctx.fillRect(0, 0, W, H);
+        // Stars
+        const t = Date.now() * 0.001;
+        ctx.save();
+        for (let i = 0; i < 80; i++) {
+            const sx = (i * 137.5 + 17) % W;
+            const sy = (i * 73.1 + 11) % (H * 0.85);
+            const pulse = 0.4 + Math.abs(Math.sin(t * 0.9 + i * 1.3)) * 0.6;
+            ctx.globalAlpha = pulse;
+            ctx.fillStyle = i % 5 === 0 ? '#aaddff' : i % 7 === 0 ? '#ffddaa' : '#ffffff';
+            ctx.fillRect(sx, sy, i % 4 === 0 ? 2 : 1, i % 4 === 0 ? 2 : 1);
+        }
+        // Distant planet
+        ctx.globalAlpha = 0.18;
+        ctx.beginPath();
+        ctx.arc(680, 80, 55, 0, Math.PI * 2);
+        ctx.fillStyle = '#4466cc';
+        ctx.fill();
+        ctx.globalAlpha = 0.08;
+        ctx.beginPath();
+        ctx.arc(680, 80, 72, 0, Math.PI * 2);
+        ctx.strokeStyle = '#aabbff';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        // 🚀 indicator
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(100,200,255,0.35)';
+        ctx.fillText('⚠ ПОНИЖЕННАЯ ГРАВИТАЦИЯ', W / 2, 20);
+        ctx.textAlign = 'left';
+        ctx.restore();
+        // Ground
+        const groundGrad = ctx.createLinearGradient(0, 440, 0, H);
+        groundGrad.addColorStop(0, '#1a1a3a');
+        groundGrad.addColorStop(1, '#0a0a20');
+        ctx.fillStyle = groundGrad;
+        ctx.fillRect(0, 440, W, H - 440);
+        return;
+    }
+
     // Feature 82: Cave background for bonus level
     if (coinCaveMode) {
         const caveGrad = ctx.createLinearGradient(0, 0, 0, H);
@@ -6300,6 +6536,38 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffaa66';
         ctx.fillText('🔴 ГИГАНТ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 99: Jetpack timer bar
+    if (player && player.jetpackTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0);
+        const frac = player.jetpackTimer / JETPACK_DURATION;
+        const thrustColor = player.jetpackThrust ? `rgba(255,180,0,0.9)` : `rgba(200,100,0,0.75)`;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = thrustColor;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffcc88';
+        ctx.fillText(player.jetpackThrust ? '🛸 ДЖЕТПАК ▲' : '🛸 ДЖЕТПАК', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -7302,7 +7570,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос'];
     if (selectedLevelIdx < unlockedLevels) {
         const nameColor = selectedLevelIdx === COIN_CAVE_LEVEL_INDEX ? '#ffd700' : '#88ffaa';
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, nameColor);
@@ -7594,6 +7862,8 @@ function update() {
             giantPUs = giantPUs.filter(g => g.update()); // Feature 87
             checkGiantPUCollisions();
             checkRocketCollisions();
+            jetpacks = jetpacks.filter(j => j.update()); // Feature 99
+            checkJetpackCollisions();
             droppedPowerups = droppedPowerups.filter(dp => dp.update()); // Feature 77
             checkDroppedPowerupCollisions();
             fireballs = fireballs.filter(fb => fb.update());
@@ -7953,7 +8223,9 @@ function render() {
             if (bossMarco) bossMarco.render();
             renderAfterimages(); // Feature 53: speed boost afterimage trail
             renderRocketTrail(); // Feature 80: rocket flame trail
+            renderJetpackFlame(); // Feature 99: jetpack thrust flame
             renderMagBootsEffect(); // Feature 85: mag boots aura
+            jetpacks.forEach(j => j.render()); // Feature 99: jetpack items
             player.render();
             particles.forEach(p => p.render());
             scorePopups.forEach(p => p.render()); // Feature 88
