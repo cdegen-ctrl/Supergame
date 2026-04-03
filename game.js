@@ -54,7 +54,7 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // === TOUCH INPUT ===
-const touchKeys = { left: false, right: false, jump: false };
+const touchKeys = { left: false, right: false, jump: false, throw: false };
 
 function setupTouchControls() {
     const btnLeft  = document.getElementById('btn-left');
@@ -82,6 +82,9 @@ function setupTouchControls() {
     bindBtn(btnLeft,  'left');
     bindBtn(btnRight, 'right');
     bindBtn(btnJump,  'jump');
+    // Feature 101: Spore throw button
+    const btnThrow = document.getElementById('btn-throw');
+    if (btnThrow) bindBtn(btnThrow, 'throw');
 
     // Tap on canvas to interact with menus
     let touchStartX = 0;
@@ -129,8 +132,13 @@ canvas.addEventListener('click', e => {
 function isLeft()   { return keys['ArrowLeft']  || keys['KeyA'] || touchKeys.left; }
 function isRight()  { return keys['ArrowRight'] || keys['KeyD'] || touchKeys.right; }
 function isJump()   { return keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchKeys.jump; }
+function isThrow()  { return keys['KeyZ'] || touchKeys.throw; } // Feature 101: Spore throw
 function isEnter()  { return keys['Enter']; }
 function isEscape() { return keys['Escape']; }
+
+// === FEATURE 101: SPORE THROW CONSTANT ===
+const SPORE_REGEN_TIME = 480; // 8 seconds per ammo at 60fps
+const CONVEYOR_SPEED = 1.6;   // Feature 102: conveyor push velocity
 
 // === UTILITY ===
 function aabb(a, b) {
@@ -205,7 +213,7 @@ class Entity {
 }
 
 class Platform extends Entity {
-    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumble, ice) {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumble, ice, conveyor) {
         super(x, y, w, h);
         // Moving platform support
         this.moveAxis = moveAxis || null;   // 'x' | 'y' | null
@@ -223,6 +231,8 @@ class Platform extends Entity {
         this.crumbleDy = 0;
         // Feature 67: Ice platform
         this.ice = !!ice;
+        // Feature 102: Conveyor belt direction (-1=left, 0=none, 1=right)
+        this.conveyor = conveyor || 0;
     }
 
     update() {
@@ -409,6 +419,34 @@ class Platform extends Entity {
             ctx.fillText(label, this.x + this.w / 2, this.y + this.h / 2 + 4);
         }
 
+        // Feature 102: Conveyor belt — animated direction strips
+        if (this.conveyor) {
+            const stripeW = 10;
+            const gap = 10;
+            const pitch = stripeW + gap;
+            const t = Math.floor(Date.now() / 45) * this.conveyor;
+            const offset = ((t % pitch) + pitch) % pitch;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+            ctx.clip();
+            ctx.globalAlpha = 0.52;
+            for (let sx = this.x - pitch + offset; sx < this.x + this.w + pitch; sx += pitch) {
+                ctx.fillStyle = this.conveyor > 0 ? '#dd8822' : '#2288dd';
+                ctx.fillRect(sx, this.y + 1, stripeW, this.h - 2);
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
+            // Direction label
+            ctx.save();
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = this.conveyor > 0 ? '#ffcc55' : '#55ccff';
+            ctx.fillText(this.conveyor > 0 ? '►' : '◄', this.x + this.w / 2, this.y + this.h / 2 + 4);
+            ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
         ctx.restore();
     }
 }
@@ -480,6 +518,16 @@ class Player extends Entity {
         this.shiftWasDown = false;
         // Feature 67: Ice platform tracking
         this.isOnIce = false;
+        // Feature 101: Spore Throw
+        this.sporeAmmo = 3;
+        this.sporeAmmoTimer = 0;
+        this.throwWasDown = false;
+        // Feature 102: Conveyor belt push (set each frame in resolveCollisionsY)
+        this.conveyorPush = 0;
+        // Feature 104: Parachute Glide
+        this.parachuting = false;
+        // Feature 105: Flashlight power-up timer
+        this.flashlightTimer = 0;
     }
 
     update() {
@@ -542,7 +590,31 @@ class Player extends Entity {
             if (leftDown)       { this.vx = -currentSpeed; this.facingRight = false; }
             else if (rightDown) { this.vx =  currentSpeed; this.facingRight = true; }
             else                { this.vx = 0; }
+            // Feature 102: Conveyor belt push (additive, from previous frame's resolveCollisionsY)
+            if (this.isGrounded && this.conveyorPush !== 0) {
+                this.vx += this.conveyorPush;
+                this.vx = Math.max(-currentSpeed * 1.8, Math.min(currentSpeed * 1.8, this.vx));
+            }
         }
+
+        // Feature 101: Spore Throw ammo regen + throw action
+        if (this.sporeAmmoTimer > 0) this.sporeAmmoTimer--;
+        if (this.sporeAmmoTimer <= 0 && this.sporeAmmo < 3) {
+            this.sporeAmmo++;
+            this.sporeAmmoTimer = this.sporeAmmo < 3 ? SPORE_REGEN_TIME : 0;
+        }
+        const throwDown = isThrow();
+        if (throwDown && !this.throwWasDown && this.sporeAmmo > 0) {
+            this.sporeAmmo--;
+            this.sporeAmmoTimer = SPORE_REGEN_TIME;
+            const dir = this.facingRight ? 1 : -1;
+            spores.push(new Spore(this.x + (dir > 0 ? this.w - 2 : -8), this.y + this.h * 0.35, dir));
+            playSound('coin');
+        }
+        this.throwWasDown = throwDown;
+
+        // Feature 105: Flashlight timer countdown
+        if (this.flashlightTimer > 0) this.flashlightTimer--;
 
         // jump (only on press, not hold) — supports double jump + wall jump + ceiling detach
         if (isJump() && !jumpWasPressed) {
@@ -595,6 +667,15 @@ class Player extends Entity {
         // gravity (Feature 100: space level uses reduced gravity)
         this.vy += GRAVITY * levelGravityMult;
         if (this.vy > MAX_FALL * levelGravityMult) this.vy = MAX_FALL * levelGravityMult;
+
+        // Feature 104: Parachute Glide — hold DOWN while falling to slow descent
+        const downHeld = !!(keys['ArrowDown'] || keys['KeyS']);
+        if (!this.isGrounded && this.vy > 1.5 && downHeld && this.jetpackTimer <= 0 && !this.ceilingLocked) {
+            this.parachuting = true;
+            this.vy = Math.min(this.vy, 1.8);
+        } else {
+            this.parachuting = false;
+        }
 
         // Feature 99: Jetpack thrust — hold jump to fly up
         if (this.jetpackTimer > 0) {
@@ -741,7 +822,8 @@ class Player extends Entity {
     }
 
     resolveCollisionsY() {
-        this.isOnIce = false; // reset; set below if landing on ice platform
+        this.isOnIce = false;    // reset; set below if landing on ice platform
+        this.conveyorPush = 0;   // Feature 102: reset; set below if on conveyor
         for (const p of platforms) {
             // Feature 66: skip falling/respawning crumble platforms
             if (p.crumble && (p.crumbleState === 'falling' || p.crumbleState === 'respawning')) continue;
@@ -765,6 +847,8 @@ class Player extends Entity {
                     }
                     // Feature 67: detect ice platform
                     if (p.ice) this.isOnIce = true;
+                    // Feature 102: detect conveyor belt
+                    if (p.conveyor) this.conveyorPush = p.conveyor * CONVEYOR_SPEED;
                 } else if (this.vy < 0) {
                     this.y = p.y + p.h;
                     this.vy = 0;
@@ -990,15 +1074,50 @@ class Player extends Entity {
             drawPixelSprite(drawX, drawY, px, coloredSprite);
         }
         ctx.restore();
+
+        // Feature 104: Parachute Glide — draw parachute above player
+        if (this.parachuting) {
+            const pcx = this.x + this.w / 2;
+            const pcy = this.y - 28;
+            ctx.save();
+            // Canopy (semicircle)
+            ctx.beginPath();
+            ctx.arc(pcx, pcy, 24, Math.PI, 0);
+            ctx.closePath();
+            ctx.fillStyle = '#e06020';
+            ctx.globalAlpha = 0.88;
+            ctx.fill();
+            ctx.strokeStyle = '#ffffcc';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            // Alternating panel
+            ctx.beginPath();
+            ctx.moveTo(pcx - 12, pcy);
+            ctx.arc(pcx, pcy, 12, Math.PI, 0);
+            ctx.closePath();
+            ctx.fillStyle = '#fff8cc';
+            ctx.globalAlpha = 0.7;
+            ctx.fill();
+            // Strings to player
+            ctx.globalAlpha = 0.7;
+            ctx.strokeStyle = '#ccccaa';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pcx - 22, pcy + 2); ctx.lineTo(this.x + 5, this.y);
+            ctx.moveTo(pcx, pcy + 2);      ctx.lineTo(this.x + this.w / 2, this.y);
+            ctx.moveTo(pcx + 22, pcy + 2); ctx.lineTo(this.x + this.w - 5, this.y);
+            ctx.stroke();
+            ctx.restore();
+        }
     }
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter' | 'teleporter'
+    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter' | 'teleporter' | 'berserker'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.baseSpeed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : (type === 'shooter' || type === 'teleporter') ? 0 : speed;
+        this.baseSpeed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'berserker' ? speed * 0.75 : (type === 'shooter' || type === 'teleporter') ? 0 : speed;
         this.speed = this.baseSpeed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
@@ -1006,7 +1125,9 @@ class Mario extends Entity {
         this.squishScale = 1;
         this.animFrame = 0;
         this.animTimer = 0;
-        this.armor = type === 'armored' ? 1 : 0;
+        this.armor = (type === 'armored' || type === 'berserker') ? 1 : 0;
+        // Feature 103: Berserker rage state
+        this.berserkerRage = false;
         // jumpy: timer until next jump
         this.jumpTimer = type === 'jumpy' ? 60 + Math.floor(Math.random() * 80) : 9999;
         // flying: fixed altitude
@@ -1190,6 +1311,11 @@ class Mario extends Entity {
             }
         }
 
+        // Feature 103: Berserker rage — actively chase player
+        if (this.type === 'berserker' && this.berserkerRage && player) {
+            this.direction = player.x + player.w / 2 < this.x + this.w / 2 ? -1 : 1;
+        }
+
         // reverse if hitting canvas bounds
         if (this.x <= 0 || this.x + this.w >= W) {
             this.direction *= -1;
@@ -1248,6 +1374,13 @@ class Mario extends Entity {
     stomp() {
         if (this.armor > 0) {
             this.armor--;
+            // Feature 103: Berserker — enters rage after losing armor
+            if (this.type === 'berserker') {
+                this.berserkerRage = true;
+                this.speed = this.baseSpeed * 3.2;
+                this.baseSpeed = this.speed;
+                particles.push(new Particle(this.x, this.y - 10, '😡 ЯРОСТЬ!', '#ff3300'));
+            }
             spawnDeathParticles(this.x, this.y, this.w / 2, this.h / 2);
             playSound('stomp');
             return false; // survived — armor absorbed hit
@@ -1386,8 +1519,36 @@ class Mario extends Entity {
                 ctx.fillText('⚡', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#44aaff';
                 ctx.fillText('⚡', badgeX, badgeY);
+            } else if (this.type === 'berserker') {
+                ctx.fillStyle = '#000';
+                ctx.fillText(this.berserkerRage ? '😡' : '😤', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = this.berserkerRage ? '#ff2200' : '#aa6600';
+                ctx.fillText(this.berserkerRage ? '😡' : '😤', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        // Feature 103: Berserker dark tint + rage aura
+        if (this.isAlive && this.type === 'berserker') {
+            ctx.save();
+            // Dark purple tint overlay
+            ctx.globalAlpha = 0.38;
+            ctx.fillStyle = '#330022';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            if (this.berserkerRage) {
+                // Rage flame aura
+                const pulse = 0.35 + Math.abs(Math.sin(Date.now() * 0.014)) * 0.55;
+                ctx.globalAlpha = pulse;
+                ctx.strokeStyle = '#ff2200';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(this.x - 4, this.y - 4, this.w + 8, this.h + 8, 4);
+                ctx.stroke();
+                ctx.globalAlpha = pulse * 0.22;
+                ctx.fillStyle = '#ff4400';
+                ctx.fillRect(this.x - 4, this.y - 4, this.w + 8, this.h + 8);
+            }
             ctx.restore();
         }
 
@@ -2965,6 +3126,180 @@ class Fireball {
 
 let fireballs = [];
 
+// === FEATURE 101: SPORE PROJECTILE ===
+class Spore {
+    constructor(x, y, dir) {
+        this.x = x;
+        this.y = y;
+        this.w = 10;
+        this.h = 10;
+        this.vx = dir * 7.5;
+        this.vy = -0.8;
+        this.alive = true;
+        this.animTimer = 0;
+    }
+
+    update() {
+        this.animTimer++;
+        this.x += this.vx;
+        this.vy += 0.12;
+        this.y += this.vy;
+        if (this.x < -20 || this.x > W + 20 || this.y > H + 20 || this.y < -50) { this.alive = false; return false; }
+        for (const p of platforms) {
+            if (aabb(this, p)) { this.alive = false; return false; }
+        }
+        return this.alive;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const pulse = 0.85 + Math.sin(t * 0.35) * 0.15;
+        const cx = this.x + 5;
+        const cy = this.y + 5;
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(80, 220, 40, 0.28)';
+        ctx.fill();
+        // Main spore body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = t % 6 < 3 ? '#44cc22' : '#66ee44';
+        ctx.fill();
+        // White highlight
+        ctx.beginPath();
+        ctx.arc(cx - 1.5, cy - 1.5, 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = '#ccffbb';
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+let spores = [];
+
+function checkSporeCollisions() {
+    if (!player) return;
+    for (const s of spores) {
+        if (!s.alive) continue;
+        for (const mario of marios) {
+            if (!mario.isAlive) continue;
+            if (!aabb(s, mario)) continue;
+            s.alive = false;
+            const killed = mario.stomp();
+            if (killed) {
+                runStats.enemiesKilled++;
+                onEnemyKilledStreak(mario.x, mario.y);
+                comboCount++;
+                let pts = 100 * comboCount;
+                if (player.scoreBoostTimer > 0) pts *= 2;
+                player.score += pts;
+                totalScore += pts;
+                comboDisplayTimer = 100;
+                if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
+                particles.push(new Particle(mario.x, mario.y - 10, `🍄 +${pts}`, '#44cc22'));
+                addScorePopup(mario.x, mario.y - 15, pts);
+            } else {
+                particles.push(new Particle(mario.x, mario.y - 10, '💥 ОГЛУШЁН!', '#88ff44'));
+            }
+            break;
+        }
+    }
+    spores = spores.filter(s => s.alive);
+}
+
+// === FEATURE 105: FLASHLIGHT POWER-UP ===
+const FLASHLIGHT_DURATION = 1200; // 20 seconds at 60fps
+
+class FlashlightPU {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 20; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        if (this.collected) return false;
+        this.animTimer++;
+        return true;
+    }
+
+    render() {
+        if (this.collected) return;
+        const bob = Math.sin(this.animTimer * 0.07) * 3;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.82 + Math.sin(this.animTimer * 0.13) * 0.18;
+        ctx.save();
+        // Glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 15 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 230, 80, 0.28)';
+        ctx.fill();
+        // Body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = '#cc9900';
+        ctx.fill();
+        ctx.strokeStyle = '#ffee44';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Icon
+        ctx.font = `bold ${Math.round(9 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffcc';
+        ctx.fillText('🔦', cx, cy + 3);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let flashlights = [];
+
+function checkFlashlightCollisions() {
+    if (!player) return;
+    for (const fl of flashlights) {
+        if (fl.collected) continue;
+        if (!aabb(player, fl)) continue;
+        fl.collected = true;
+        player.flashlightTimer = FLASHLIGHT_DURATION;
+        particles.push(new Particle(fl.x, fl.y - 10, '🔦 ФОНАРЬ!', '#ffdd44'));
+        playSound('levelup');
+    }
+    flashlights = flashlights.filter(fl => !fl.collected);
+}
+
+function renderFlashlightEffect() {
+    if (!player || player.flashlightTimer <= 0) return;
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h / 2;
+    const radius = 140 + Math.sin(Date.now() * 0.003) * 8;
+    // Dark overlay with radial gradient hole around player
+    ctx.save();
+    // Draw solid dark overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.80)';
+    ctx.fillRect(0, 0, W, H);
+    // Carve light hole using destination-out composite operation
+    ctx.globalCompositeOperation = 'destination-out';
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.55, 'rgba(0,0,0,0.9)');
+    grad.addColorStop(0.85, 'rgba(0,0,0,0.4)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+    // Warm light tint inside the radius
+    ctx.save();
+    const warmGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.6);
+    warmGrad.addColorStop(0, 'rgba(255, 220, 120, 0.07)');
+    warmGrad.addColorStop(1, 'rgba(255, 180, 60, 0)');
+    ctx.fillStyle = warmGrad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+}
+
 function checkFireballCollisions() {
     if (!player) return;
     if (player.ghostTimer > 0) { fireballs = fireballs.filter(fb => fb.alive); return; } // Feature 54: ghost passes through fireballs
@@ -3862,12 +4197,12 @@ const LEVELS = [
         jetpackSpawns: [{ x: 350, y: 295 }], // Feature 99
     },
     {
-        // Level 5: The gauntlet with moving + crumbling platforms
+        // Level 5: The gauntlet with moving + crumbling + conveyor platforms
         platforms: [
             { x: 0, y: 460, w: 120, h: 40 },
-            { x: 180, y: 460, w: 120, h: 40 },
+            { x: 180, y: 460, w: 120, h: 40, conveyor: 1 },  // Feature 102: right conveyor
             { x: 360, y: 460, w: 120, h: 40 },
-            { x: 540, y: 460, w: 120, h: 40 },
+            { x: 540, y: 460, w: 120, h: 40, conveyor: -1 }, // Feature 102: left conveyor
             { x: 700, y: 460, w: 100, h: 40 },
             { x: 80, y: 380, w: 100, h: 20, moveAxis: 'x', moveRange: 60, moveSpeed: 1.4 },
             { x: 260, y: 355, w: 100, h: 20, crumble: true }, // Feature 66
@@ -4593,6 +4928,78 @@ const LEVELS = [
         portalSpawns: [
             { blue: { x: 10, y: 420 }, orange: { x: 400, y: 58 } },
         ],
+    },
+    // === FEATURE 106: LEVEL 17 — ПОДЗЕМЕЛЬЕ (Underground) ===
+    {
+        name: 'Подземелье',
+        isUnderground: true,
+        platforms: [
+            // Bottom tier — main floor gaps
+            { x: 0,   y: 460, w: 130, h: 40 },
+            { x: 180, y: 460, w: 110, h: 40 },
+            { x: 350, y: 460, w: 100, h: 40 },
+            { x: 510, y: 460, w: 120, h: 40 },
+            { x: 690, y: 460, w: 110, h: 40 },
+            // Conveyor belt platforms — mid tier
+            { x: 80,  y: 380, w: 110, h: 18, conveyor:  1 },   // right conveyor
+            { x: 260, y: 360, w: 110, h: 18, conveyor: -1 },   // left conveyor
+            { x: 440, y: 380, w: 110, h: 18, conveyor:  1 },   // right conveyor
+            { x: 620, y: 360, w: 120, h: 18, conveyor: -1 },   // left conveyor
+            // Regular platforms — upper-mid
+            { x: 30,  y: 290, w: 100, h: 18 },
+            { x: 195, y: 275, w: 100, h: 18, crumble: true },
+            { x: 360, y: 295, w: 100, h: 18 },
+            { x: 525, y: 275, w: 100, h: 18, crumble: true },
+            { x: 680, y: 290, w: 90,  h: 18 },
+            // More conveyors — second set
+            { x: 110, y: 200, w: 120, h: 18, conveyor: -1 },
+            { x: 340, y: 185, w: 120, h: 18, conveyor:  1 },
+            { x: 565, y: 200, w: 120, h: 18, conveyor: -1 },
+            // Top platforms
+            { x: 50,  y: 110, w: 110, h: 18 },
+            { x: 240, y: 95,  w: 160, h: 18 },
+            { x: 490, y: 105, w: 120, h: 18 },
+            { x: 680, y: 95,  w: 80,  h: 18 },
+        ],
+        marioSpawns: [
+            { x: 20,  y: 430 },
+            { x: 370, y: 430 },
+            { x: 710, y: 430 },
+            { x: 200, y: 340 },
+            { x: 540, y: 340 },
+        ],
+        marioTypes: ['normal', 'fast', 'armored', 'armored', 'fast'],
+        marioSpeed: 2.8,
+        playerSpawn: { x: 20, y: 430 },
+        coinSpawns: [
+            { x: 50,  y: 435 }, { x: 220, y: 435 }, { x: 390, y: 435 }, { x: 545, y: 435 }, { x: 720, y: 435 },
+            { x: 100, y: 355 }, { x: 290, y: 335 }, { x: 470, y: 355 }, { x: 655, y: 335 },
+            { x: 55,  y: 265 }, { x: 220, y: 250 }, { x: 390, y: 270 }, { x: 555, y: 250 }, { x: 710, y: 265 },
+            { x: 140, y: 175 }, { x: 380, y: 160 }, { x: 610, y: 175 },
+            { x: 80,  y: 85  }, { x: 290, y: 70  }, { x: 510, y: 80  }, { x: 700, y: 70  },
+        ],
+        doubleCoinSpawns: [{ x: 350, y: 70 }, { x: 550, y: 80 }],
+        tripleCoinSpawns: [{ x: 320, y: 70 }],
+        starSpawns:       [{ x: 280, y: 70 }, { x: 530, y: 80 }],
+        shieldSpawns:     [{ x: 0,   y: 445 }, { x: 700, y: 445 }],
+        bombSpawns:       [{ x: 230, y: 250 }, { x: 570, y: 255 }],
+        springSpawns:     [{ x: 0, y: 446 }, { x: 710, y: 446 }],
+        speedBoostSpawns: [{ x: 380, y: 160 }],
+        magnetSpawns:     [{ x: 460, y: 70  }],
+        freezeSpawns:     [{ x: 90,  y: 85  }, { x: 600, y: 80  }],
+        ghostSpawns:      [{ x: 500, y: 70  }],
+        electroSpawns:    [{ x: 340, y: 70  }],
+        slowMoSpawns:     [{ x: 440, y: 175 }],
+        rocketSpawns:     [{ x: 180, y: 70  }, { x: 480, y: 70  }],
+        jetpackSpawns:    [{ x: 270, y: 70  }],
+        scoreBoostSpawns: [{ x: 590, y: 70  }],
+        flashlightSpawns: [{ x: 390, y: 70  }, { x: 150, y: 265 }, { x: 640, y: 175 }], // Feature 105
+        checkpointSpawns: [{ x: 380, y: 450 }],
+        berserkerMarioSpawns: [{ x: 200, y: 250 }, { x: 500, y: 260 }], // Feature 103
+        flyingMarioSpawns:    [{ x: 160, y: 160 }, { x: 420, y: 145 }, { x: 650, y: 160 }],
+        shooterMarioSpawns:   [{ x: 260, y: 75  }, { x: 520, y: 85  }],
+        parachuteMarioSpawns: [{ x: 100, y: -60 }, { x: 500, y: -80 }],
+        spikeSpawns: [{ x: 132, y: 444, count: 2 }, { x: 452, y: 444, count: 2 }],
     }
 ];
 
@@ -4921,7 +5328,7 @@ function startSurvivalMode() {
     survivalWave = 0;
     survivalWaveTimer = SURVIVAL_WAVE_INTERVAL;
     const lvl = SURVIVAL_ARENA;
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, null, 0, 0, p.crumble, p.ice));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, null, 0, 0, p.crumble, p.ice, p.conveyor));
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, lvl.marioSpeed * diffMult, 'normal'));
     fireballs = [];
@@ -5378,7 +5785,7 @@ function loadLevel(index) {
     coinCaveMode = !!lvl.isBonusLevel;
     coinCaveCountdown = coinCaveMode ? COIN_CAVE_DURATION : 0;
 
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice, p.conveyor));
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     const dailySpeedMult = (dailyChallengeMode && dailyChallengeModifiers.includes('fast_enemies')) ? 1.6 : 1;
@@ -5410,7 +5817,11 @@ function loadLevel(index) {
     // Feature 89: Teleporter Marios
     const teleporterMarios = (lvl.teleporterMarioSpawns || []).map(s => new Mario(s.x, s.y, 0, 'teleporter'));
     marios = [...marios, ...teleporterMarios];
+    // Feature 103: Berserker Marios
+    const berserkerMarios = (lvl.berserkerMarioSpawns || []).map(s => new Mario(s.x, s.y, speed * 0.65, 'berserker'));
+    marios = [...marios, ...berserkerMarios];
     fireballs = [];
+    spores = []; // Feature 101: reset spores on level load
 
     const sp = lvl.playerSpawn;
     if (player) {
@@ -5459,6 +5870,7 @@ function loadLevel(index) {
     magBootsList = (lvl.magBootsSpawns || []).map(m => new MagBootsPU(m.x, m.y)); // Feature 85
     giantPUs = (lvl.giantSpawns || []).map(g => new GiantPU(g.x, g.y)); // Feature 87
     jetpacks = (lvl.jetpackSpawns || []).map(j => new JetpackPU(j.x, j.y)); // Feature 99
+    flashlights = (lvl.flashlightSpawns || []).map(f => new FlashlightPU(f.x, f.y)); // Feature 105
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -5908,7 +6320,7 @@ function prlx(factor) {
 
 function drawBackground() {
     // Feature 100: Space background for Cosmos level
-    if (gameState === 'PLAYING' && currentLevel === LEVELS.length - 1 && LEVELS[currentLevel].lowGravity) {
+    if (gameState === 'PLAYING' && LEVELS[currentLevel] && LEVELS[currentLevel].lowGravity) {
         const spaceGrad = ctx.createLinearGradient(0, 0, 0, H);
         spaceGrad.addColorStop(0, '#000010');
         spaceGrad.addColorStop(0.6, '#050025');
@@ -5950,6 +6362,49 @@ function drawBackground() {
         const groundGrad = ctx.createLinearGradient(0, 440, 0, H);
         groundGrad.addColorStop(0, '#1a1a3a');
         groundGrad.addColorStop(1, '#0a0a20');
+        ctx.fillStyle = groundGrad;
+        ctx.fillRect(0, 440, W, H - 440);
+        return;
+    }
+
+    // Feature 106: Underground cave background for Level 17
+    if (gameState === 'PLAYING' && LEVELS[currentLevel] && LEVELS[currentLevel].isUnderground) {
+        const caveGrad = ctx.createLinearGradient(0, 0, 0, H);
+        caveGrad.addColorStop(0, '#0d0804');
+        caveGrad.addColorStop(0.4, '#1a1008');
+        caveGrad.addColorStop(1, '#251608');
+        ctx.fillStyle = caveGrad;
+        ctx.fillRect(0, 0, W, H);
+        const t = Date.now() * 0.001;
+        // Rock texture dots
+        ctx.save();
+        for (let i = 0; i < 40; i++) {
+            const rx = (i * 197.3 + 11) % W;
+            const ry = (i * 113.7 + 23) % (H * 0.85);
+            const pulse = 0.1 + Math.abs(Math.sin(t * 0.3 + i * 1.1)) * 0.12;
+            ctx.globalAlpha = pulse;
+            ctx.fillStyle = i % 4 === 0 ? '#554433' : '#443322';
+            ctx.fillRect(rx, ry, i % 5 === 0 ? 4 : 2, i % 5 === 0 ? 4 : 2);
+        }
+        // Stalactites (top edge)
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#221408';
+        for (let i = 0; i < 12; i++) {
+            const sx = (i * 66 + 18) % W;
+            const sh = 18 + (i * 37) % 28;
+            ctx.beginPath();
+            ctx.moveTo(sx - 8, 0);
+            ctx.lineTo(sx + 8, 0);
+            ctx.lineTo(sx + (Math.random() > 0.5 ? 3 : -3), sh);
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        // Ground layer
+        const groundGrad = ctx.createLinearGradient(0, 440, 0, H);
+        groundGrad.addColorStop(0, '#2a1808');
+        groundGrad.addColorStop(1, '#180e04');
         ctx.fillStyle = groundGrad;
         ctx.fillRect(0, 440, W, H - 440);
         return;
@@ -6160,6 +6615,32 @@ function drawHUD() {
         ctx.font = '20px monospace';
         ctx.fillStyle = i < player.lives ? '#ff3333' : 'rgba(120,40,40,0.45)';
         ctx.fillText('♥', 20 + i * 22, 57);
+    }
+
+    // Feature 101: Spore ammo display
+    for (let i = 0; i < 3; i++) {
+        ctx.font = '14px monospace';
+        ctx.fillStyle = i < player.sporeAmmo ? '#55dd33' : 'rgba(40,80,20,0.38)';
+        ctx.fillText('🍄', 20 + i * 19, 79);
+    }
+    if (player.sporeAmmo < 3 && player.sporeAmmoTimer > 0) {
+        const pct = 1 - player.sporeAmmoTimer / SPORE_REGEN_TIME;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(20, 82, 52, 4);
+        ctx.fillStyle = '#55dd33';
+        ctx.fillRect(20, 82, Math.round(52 * pct), 4);
+    }
+
+    // Feature 105: Flashlight timer bar (bottom-left, if active)
+    if (player.flashlightTimer > 0) {
+        const pct = player.flashlightTimer / 1200;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(20, 88, 52, 4);
+        ctx.fillStyle = '#ffdd44';
+        ctx.fillRect(20, 88, Math.round(52 * pct), 4);
+        ctx.font = '11px monospace';
+        ctx.fillStyle = '#ffdd88';
+        ctx.fillText('🔦', 20, 100);
     }
 
     // Level
@@ -7570,7 +8051,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье'];
     if (selectedLevelIdx < unlockedLevels) {
         const nameColor = selectedLevelIdx === COIN_CAVE_LEVEL_INDEX ? '#ffd700' : '#88ffaa';
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, nameColor);
@@ -7659,7 +8140,7 @@ function renderLevelTransition() {
         ctx.save();
         ctx.globalAlpha = alpha;
         drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
-        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🌑 Тьма'];
+        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🌑 Тьма', '🕯 Подземелье'];
         const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
         drawTitle(name, H / 2 + 50, 20, '#aaffaa');
         ctx.restore();
@@ -7868,6 +8349,10 @@ function update() {
             checkDroppedPowerupCollisions();
             fireballs = fireballs.filter(fb => fb.update());
             checkFireballCollisions();
+            spores = spores.filter(s => s.update()); // Feature 101
+            checkSporeCollisions();                   // Feature 101
+            flashlights = flashlights.filter(fl => fl.update()); // Feature 105
+            checkFlashlightCollisions();              // Feature 105
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -8226,9 +8711,13 @@ function render() {
             renderJetpackFlame(); // Feature 99: jetpack thrust flame
             renderMagBootsEffect(); // Feature 85: mag boots aura
             jetpacks.forEach(j => j.render()); // Feature 99: jetpack items
+            flashlights.forEach(fl => fl.render()); // Feature 105
+            spores.forEach(s => s.render());         // Feature 101
             player.render();
             particles.forEach(p => p.render());
             scorePopups.forEach(p => p.render()); // Feature 88
+            // Feature 105: Flashlight darkness overlay (after entities, before HUD)
+            if (player && player.flashlightTimer > 0) renderFlashlightEffect();
             // Feature 48: red flash overlay on player death
             if (deathFlashTimer > 0) {
                 const flashAlpha = (deathFlashTimer / 35) * 0.55;

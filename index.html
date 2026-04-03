@@ -65,6 +65,16 @@
             color: rgba(80, 200, 255, 0.9);
         }
         #btn-jump.pressed { background: rgba(80, 180, 255, 0.42); }
+        /* Feature 101: Spore Throw button */
+        #btn-throw {
+            bottom: 22%; right: 3%;
+            width: 12%;
+            background: rgba(60, 180, 50, 0.18);
+            border-color: rgba(80, 220, 60, 0.45);
+            color: rgba(100, 230, 80, 0.9);
+            font-size: 4vw;
+        }
+        #btn-throw.pressed { background: rgba(60, 180, 50, 0.42); }
 
         @media (pointer: coarse) {
             #mobile-controls { display: block; }
@@ -82,6 +92,7 @@
             <div id="btn-left"  class="ctrl-btn">&#9664;</div>
             <div id="btn-right" class="ctrl-btn">&#9654;</div>
             <div id="btn-jump"  class="ctrl-btn">&#9650;</div>
+            <div id="btn-throw" class="ctrl-btn">&#127812;</div>
         </div>
     </div>
     <script src="game.js"></script>
