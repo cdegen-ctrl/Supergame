@@ -1113,14 +1113,15 @@ class Mario extends Entity {
             return true;
         }
 
-        // Flying type: no gravity, fixed altitude
+        // Feature 95: Flying type — sinusoidal altitude, no gravity
         if (this.type === 'flying') {
             this.wingFlap += 0.18;
             const flySlowMult = (player && player.slowMoTimer > 0) ? SLOW_MO_FACTOR : 1;
             this.vx = this.speed * this.direction * flySlowMult;
             this.x += this.vx;
-            this.y = this.flyingY;
-            this.vy = 0;
+            // Sinusoidal vertical oscillation: ±38px around base altitude
+            this.y = this.flyingY + Math.sin(this.wingFlap * 0.55) * 38;
+            this.vy = Math.cos(this.wingFlap * 0.55) * 38 * 0.55 * 0.18; // approximate dy for stomp detection
             // Reverse on canvas bounds
             if (this.x <= 0 || this.x + this.w >= W) {
                 this.direction *= -1;
@@ -4763,6 +4764,12 @@ try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || 
 let levelCompletionTime = 0;   // seconds spent on last completed level
 let isNewLevelTimeRecord = false;
 
+// === FEATURE 96: SPEED RUN MODE ===
+let speedRunMode = false;
+let speedRunTotalTime = 0;     // accumulated total time across all levels in this run
+let speedRunBestTotal = parseFloat(localStorage.getItem('mushroomSpeedRunBest') || '0');
+let speedRunNewRecord = false; // flash on completion screen
+
 // === FEATURE 59: LETTER GRADE ===
 let levelGrades = [];
 try { levelGrades = JSON.parse(localStorage.getItem('mushroomLevelGrades') || '[]'); } catch { levelGrades = []; }
@@ -5896,6 +5903,40 @@ function drawHUD() {
     ctx.fillStyle = timerColor;
     ctx.fillText(`T: ${secs}s`, W - 150, 55);
 
+    // Feature 96: Speed Run Mode — live timer with PB delta
+    if (speedRunMode) {
+        const curSecs = levelTimer / 60;
+        const totalSecs = speedRunTotalTime + curSecs;
+        const m = Math.floor(totalSecs / 60);
+        const s = Math.floor(totalSecs % 60);
+        const ms = Math.floor((totalSecs % 1) * 100);
+        const timeStr = `⏱ ${m}:${String(s).padStart(2,'0')}.${String(ms).padStart(2,'0')}`;
+        const pb = levelBestTimes[currentLevel];
+        let deltaStr = '';
+        let deltaColor = '#aaffaa';
+        if (pb != null) {
+            const delta = curSecs - pb;
+            const sign = delta < 0 ? '-' : '+';
+            const abs = Math.abs(delta).toFixed(1);
+            deltaStr = ` (${sign}${abs}s)`;
+            deltaColor = delta < 0 ? '#44ff88' : '#ff6644';
+        }
+        ctx.save();
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(W / 2 - 105, 63, 210, 20);
+        ctx.fillStyle = '#ffffaa';
+        ctx.fillText(timeStr, W / 2, 78);
+        if (deltaStr) {
+            ctx.font = 'bold 11px monospace';
+            ctx.fillStyle = deltaColor;
+            ctx.fillText(deltaStr, W / 2 + 75, 78);
+        }
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // High score
     if (highScore > 0) {
         ctx.fillStyle = C.textShadow;
@@ -6660,7 +6701,7 @@ function renderMenu() {
     ctx.restore();
 
     drawTitle("ENTER — Начать игру", 400, 18, C.text);
-    drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня", 425, 14, '#ffaa44');
+    drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня    R — ⏱ Спидран", 425, 13, '#ffaa44');
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
     drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
     if (survivalBestTime > 0) {
@@ -6819,6 +6860,21 @@ function renderVictory() {
     drawTitle('Финальный Марио повержен!', 198, 18, '#00ff88');
     drawTitle(`Счёт: ${totalScore}`, 232, 22, '#ffcc00');
     if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 262, 18, '#00ff44');
+    // Feature 96: Speed Run total time display
+    if (speedRunMode && speedRunTotalTime > 0) {
+        const m = Math.floor(speedRunTotalTime / 60);
+        const s = Math.floor(speedRunTotalTime % 60);
+        const ms = Math.floor((speedRunTotalTime % 1) * 100);
+        const srStr = `⏱ Спидран: ${m}:${String(s).padStart(2,'0')}.${String(ms).padStart(2,'0')}`;
+        drawTitle(srStr, 282, 15, '#aaffff');
+        if (speedRunNewRecord) drawTitle('⚡ РЕКОРД СПИДРАНА!', 300, 14, '#44ffcc');
+        else if (speedRunBestTotal > 0) {
+            const bm = Math.floor(speedRunBestTotal / 60);
+            const bs = Math.floor(speedRunBestTotal % 60);
+            const bms = Math.floor((speedRunBestTotal % 1) * 100);
+            drawTitle(`Рекорд: ${bm}:${String(bs).padStart(2,'0')}.${String(bms).padStart(2,'0')}`, 300, 13, '#778899');
+        }
+    }
 
     // Big mushroom
     ctx.save();
@@ -7285,6 +7341,24 @@ function update() {
                 gameState = 'DAILY_CHALLENGE';
             }
             keys['_dMenuWas'] = keys['KeyD'];
+            // Feature 96: R key starts Speed Run mode from level 0
+            if (keys['KeyR'] && !keys['_rMenuWas']) {
+                initAudio();
+                speedRunMode = true;
+                speedRunTotalTime = 0;
+                speedRunNewRecord = false;
+                survivalMode = false;
+                dailyChallengeMode = false;
+                resetRunStats();
+                currentLevel = 0;
+                totalScore = 0; nextMilestoneIdx = 0; milestoneBannerTimer = 0;
+                player = null;
+                loadLevel(currentLevel);
+                player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
+                player.score = 0;
+                gameState = 'PLAYING';
+            }
+            keys['_rMenuWas'] = keys['KeyR'];
             break;
 
         case 'ACHIEVEMENTS':
@@ -7582,6 +7656,10 @@ function update() {
                 currentLevelGrade = calcLevelGrade(levelDeathCount, levelCoinsCollected, levelCoinsTotal, levelCompletionTime);
                 levelGrades[currentLevel] = currentLevelGrade;
                 localStorage.setItem('mushroomLevelGrades', JSON.stringify(levelGrades));
+                // Feature 96: Speed Run — accumulate total time
+                if (speedRunMode) {
+                    speedRunTotalTime += levelCompletionTime;
+                }
                 // Save best level time
                 if (!isBossLevel) {
                     const prev = levelBestTimes[currentLevel];
@@ -7647,8 +7725,18 @@ function update() {
                 for (let i = 0; i < 3; i++) confettiParticles.push(new ConfettiParticle());
             }
             confettiParticles = confettiParticles.filter(p => p.update());
+            // Feature 96: save speedrun total time record on victory
+            if (speedRunMode && speedRunTotalTime > 0) {
+                if (speedRunBestTotal === 0 || speedRunTotalTime < speedRunBestTotal) {
+                    speedRunBestTotal = speedRunTotalTime;
+                    speedRunNewRecord = true;
+                    localStorage.setItem('mushroomSpeedRunBest', String(speedRunBestTotal.toFixed(2)));
+                }
+            }
             if (isEnter() && !enterWasPressed) {
                 confettiParticles = [];
+                speedRunMode = false;
+                speedRunTotalTime = 0;
                 gameState = 'MENU';
             }
             break;
@@ -7666,6 +7754,7 @@ function update() {
                     highScore = totalScore;
                     localStorage.setItem('mushroomHighScore', String(highScore));
                 }
+                speedRunMode = false; speedRunTotalTime = 0; // Feature 96: reset speedrun on death
                 startGame();
             }
             break;
@@ -7680,6 +7769,7 @@ function update() {
             }
             if (keys['KeyM'] && !keys['_mWas']) {
                 stopBGM();
+                speedRunMode = false; speedRunTotalTime = 0; // Feature 96: reset on menu exit
                 gameState = 'MENU';
                 player = null;
             }
