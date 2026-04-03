@@ -53,6 +53,44 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+// === FEATURE 114: GAMEPAD SUPPORT ===
+const gamepadKeys = { left: false, right: false, jump: false, throw: false, start: false };
+let gamepadConnected = false;
+let gamepadConnectedTimer = 0; // frames to show "gamepad connected" banner
+
+window.addEventListener('gamepadconnected', () => {
+    gamepadConnected = true;
+    gamepadConnectedTimer = 180; // show banner for 3 seconds
+});
+window.addEventListener('gamepaddisconnected', () => {
+    gamepadConnected = false;
+    Object.keys(gamepadKeys).forEach(k => { gamepadKeys[k] = false; });
+});
+
+function pollGamepad() {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const gp = gamepads[0];
+    if (!gp) return;
+    // Axes: 0 = left stick X, 1 = left stick Y
+    const axisX = gp.axes[0] || 0;
+    const axisY = gp.axes[1] || 0;
+    // D-pad buttons: typically 12=up, 13=down, 14=left, 15=right
+    const dpadLeft  = (gp.buttons[14] && gp.buttons[14].pressed) || axisX < -0.4;
+    const dpadRight = (gp.buttons[15] && gp.buttons[15].pressed) || axisX >  0.4;
+    const dpadUp    = (gp.buttons[12] && gp.buttons[12].pressed) || axisY < -0.4;
+    // Button mappings: 0=A/Cross (jump), 1=B/Circle (throw), 7=Start/Options (pause/enter), 2=X/Square (throw alt)
+    const btnJump  = gp.buttons[0]?.pressed || gp.buttons[2]?.pressed || false;
+    const btnThrow = gp.buttons[1]?.pressed || gp.buttons[3]?.pressed || false;
+    const btnStart = gp.buttons[7]?.pressed || gp.buttons[9]?.pressed || false;
+    const btnSelect= gp.buttons[6]?.pressed || gp.buttons[8]?.pressed || false;
+
+    gamepadKeys.left  = dpadLeft;
+    gamepadKeys.right = dpadRight;
+    gamepadKeys.jump  = btnJump || dpadUp;
+    gamepadKeys.throw = btnThrow;
+    gamepadKeys.start = btnStart || btnSelect;
+}
+
 // === FEATURE 109: KONAMI CODE EASTER EGG ===
 const KONAMI_SEQUENCE = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','Enter'];
 let konamiProgress = 0;
@@ -167,11 +205,11 @@ canvas.addEventListener('click', e => {
     }
 });
 
-function isLeft()   { return keys['ArrowLeft']  || keys['KeyA'] || touchKeys.left; }
-function isRight()  { return keys['ArrowRight'] || keys['KeyD'] || touchKeys.right; }
-function isJump()   { return keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchKeys.jump; }
-function isThrow()  { return keys['KeyZ'] || touchKeys.throw; } // Feature 101: Spore throw
-function isEnter()  { return keys['Enter']; }
+function isLeft()   { return keys['ArrowLeft']  || keys['KeyA'] || touchKeys.left  || gamepadKeys.left; }
+function isRight()  { return keys['ArrowRight'] || keys['KeyD'] || touchKeys.right || gamepadKeys.right; }
+function isJump()   { return keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchKeys.jump || gamepadKeys.jump; }
+function isThrow()  { return keys['KeyZ'] || touchKeys.throw || gamepadKeys.throw; } // Feature 101: Spore throw
+function isEnter()  { return keys['Enter'] || gamepadKeys.start; }
 function isEscape() { return keys['Escape']; }
 
 // === FEATURE 101: SPORE THROW CONSTANT ===
@@ -5827,6 +5865,34 @@ function setMuted(muted) {
     }
 }
 
+// === FEATURE 113: LEVEL START TIPS ===
+const LEVEL_TIPS = [
+    '💡 Прыгай на врагов сверху!  SHIFT — рывок',
+    '💡 Двойной прыжок — нажми ↑ в воздухе снова',
+    '💡 Комбо: стомпай врагов без касания земли',
+    '💡 Стены! Удерживай направление к стене и прыгай',
+    '💡 Броня: бронированных Марио нужно стомпнуть дважды',
+    '💡 Ледяные платформы — скользко! Контролируй инерцию',
+    '💡 Летучие Марио — подлови на уровне их полёта',
+    '💡 Подбери звезду ⭐ для неуязвимости!',
+    '💡 Шипы ☠️ убивают мгновенно — звезда спасает',
+    '💡 Порталы телепортируют — используй тактически',
+    '💡 Стрелки-Марио! Прыгай сбоку или сверху быстро',
+    '💡 Босс: 5 стомпов — атакуй сверху, уворачивайся',
+    '💡 Монеты = накопления в магазине между уровнями',
+    '💡 Бросай споры (Z) для поражения врагов на расстоянии',
+    '💡 Парашют: удерживай ↓ в воздухе для медленного падения',
+    '💡 Летит джетпак! Удерживай ↑ для ускорения вверх',
+    '💡 Бездействуй в темноте — собери фонарик 🔦',
+];
+let levelTipTimer = 0;           // frames remaining to show tip
+const LEVEL_TIP_DURATION = 240;  // 4 seconds
+
+function showLevelTip(levelIndex) {
+    const tip = LEVEL_TIPS[levelIndex % LEVEL_TIPS.length];
+    if (tip) levelTipTimer = LEVEL_TIP_DURATION;
+}
+
 // === LEVEL MANAGEMENT ===
 function getMarioType(levelIndex, spawnIdx) {
     if (levelIndex < 2) return 'normal';
@@ -6028,6 +6094,7 @@ function loadLevel(index) {
     challengeBonusAwarded = false;
     // Start BGM appropriate to this level's theme
     if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
+    showLevelTip(index); // Feature 113
 }
 
 // Feature 83: Kill Streak — call on every confirmed enemy kill
@@ -8477,6 +8544,7 @@ function renderLevelTransition() {
 let levelCompleteTimer = 0;
 
 function update() {
+    pollGamepad(); // Feature 114: poll gamepad state each frame
     switch (gameState) {
         case 'MENU':
             if (isEnter() && !enterWasPressed) {
@@ -9153,6 +9221,42 @@ function render() {
                 ctx.fillText(milestoneBannerText, W / 2 + 2, H / 2 - 58);
                 ctx.fillStyle = milestoneBannerColor;
                 ctx.fillText(milestoneBannerText, W / 2, H / 2 - 60);
+                ctx.textAlign = 'left';
+                ctx.restore();
+            }
+            // Feature 114: Gamepad connected banner
+            if (gamepadConnectedTimer > 0) {
+                gamepadConnectedTimer--;
+                const a114 = gamepadConnectedTimer < 40 ? gamepadConnectedTimer / 40 : 1;
+                ctx.save();
+                ctx.globalAlpha = a114;
+                ctx.fillStyle = 'rgba(0,40,0,0.7)';
+                ctx.beginPath();
+                ctx.roundRect(W / 2 - 140, 110, 280, 28, 8);
+                ctx.fill();
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 13px monospace';
+                ctx.fillStyle = '#44ff88';
+                ctx.fillText('🎮 Геймпад подключён!', W / 2, 129);
+                ctx.textAlign = 'left';
+                ctx.restore();
+            }
+            // Feature 113: Level start tip
+            if (levelTipTimer > 0) {
+                levelTipTimer--;
+                const fadeFrames = 40;
+                const a113 = levelTipTimer < fadeFrames ? levelTipTimer / fadeFrames : Math.min(1, (LEVEL_TIP_DURATION - levelTipTimer) / 20);
+                const tip = LEVEL_TIPS[currentLevel % LEVEL_TIPS.length];
+                ctx.save();
+                ctx.globalAlpha = a113;
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.roundRect(W / 2 - 230, H - 60, 460, 30, 8);
+                ctx.fill();
+                ctx.textAlign = 'center';
+                ctx.font = '13px monospace';
+                ctx.fillStyle = '#ddeeFF';
+                ctx.fillText(tip, W / 2, H - 40);
                 ctx.textAlign = 'left';
                 ctx.restore();
             }
