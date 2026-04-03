@@ -4067,6 +4067,47 @@ function mergeRunIntoAllTime() {
     saveAllTimeStats();
 }
 
+// === FEATURE 111: COIN RAIN RANDOM EVENT ===
+let coinRainTimer = 0;          // frames remaining for coin rain effect
+let coinRainSpawnTimer = 0;     // frames until next coin spawned during rain
+let coinRainBannerTimer = 0;    // banner display timer
+const COIN_RAIN_DURATION = 360; // 6 seconds
+const COIN_RAIN_INTERVAL = 8;   // 1 coin every 8 frames
+// Random trigger check: call once per level periodically
+let coinRainEventInterval = 0;  // countdown to next chance
+const COIN_RAIN_CHECK_INTERVAL = 600; // check every 10s
+
+function updateCoinRain() {
+    if (!player || survivalMode) return;
+    // Countdown to next event check
+    if (coinRainEventInterval > 0) {
+        coinRainEventInterval--;
+    } else if (coinRainTimer <= 0) {
+        coinRainEventInterval = COIN_RAIN_CHECK_INTERVAL;
+        // 20% chance per check to trigger coin rain
+        if (Math.random() < 0.20) {
+            coinRainTimer = COIN_RAIN_DURATION;
+            coinRainBannerTimer = 120;
+            coinRainSpawnTimer = 0;
+            playSound('star');
+            particles.push(new Particle(W / 2 - 70, H / 2 - 40, '🪙 МОНЕТНЫЙ ДОЖДЬ!', '#ffd700'));
+        }
+    }
+    if (coinRainTimer > 0) {
+        coinRainTimer--;
+        coinRainSpawnTimer--;
+        if (coinRainSpawnTimer <= 0) {
+            coinRainSpawnTimer = COIN_RAIN_INTERVAL;
+            const rx = 30 + Math.random() * (W - 60);
+            const rc = new Coin(rx, -16);
+            rc.vy = 1 + Math.random() * 1.5; // initial falling velocity
+            rc.isDropped = true;              // use existing physics (gravity + platform landing)
+            coins.push(rc);
+        }
+    }
+    if (coinRainBannerTimer > 0) coinRainBannerTimer--;
+}
+
 // === FEATURE 107: BETWEEN-LEVEL UPGRADE SHOP ===
 let shopCoins = 0;          // coins accumulated this run (wallet for the shop)
 let shopSelectedIdx = 0;    // currently highlighted shop item
@@ -5529,10 +5570,22 @@ function submitScore(score) {
 
 // === SOUND (Web Audio API) ===
 let audioCtx = null;
+let masterGain = null; // Feature 112: master volume node
+
+// Feature 112: volume control (0.0 - 1.0), persisted in localStorage
+let soundVolume = parseFloat(localStorage.getItem('mushroomVolume') || '0.7');
+function setSoundVolume(v) {
+    soundVolume = Math.max(0, Math.min(1, v));
+    localStorage.setItem('mushroomVolume', String(soundVolume.toFixed(2)));
+    if (masterGain) masterGain.gain.value = soundMuted ? 0 : soundVolume;
+}
 
 function initAudio() {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = soundVolume;
+        masterGain.connect(audioCtx.destination);
     }
 }
 
@@ -5541,7 +5594,7 @@ function playSound(type) {
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(masterGain || audioCtx.destination); // Feature 112: route through master gain
     const now = audioCtx.currentTime;
 
     switch (type) {
@@ -5747,7 +5800,7 @@ function scheduleBGMNotes() {
             const osc = audioCtx.createOscillator();
             const g   = audioCtx.createGain();
             osc.connect(g);
-            g.connect(audioCtx.destination);
+            g.connect(masterGain || audioCtx.destination); // Feature 112: route through master gain
             osc.type = theme.oscType;
             osc.frequency.value = freq;
             const noteDur = theme.tempo * 0.82;
@@ -5766,6 +5819,7 @@ function scheduleBGMNotes() {
 
 function setMuted(muted) {
     soundMuted = muted;
+    if (masterGain) masterGain.gain.value = muted ? 0 : soundVolume; // Feature 112
     if (muted) {
         stopBGM();
     } else if (gameState === 'PLAYING' && audioCtx) {
@@ -5922,6 +5976,7 @@ function loadLevel(index) {
     comboCount = 0;
     comboDisplayTimer = 0;
     killStreakCount = 0; // Feature 83: reset streak on new level
+    coinRainTimer = 0; coinRainBannerTimer = 0; coinRainEventInterval = COIN_RAIN_CHECK_INTERVAL; // Feature 111
     killStreakTimer = 0;
     levelTimer = 0;
     hudScoreDisplay = 0;
@@ -8599,6 +8654,7 @@ function update() {
             if (bossMarco) { if (!bossMarco.update()) bossMarco = null; }
             checkPlayerMarioCollisions();
             checkPlayerBossCollision();
+            updateCoinRain(); // Feature 111
             checkCoinCollisions();
             checkStarCollisions();
             checkShieldCollisions();
@@ -8970,6 +9026,17 @@ function update() {
                 playSound('coin');
             }
             keys['_cPauseWas'] = keys['KeyC'];
+            // Feature 112: Volume control — [ and ] keys
+            if (keys['BracketLeft'] && !keys['_volDownWas']) {
+                setSoundVolume(soundVolume - 0.1);
+                playSound('coin');
+            }
+            keys['_volDownWas'] = keys['BracketLeft'];
+            if (keys['BracketRight'] && !keys['_volUpWas']) {
+                setSoundVolume(soundVolume + 0.1);
+                playSound('coin');
+            }
+            keys['_volUpWas'] = keys['BracketRight'];
             keys['_rWas'] = keys['KeyR'];
             keys['_mWas'] = keys['KeyM'];
             break;
@@ -9089,6 +9156,24 @@ function render() {
                 ctx.textAlign = 'left';
                 ctx.restore();
             }
+            // Feature 111: Coin Rain active banner
+            if (coinRainBannerTimer > 0) {
+                const fadeFrames = 20;
+                const a111 = coinRainBannerTimer < fadeFrames ? coinRainBannerTimer / fadeFrames : 1;
+                ctx.save();
+                ctx.globalAlpha = a111;
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 24px monospace';
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillText('🪙 МОНЕТНЫЙ ДОЖДЬ!', W / 2 + 2, 52);
+                ctx.fillStyle = '#ffd700';
+                ctx.shadowColor = '#ff8800';
+                ctx.shadowBlur = 10;
+                ctx.fillText('🪙 МОНЕТНЫЙ ДОЖДЬ!', W / 2, 50);
+                ctx.shadowBlur = 0;
+                ctx.textAlign = 'left';
+                ctx.restore();
+            }
             // Feature 109: Ultra Mode activation banner
             if (ultraModeTimer > 0) {
                 ultraModeTimer--;
@@ -9172,6 +9257,22 @@ function render() {
             ctx.fillStyle = cbColor;
             ctx.beginPath(); ctx.roundRect(W / 2 - 110, 342, 220, 24, 6); ctx.fill();
             drawTitle(`C — 👁 Дальтоник: ${colorblindMode ? 'ВКЛ' : 'ВЫКЛ'}`, 363, 11, colorblindMode ? '#aaffff' : '#aaaaaa');
+
+            // Feature 112: Volume control display
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.font = '11px monospace';
+            ctx.fillStyle = '#888899';
+            ctx.fillText('[ / ] — Громкость', W / 2, 382);
+            const volBarW = 180, volBarH = 7, volBarX = W / 2 - volBarW / 2, volBarY = 387;
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            ctx.beginPath(); ctx.roundRect(volBarX, volBarY, volBarW, volBarH, 4); ctx.fill();
+            ctx.fillStyle = soundMuted ? '#ff4444' : '#55ddff';
+            ctx.beginPath(); ctx.roundRect(volBarX, volBarY, Math.round(volBarW * soundVolume), volBarH, 4); ctx.fill();
+            ctx.fillStyle = '#aabbcc';
+            ctx.fillText(`${soundMuted ? '🔇' : '🔊'} ${Math.round(soundVolume * 100)}%`, W / 2, 408);
+            ctx.textAlign = 'left';
+            ctx.restore();
             break;
     }
 
