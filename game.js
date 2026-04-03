@@ -1535,8 +1535,8 @@ class Coin {
     constructor(x, y, bonus = 50) {
         this.x = x;
         this.y = y;
-        this.w = bonus > 50 ? 20 : 16;
-        this.h = bonus > 50 ? 20 : 16;
+        this.w = bonus >= 150 ? 24 : bonus > 50 ? 20 : 16; // Feature 92: triple coin bigger
+        this.h = bonus >= 150 ? 24 : bonus > 50 ? 20 : 16;
         this.bonus = bonus;
         this.collected = false;
         this.animTimer = Math.random() * 60; // stagger animation
@@ -1583,15 +1583,16 @@ class Coin {
 
     render() {
         const bob = Math.sin(this.animTimer * 0.07 + this.bobOffset) * 3;
-        const isDouble = this.bonus > 50;
-        const r = isDouble ? 10 : 7;
+        const isTriple = this.bonus >= 150; // Feature 92
+        const isDouble = this.bonus > 50 && !isTriple;
+        const r = isTriple ? 12 : isDouble ? 10 : 7;
         const cx = this.x + this.w / 2;
         const cy = this.y + this.h / 2 + bob;
         // Feature 73: Coin Frenzy — extra pulse glow
         const frenzyActive = coinFrenzyTimer > 0;
         const frenzyPulse = frenzyActive ? 0.5 + Math.abs(Math.sin(Date.now() * 0.012)) * 0.5 : 0;
         const glow = Math.abs(Math.sin(this.animTimer * 0.05)) * 0.4 + (frenzyActive ? 0.8 : 0.6);
-        const spin = isDouble ? Math.cos(this.animTimer * 0.09) : 1; // spin effect (scale x)
+        const spin = (isDouble || isTriple) ? Math.cos(this.animTimer * 0.09) : 1;
 
         ctx.save();
         // Feature 73: Frenzy outer ring
@@ -1606,34 +1607,49 @@ class Coin {
             ctx.lineWidth = 1.5;
             ctx.stroke();
         }
+        // Feature 92: Triple coin pulsing purple glow
+        if (isTriple) {
+            const triPulse = 0.4 + Math.abs(Math.sin(this.animTimer * 0.1)) * 0.6;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(180, 60, 255, ${triPulse * 0.35})`;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 5, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(220, 100, 255, ${triPulse * 0.7})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
         // Outer glow
         ctx.beginPath();
         ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
-        ctx.fillStyle = isDouble
+        ctx.fillStyle = isTriple
+            ? `rgba(200, 80, 255, ${glow * 0.45})`
+            : isDouble
             ? `rgba(255, 160, 0, ${glow * 0.4})`
             : `rgba(255, 220, 0, ${glow * 0.25})`;
         ctx.fill();
-        // Coin body (with spin for double)
+        // Coin body (with spin for double/triple)
         ctx.translate(cx, cy);
         ctx.scale(Math.abs(spin), 1);
         ctx.translate(-cx, -cy);
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = isDouble ? '#ff9900' : '#ffcc00';
+        ctx.fillStyle = isTriple ? '#cc44ff' : isDouble ? '#ff9900' : '#ffcc00';
         ctx.fill();
-        ctx.strokeStyle = isDouble ? '#ffcc00' : '#e6a800';
-        ctx.lineWidth = isDouble ? 2 : 1;
+        ctx.strokeStyle = isTriple ? '#ff99ff' : isDouble ? '#ffcc00' : '#e6a800';
+        ctx.lineWidth = isTriple ? 2.5 : isDouble ? 2 : 1;
         ctx.stroke();
         // Shine
         ctx.beginPath();
         ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.35, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,200,0.7)';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
         ctx.fill();
         // Label
-        ctx.font = `bold ${isDouble ? 9 : 8}px monospace`;
+        ctx.font = `bold ${isTriple ? 10 : isDouble ? 9 : 8}px monospace`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = isDouble ? '#7a3c00' : '#b8860b';
-        ctx.fillText(isDouble ? 'x2' : '$', cx, cy + r * 0.45);
+        ctx.fillStyle = isTriple ? '#ffffff' : isDouble ? '#7a3c00' : '#b8860b';
+        ctx.fillText(isTriple ? 'x3' : isDouble ? 'x2' : '$', cx, cy + r * 0.45);
         ctx.restore();
     }
 }
@@ -1943,6 +1959,50 @@ class SpringPad {
 }
 
 let springPads = [];
+
+// === SPIKES (Feature 91) ===
+class Spike {
+    constructor(x, y, count) {
+        this.x = x;
+        this.y = y;
+        this.count = count || 3;
+        this.w = this.count * 16;
+        this.h = 16;
+    }
+
+    render() {
+        const spikeW = 16;
+        ctx.save();
+        for (let i = 0; i < this.count; i++) {
+            const sx = this.x + i * spikeW;
+            // Dark metal base
+            ctx.fillStyle = '#44444a';
+            ctx.fillRect(sx, this.y + 9, spikeW, 7);
+            // Silver spike body with gradient
+            const grad = ctx.createLinearGradient(sx, this.y + 9, sx + spikeW, this.y);
+            grad.addColorStop(0, '#667788');
+            grad.addColorStop(1, '#ccccdd');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.moveTo(sx + 1, this.y + 9);
+            ctx.lineTo(sx + spikeW / 2, this.y);
+            ctx.lineTo(sx + spikeW - 1, this.y + 9);
+            ctx.closePath();
+            ctx.fill();
+            // Highlight shine
+            ctx.fillStyle = 'rgba(255,255,255,0.45)';
+            ctx.beginPath();
+            ctx.moveTo(sx + 4, this.y + 7);
+            ctx.lineTo(sx + spikeW / 2, this.y + 1);
+            ctx.lineTo(sx + spikeW / 2 + 1, this.y + 7);
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+let spikes = [];
 
 // === SPEED BOOST POWER-UP ===
 class SpeedBoost {
@@ -3727,6 +3787,8 @@ const LEVELS = [
         slowMoSpawns: [{ x: 160, y: 235 }], // Feature 75
         rocketSpawns: [{ x: 520, y: 105 }], // Feature 80
         giantSpawns: [{ x: 300, y: 105 }], // Feature 87
+        spikeSpawns: [{ x: 130, y: 444, count: 2 }, { x: 310, y: 444, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 400, y: 95 }], // Feature 92
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -3777,6 +3839,8 @@ const LEVELS = [
         electroSpawns: [{ x: 680, y: 375 }], // Feature 72
         slowMoSpawns: [{ x: 490, y: 125 }], // Feature 75
         giantSpawns: [{ x: 240, y: 325 }], // Feature 87
+        spikeSpawns: [{ x: 102, y: 384, count: 2 }, { x: 452, y: 384, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 320, y: 55 }], // Feature 92
     },
     {
         // Level 7: Chaos — all enemy types + moving + crumble + ice platforms
@@ -3830,6 +3894,8 @@ const LEVELS = [
         electroSpawns: [{ x: 300, y: 65 }], // Feature 72
         rocketSpawns: [{ x: 640, y: 155 }], // Feature 80
         giantSpawns: [{ x: 170, y: 200 }], // Feature 87
+        spikeSpawns: [{ x: 0, y: 444, count: 3 }, { x: 680, y: 444, count: 3 }], // Feature 91
+        tripleCoinSpawns: [{ x: 380, y: 65 }], // Feature 92
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3890,6 +3956,8 @@ const LEVELS = [
         slowMoSpawns: [{ x: 460, y: 85 }], // Feature 75
         magBootsSpawns: [{ x: 540, y: 165 }], // Feature 85
         giantSpawns: [{ x: 320, y: 85 }], // Feature 87
+        spikeSpawns: [{ x: 62, y: 414, count: 2 }, { x: 300, y: 444, count: 2 }, { x: 570, y: 414, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 300, y: 85 }], // Feature 92
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3919,6 +3987,8 @@ const LEVELS = [
         magnetSpawns: [{ x: 280, y: 225 }],
         ghostSpawns: [{ x: 340, y: 225 }],
         electroSpawns: [{ x: 500, y: 225 }], // Feature 72
+        spikeSpawns: [{ x: 200, y: 444, count: 2 }, { x: 560, y: 444, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 355, y: 235 }], // Feature 92
     },
     {
         // Level 10: «Возмездие» — post-boss gauntlet with all enemy types
@@ -3977,6 +4047,8 @@ const LEVELS = [
         rocketSpawns: [{ x: 450, y: 75 }], // Feature 80
         magBootsSpawns: [{ x: 240, y: 75 }], // Feature 85
         giantSpawns: [{ x: 520, y: 75 }], // Feature 87
+        spikeSpawns: [{ x: 62, y: 444, count: 2 }, { x: 420, y: 444, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 350, y: 75 }], // Feature 92
     },
     {
         // Level 11: «Апокалипсис» — Feature 74: megafinal with all mechanics
@@ -4052,6 +4124,8 @@ const LEVELS = [
         rocketSpawns: [{ x: 160, y: 85 }, { x: 490, y: 85 }], // Feature 80
         magBootsSpawns: [{ x: 420, y: 20 }], // Feature 85
         giantSpawns: [{ x: 220, y: 20 }, { x: 620, y: 20 }], // Feature 87
+        spikeSpawns: [{ x: 52, y: 444, count: 2 }, { x: 600, y: 444, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 400, y: 20 }], // Feature 92
     },
     {
         // Level 12: «Олимп» — Feature 78: sky-high olympus, airborne enemies, strategic platforms
@@ -4119,6 +4193,8 @@ const LEVELS = [
         shooterMarioSpawns:   [{ x: 310, y: 85  }, { x: 490, y: 100 }],
         parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 380, y: -80 }, { x: 620, y: -50 }, { x: 50, y: -110 }, { x: 750, y: -90 }], // Feature 71
         giantSpawns: [{ x: 100, y: 185 }, { x: 540, y: 185 }], // Feature 87
+        spikeSpawns: [{ x: 0, y: 444, count: 2 }, { x: 744, y: 444, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 310, y: 185 }], // Feature 92
     },
     ,{
         // Level 13: «Монетная пещера» — Feature 82: bonus coin-only timed challenge
@@ -4257,6 +4333,8 @@ const LEVELS = [
         portalSpawns: [
             { blue: { x: 10, y: 420 }, orange: { x: 410, y: 90 } },
         ],
+        spikeSpawns: [{ x: 152, y: 444, count: 2 }, { x: 480, y: 444, count: 2 }], // Feature 91
+        tripleCoinSpawns: [{ x: 340, y: 90 }], // Feature 92
     }
 ];
 
@@ -5059,10 +5137,11 @@ function loadLevel(index) {
     // Feature 59: reset per-level grade tracking
     levelDeathCount = 0;
     levelCoinsCollected = 0;
-    levelCoinsTotal = (lvl.coinSpawns || []).length + (lvl.doubleCoinSpawns || []).length;
+    levelCoinsTotal = (lvl.coinSpawns || []).length + (lvl.doubleCoinSpawns || []).length + (lvl.tripleCoinSpawns || []).length; // Feature 92
     coins = [
         ...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)),
         ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100)),
+        ...(lvl.tripleCoinSpawns || []).map(c => new Coin(c.x, c.y, 150)), // Feature 92
     ];
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
@@ -5088,6 +5167,7 @@ function loadLevel(index) {
     });
     checkpoints = (lvl.checkpointSpawns || []).map(c => new Checkpoint(c.x, c.y));
     if (player) player.checkpointSpawn = null; // reset checkpoint on new level
+    spikes = (lvl.spikeSpawns || []).map(s => new Spike(s.x, s.y, s.count || 3)); // Feature 91
     isBossLevel = !!lvl.isBossLevel;
     bossMarco = isBossLevel ? new BossMarco(620, 380) : null;
     initWeather(index);
@@ -5145,6 +5225,20 @@ function startGameFromLevel(level) {
 }
 
 // === COLLISION DETECTION ===
+// Feature 91: Spike collision — instant kill (star & ghost protect, post-death invincibility protects)
+function checkSpikeCollisions() {
+    if (player.invincibleTimer > 0) return;
+    if (player.starTimer > 0 || player.ghostTimer > 0) return;
+    for (const spike of spikes) {
+        const hitbox = { x: spike.x + 2, y: spike.y, w: spike.w - 4, h: 10 };
+        if (aabb(player, hitbox)) {
+            particles.push(new Particle(player.x + player.w / 2, player.y - 10, '💀 ШИПЫ!', '#ff4444'));
+            player.die();
+            return;
+        }
+    }
+}
+
 function checkCoinCollisions() {
     for (const coin of coins) {
         if (coin.collected) continue;
@@ -7216,6 +7310,7 @@ function update() {
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
+            checkSpikeCollisions(); // Feature 91
             updateWeather();
             if (currentLevel < 4) updateBirds(); // Feature 60
             updateAchievementToasts();
@@ -7506,6 +7601,7 @@ function render() {
             drawBackground();
             renderWeather();
             platforms.forEach(p => p.render());
+            spikes.forEach(s => s.render()); // Feature 91
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
             shields.forEach(s => s.render());
@@ -7584,6 +7680,7 @@ function render() {
         case 'PAUSED':
             drawBackground();
             platforms.forEach(p => p.render());
+            spikes.forEach(s => s.render()); // Feature 91
             marios.forEach(m => m.render());
             if (bossMarco) bossMarco.render();
             player.render();
