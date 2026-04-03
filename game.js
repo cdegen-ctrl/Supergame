@@ -4210,24 +4210,49 @@ function renderAchievementToasts() {
     if (achievementToasts.length === 0) return;
     ctx.save();
     achievementToasts.forEach((toast, i) => {
-        const alpha = toast.timer < 40 ? toast.timer / 40 : toast.timer > 160 ? (180 - toast.timer) / 20 : 1;
-        const y = 85 + i * 38;
-        const tw = 220;
-        const tx = W / 2 - tw / 2;
+        const SHOW_IN = 20;
+        const SHOW_OUT = 40;
+        const TOTAL = 180;
+        const alpha = toast.timer < SHOW_OUT ? toast.timer / SHOW_OUT
+                    : toast.timer > TOTAL - SHOW_IN ? (TOTAL - toast.timer) / SHOW_IN : 1;
+        // Feature 116: slide in from right edge
+        const slideProgress = toast.timer > TOTAL - SHOW_IN
+            ? (TOTAL - toast.timer) / SHOW_IN  // slide in
+            : 1;
+        const tw = 250, th = 44;
+        const targetX = W - tw - 12;
+        const slideOffsetX = (1 - slideProgress) * (tw + 14);
+        const tx = targetX + slideOffsetX;
+        const ty = 70 + i * (th + 6);
+
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = 'rgba(10, 20, 40, 0.88)';
+        // Card background with gradient
+        const grad = ctx.createLinearGradient(tx, ty, tx + tw, ty);
+        grad.addColorStop(0, 'rgba(20, 40, 10, 0.94)');
+        grad.addColorStop(1, 'rgba(10, 25, 5, 0.94)');
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.roundRect(tx, y, tw, 30, 8);
+        ctx.roundRect(tx, ty, tw, th, 10);
         ctx.fill();
-        ctx.strokeStyle = '#ffcc44';
-        ctx.lineWidth = 1.5;
+
+        // Glowing border (Feature 116)
+        const pulse = 0.7 + Math.sin(Date.now() * 0.008 - i) * 0.3;
+        ctx.strokeStyle = `rgba(255, 220, 50, ${pulse})`;
+        ctx.lineWidth = 1.8;
         ctx.beginPath();
-        ctx.roundRect(tx, y, tw, 30, 8);
+        ctx.roundRect(tx, ty, tw, th, 10);
         ctx.stroke();
+
+        // "ДОСТИЖЕНИЕ!" header
+        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = '#ffcc00';
+        ctx.textAlign = 'left';
+        ctx.fillText('🏆 ДОСТИЖЕНИЕ!', tx + 10, ty + 13);
+
+        // Achievement label
         ctx.font = 'bold 13px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#ffee88';
-        ctx.fillText(toast.label, W / 2, y + 20);
+        ctx.fillStyle = '#ffffcc';
+        ctx.fillText(toast.label, tx + 10, ty + 32);
         ctx.textAlign = 'left';
     });
     ctx.globalAlpha = 1;
@@ -5525,6 +5550,31 @@ try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || 
 let levelCompletionTime = 0;   // seconds spent on last completed level
 let isNewLevelTimeRecord = false;
 
+// === FEATURE 115: ENDLESS MODE ===
+let endlessMode = false;
+let endlessCycle = 0;           // how many times all levels have been cleared
+let endlessBestScore = parseInt(localStorage.getItem('mushroomEndlessBest') || '0');
+
+function startEndlessMode() {
+    endlessMode = true;
+    endlessCycle = 0;
+    survivalMode = false;
+    dailyChallengeMode = false;
+    speedRunMode = false;
+    resetRunStats();
+    resetShop();
+    currentLevel = 0;
+    totalScore = 0;
+    nextMilestoneIdx = 0;
+    milestoneBannerTimer = 0;
+    player = null;
+    stars = [];
+    loadLevel(currentLevel);
+    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
+    player.score = 0;
+    gameState = 'PLAYING';
+}
+
 // === FEATURE 96: SPEED RUN MODE ===
 let speedRunMode = false;
 let speedRunTotalTime = 0;     // accumulated total time across all levels in this run
@@ -5989,7 +6039,8 @@ function loadLevel(index) {
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     const dailySpeedMult = (dailyChallengeMode && dailyChallengeModifiers.includes('fast_enemies')) ? 1.6 : 1;
-    const speed = lvl.marioSpeed * speedMult * diffMult * dailySpeedMult;
+    const endlessMult = endlessMode ? 1 + endlessCycle * 0.12 : 1; // Feature 115: each cycle enemies are 12% faster
+    const speed = lvl.marioSpeed * speedMult * diffMult * dailySpeedMult * endlessMult;
     marios = lvl.marioSpawns.map((s, i) => {
         const type = lvl.marioTypes ? (lvl.marioTypes[i] || getMarioType(index, i)) : getMarioType(index, i);
         return new Mario(s.x, s.y, speed, type);
@@ -6122,6 +6173,8 @@ function onEnemyKilledStreak(x, y) {
 
 function startGame() {
     dailyChallengeMode = false; // Feature 86: clear daily challenge on new game
+    endlessMode = false;        // Feature 115: clear endless mode on new game
+    endlessCycle = 0;
     mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true'; // restore persisted mirror
     resetAchievements();
     resetRunStats();
@@ -6895,8 +6948,14 @@ function drawHUD() {
         ctx.restore();
     }
 
-    // High score
-    if (highScore > 0) {
+    // High score / Endless cycle indicator
+    if (endlessMode) {
+        const cycleStr = `♾️ ЦИКЛ ${endlessCycle + 1}`;
+        ctx.fillStyle = C.textShadow;
+        ctx.fillText(cycleStr, W / 2 - 48, 32);
+        ctx.fillStyle = '#aaffcc';
+        ctx.fillText(cycleStr, W / 2 - 50, 30);
+    } else if (highScore > 0) {
         ctx.fillStyle = C.textShadow;
         ctx.fillText(`HI: ${highScore}`, W / 2 - 38, 32);
         ctx.fillStyle = '#ffcc00';
@@ -7747,7 +7806,8 @@ function renderMenu() {
     ctx.restore();
 
     drawTitle("ENTER — Начать игру", 400, 18, C.text);
-    drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня    R — ⏱ Спидран    T — 📊 Статистика", 425, 12, '#ffaa44');
+    drawTitle("S — 🏟 Выживание  A — 🏆 Достижения  D — 📅 Испытание  R — ⏱ Спидран  E — ♾️ Бесконечный  T — 📊 Стат", 425, 11, '#ffaa44');
+    if (endlessBestScore > 0) drawTitle(`♾️ Рекорд бесконечного: ${endlessBestScore}`, 440, 11, '#aaffcc');
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
     drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
     if (survivalBestTime > 0) {
@@ -8590,6 +8650,12 @@ function update() {
                 gameState = 'PLAYING';
             }
             keys['_rMenuWas'] = keys['KeyR'];
+            // Feature 115: E key starts Endless Mode
+            if (keys['KeyE'] && !keys['_eMenuWas']) {
+                initAudio();
+                startEndlessMode();
+            }
+            keys['_eMenuWas'] = keys['KeyE'];
             // Feature 108: T key opens all-time stats screen
             if (keys['KeyT'] && !keys['_tMenuWas']) {
                 gameState = 'STATS';
@@ -8964,19 +9030,33 @@ function update() {
                     }
                     // Feature 82: After bonus level (last level) → go back to menu
                     if (currentLevel >= LEVELS.length) {
-                        if (totalScore > highScore) {
-                            highScore = totalScore;
-                            localStorage.setItem('mushroomHighScore', String(highScore));
+                        if (endlessMode) {
+                            // Feature 115: Endless Mode — cycle back to level 0 with higher difficulty
+                            endlessCycle++;
+                            currentLevel = 0;
+                            if (totalScore > endlessBestScore) {
+                                endlessBestScore = totalScore;
+                                localStorage.setItem('mushroomEndlessBest', String(endlessBestScore));
+                            }
+                            particles.push(new Particle(W / 2 - 90, H / 2 - 60, `🔄 ЦИКЛ ${endlessCycle}! Враги быстрее!`, '#ffaa00'));
+                            loadLevel(currentLevel);
+                            levelTransitionTimer = 0;
+                            gameState = 'LEVEL_TRANSITION';
+                        } else {
+                            if (totalScore > highScore) {
+                                highScore = totalScore;
+                                localStorage.setItem('mushroomHighScore', String(highScore));
+                            }
+                            stopBGM();
+                            gameState = 'VICTORY';
+                            spawnConfetti();
+                            playSound('victory');
                         }
-                        stopBGM();
-                        gameState = 'VICTORY';
-                        spawnConfetti();
-                        playSound('victory');
                     } else {
                         loadLevel(currentLevel);
                         levelTransitionTimer = 0;
-                        // Feature 107: show shop between levels (skip in survival/daily/speedrun)
-                        if (!survivalMode && !dailyChallengeMode && !speedRunMode) {
+                        // Feature 107: show shop between levels (skip in survival/daily/speedrun/endless)
+                        if (!survivalMode && !dailyChallengeMode && !speedRunMode && !endlessMode) {
                             shopCoins += levelCoinsCollected;
                             shopSelectedIdx = 0;
                             gameState = 'SHOP';
