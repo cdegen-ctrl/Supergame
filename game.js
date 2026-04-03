@@ -4335,6 +4335,79 @@ const LEVELS = [
         ],
         spikeSpawns: [{ x: 152, y: 444, count: 2 }, { x: 480, y: 444, count: 2 }], // Feature 91
         tripleCoinSpawns: [{ x: 340, y: 90 }], // Feature 92
+    },
+    {
+        // Level 15: «Небеса» — Feature 94: heavenly sky, all enemy types, max challenge
+        platforms: [
+            // Tiny ground footholds
+            { x: 0,   y: 460, w: 50,  h: 40 },
+            { x: 750, y: 460, w: 50,  h: 40 },
+            // Low tier — moving clouds
+            { x: 70,  y: 420, w: 80,  h: 18, moveAxis: 'x', moveRange: 80,  moveSpeed: 2.8 },
+            { x: 240, y: 400, w: 70,  h: 18, moveAxis: 'x', moveRange: 90,  moveSpeed: 3.0 },
+            { x: 420, y: 420, w: 80,  h: 18, moveAxis: 'x', moveRange: 75,  moveSpeed: 2.6 },
+            { x: 610, y: 400, w: 70,  h: 18, moveAxis: 'y', moveRange: 45,  moveSpeed: 2.4 },
+            // Mid tier — crumbling and ice
+            { x: 30,  y: 340, w: 90,  h: 18, crumble: true },
+            { x: 180, y: 320, w: 90,  h: 18, ice: true },
+            { x: 360, y: 335, w: 80,  h: 18, moveAxis: 'y', moveRange: 55,  moveSpeed: 2.2 },
+            { x: 530, y: 315, w: 90,  h: 18, crumble: true },
+            { x: 680, y: 335, w: 80,  h: 18, ice: true },
+            // Upper-mid tier
+            { x: 60,  y: 240, w: 90,  h: 18, moveAxis: 'x', moveRange: 90,  moveSpeed: 3.2 },
+            { x: 240, y: 220, w: 90,  h: 18, ice: true },
+            { x: 420, y: 235, w: 90,  h: 18, moveAxis: 'y', moveRange: 50,  moveSpeed: 2.5 },
+            { x: 610, y: 215, w: 90,  h: 18, crumble: true },
+            // Top tier — summit
+            { x: 100, y: 140, w: 100, h: 18, moveAxis: 'x', moveRange: 80,  moveSpeed: 2.0 },
+            { x: 320, y: 115, w: 160, h: 18 },
+            { x: 570, y: 130, w: 100, h: 18, crumble: true },
+        ],
+        marioSpawns: [
+            { x: 80,  y: 430 },
+            { x: 430, y: 430 },
+            { x: 700, y: 430 },
+            { x: 190, y: 295 },
+            { x: 545, y: 290 },
+        ],
+        marioTypes: ['fast', 'armored', 'fast', 'ghost_mario', 'armored'],
+        marioSpeed: 3.2,
+        playerSpawn: { x: 20, y: 430 },
+        coinSpawns: [
+            { x: 60,  y: 435 }, { x: 250, y: 435 }, { x: 440, y: 435 }, { x: 640, y: 435 },
+            { x: 40,  y: 315 }, { x: 190, y: 295 }, { x: 375, y: 310 }, { x: 545, y: 290 }, { x: 695, y: 310 },
+            { x: 70,  y: 215 }, { x: 255, y: 195 }, { x: 430, y: 210 }, { x: 625, y: 190 },
+            { x: 120, y: 115 }, { x: 360, y: 90  }, { x: 590, y: 105 },
+        ],
+        doubleCoinSpawns: [
+            { x: 400, y: 90 }, { x: 450, y: 90 },
+            { x: 300, y: 195 }, { x: 660, y: 180 },
+        ],
+        tripleCoinSpawns: [{ x: 380, y: 90 }], // Feature 92
+        starSpawns:       [{ x: 340, y: 90 }, { x: 490, y: 90 }],
+        shieldSpawns:     [{ x: 0,   y: 445 }, { x: 720, y: 445 }],
+        bombSpawns:       [{ x: 230, y: 290 }, { x: 620, y: 280 }],
+        springSpawns:     [{ x: 0, y: 446 }, { x: 730, y: 446 }],
+        speedBoostSpawns: [{ x: 375, y: 310 }],
+        magnetSpawns:     [{ x: 460, y: 90  }],
+        freezeSpawns:     [{ x: 65,  y: 220 }, { x: 625, y: 195 }],
+        ghostSpawns:      [{ x: 500, y: 90  }],
+        electroSpawns:    [{ x: 350, y: 90  }, { x: 260, y: 195 }],
+        slowMoSpawns:     [{ x: 165, y: 125 }, { x: 580, y: 115 }],
+        rocketSpawns:     [{ x: 160, y: 90 }, { x: 520, y: 90 }], // Feature 80
+        magBootsSpawns:   [{ x: 420, y: 90  }], // Feature 85
+        giantSpawns:      [{ x: 210, y: 90 }, { x: 590, y: 90 }], // Feature 87
+        scoreBoostSpawns: [{ x: 550, y: 90  }],
+        checkpointSpawns: [{ x: 395, y: 435 }],
+        flyingMarioSpawns:    [{ x: 160, y: 185 }, { x: 420, y: 165 }, { x: 640, y: 180 }],
+        shooterMarioSpawns:   [{ x: 340, y: 90  }, { x: 490, y: 105 }],
+        teleporterMarioSpawns:[{ x: 200, y: 420 }, { x: 580, y: 415 }], // Feature 89
+        parachuteMarioSpawns: [{ x: 180, y: -60 }, { x: 420, y: -90 }, { x: 680, y: -50 }], // Feature 71
+        portalSpawns: [
+            { blue: { x: 10, y: 420 }, orange: { x: 380, y: 90 } },
+            { blue: { x: 450, y: 420 }, orange: { x: 160, y: 130 } },
+        ],
+        spikeSpawns: [{ x: 52, y: 444, count: 3 }, { x: 360, y: 444, count: 2 }, { x: 620, y: 444, count: 3 }], // Feature 91
     }
 ];
 
@@ -6517,8 +6590,64 @@ function renderDailyChallenge() {
     drawTitle('ENTER — Начать   ESC — Назад', 445, 14, '#aaaaaa');
 }
 
+// Feature 93: Animated menu background — floating coins and stars
+const menuDecor = Array.from({ length: 18 }, (_, i) => ({
+    x: Math.random() * 800,
+    y: Math.random() * 500,
+    vy: -(0.3 + Math.random() * 0.6),
+    vx: (Math.random() - 0.5) * 0.4,
+    r: 4 + Math.random() * 7,
+    phase: Math.random() * Math.PI * 2,
+    type: i < 12 ? 'coin' : 'star', // 12 coins, 6 stars
+    alpha: 0.15 + Math.random() * 0.25,
+}));
+
+function updateRenderMenuDecor() {
+    const t = Date.now() * 0.001;
+    for (const d of menuDecor) {
+        d.x += d.vx + Math.sin(t * 0.5 + d.phase) * 0.2;
+        d.y += d.vy;
+        if (d.y < -20) { d.y = H + 10; d.x = Math.random() * W; }
+        if (d.x < -20) d.x = W + 10;
+        if (d.x > W + 20) d.x = -10;
+
+        const pulse = d.alpha * (0.7 + Math.sin(t * 1.2 + d.phase) * 0.3);
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        if (d.type === 'coin') {
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffcc00';
+            ctx.fill();
+            ctx.strokeStyle = '#e6a800';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.font = `bold ${Math.round(d.r * 1.1)}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#b8860b';
+            ctx.fillText('$', d.x, d.y + d.r * 0.4);
+        } else {
+            // Star shape
+            ctx.beginPath();
+            for (let k = 0; k < 10; k++) {
+                const angle = (Math.PI / 5) * k - Math.PI / 2;
+                const r = k % 2 === 0 ? d.r : d.r * 0.45;
+                const px = d.x + Math.cos(angle) * r;
+                const py = d.y + Math.sin(angle) * r;
+                k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fillStyle = '#ffffaa';
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+    }
+}
+
 function renderMenu() {
     drawBackground();
+    updateRenderMenuDecor(); // Feature 93: animated floating coins & stars
 
     drawTitle("MUSHROOM'S REVENGE", 160, 36, '#ff4444');
     drawTitle("Прыгай на Марио!", 210, 20, '#ffcc00');
