@@ -53,6 +53,41 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+// === FEATURE 109: KONAMI CODE EASTER EGG ===
+const KONAMI_SEQUENCE = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','Enter'];
+let konamiProgress = 0;
+let ultraModeActive = false;
+let ultraModeTimer = 0;        // frames remaining (display only)
+const ULTRA_MODE_FRAMES = 180; // 3s banner
+
+window.addEventListener('keydown', e => {
+    if (e.code === KONAMI_SEQUENCE[konamiProgress]) {
+        konamiProgress++;
+        if (konamiProgress >= KONAMI_SEQUENCE.length) {
+            konamiProgress = 0;
+            if (gameState === 'MENU' || gameState === 'PLAYING') {
+                activateUltraMode();
+            }
+        }
+    } else {
+        konamiProgress = e.code === KONAMI_SEQUENCE[0] ? 1 : 0;
+    }
+}, true); // capture phase so it runs alongside the main keydown listener
+
+function activateUltraMode() {
+    ultraModeActive = true;
+    ultraModeTimer = ULTRA_MODE_FRAMES;
+    if (gameState === 'PLAYING' && player) {
+        player.lives = Math.min(player.lives + 3, 9);
+        player.starTimer = 600;        // 10 seconds of star power
+        player.giantTimer = 600;       // 10 seconds of giant mode
+        player.shieldActive = true;
+        shakeTimer = 30; shakeIntensity = 8;
+        particles.push(new Particle(W / 2 - 80, H / 2 - 60, '🌟 ULTRA MODE! 🌟', '#ffdd00'));
+    }
+    playSound('star');
+}
+
 // === TOUCH INPUT ===
 const touchKeys = { left: false, right: false, jump: false, throw: false };
 
@@ -4001,6 +4036,23 @@ function resetRunStats() {
     runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 };
 }
 
+// === FEATURE 110: PRESTIGE TITLE SYSTEM ===
+const PRESTIGE_TITLES = [
+    { minKills: 1000, title: '☠️ Истребитель Марио',   color: '#ff2222' },
+    { minKills: 500,  title: '🔥 Легенда Грибного леса', color: '#ff7700' },
+    { minKills: 200,  title: '⚔️ Великий Охотник',       color: '#ffcc00' },
+    { minKills: 50,   title: '🍄 Опытный Гриб',          color: '#88ff44' },
+    { minKills: 10,   title: '🌱 Начинающий',            color: '#aaddff' },
+    { minKills: 0,    title: '🥚 Новичок',               color: '#cccccc' },
+];
+function getPrestigeTitle() {
+    const kills = allTimeStats.enemiesKilled;
+    for (const tier of PRESTIGE_TITLES) {
+        if (kills >= tier.minKills) return tier;
+    }
+    return PRESTIGE_TITLES[PRESTIGE_TITLES.length - 1];
+}
+
 // === FEATURE 108: ALL-TIME PERSISTENT STATISTICS ===
 const ALL_TIME_STATS_KEY = 'mushroomAllTimeStats';
 let allTimeStats = { enemiesKilled: 0, coinsCollected: 0, deaths: 0, gamesPlayed: 0, levelsCleared: 0, maxCombo: 0, wins: 0 };
@@ -7559,12 +7611,41 @@ function renderMenu() {
     drawPixelSprite(sx, 240, px, MUSHROOM_SPRITE);
     ctx.restore();
 
+    // Feature 110: Prestige title display on menu
+    const prestige = getPrestigeTitle();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillStyle = prestige.color;
+    ctx.shadowColor = prestige.color;
+    ctx.shadowBlur = 8;
+    ctx.fillText(prestige.title, W / 2, 395);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'left';
+    ctx.restore();
+
     drawTitle("ENTER — Начать игру", 400, 18, C.text);
     drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня    R — ⏱ Спидран    T — 📊 Статистика", 425, 12, '#ffaa44');
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
     drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
     if (survivalBestTime > 0) {
         drawTitle(`Рекорд выживания: ${survivalBestTime} сек`, 482, 12, '#ffcc44');
+    }
+
+    // Feature 109: Ultra Mode active banner on menu
+    if (ultraModeTimer > 0) {
+        ultraModeTimer--;
+        const sc = 1 + Math.sin(Date.now() * 0.006) * 0.05;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = `bold ${Math.round(22 * sc)}px monospace`;
+        ctx.fillStyle = '#ffee00';
+        ctx.shadowColor = '#ff8800';
+        ctx.shadowBlur = 12;
+        ctx.fillText('🌟 ULTRA MODE АКТИВЕН! 🌟', W / 2, 355);
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'left';
+        ctx.restore();
     }
 
     // Mini leaderboard on menu
@@ -7643,6 +7724,14 @@ function renderStats() {
     ctx.fillText('📊 СТАТИСТИКА ЗА ВСЁ ВРЕМЯ', W / 2 + 2, 82);
     ctx.fillStyle = '#aaddff';
     ctx.fillText('📊 СТАТИСТИКА ЗА ВСЁ ВРЕМЯ', W / 2, 80);
+    // Feature 110: current prestige title
+    const sp = getPrestigeTitle();
+    ctx.font = 'bold 14px monospace';
+    ctx.fillStyle = sp.color;
+    ctx.shadowColor = sp.color;
+    ctx.shadowBlur = 6;
+    ctx.fillText(sp.title, W / 2, 104);
+    ctx.shadowBlur = 0;
     ctx.textAlign = 'left';
     ctx.restore();
 
@@ -7697,6 +7786,19 @@ function renderGameOver() {
     if (totalScore >= highScore && highScore > 0) {
         drawTitle("НОВЫЙ РЕКОРД!", 230, 20, '#00ff00');
     }
+
+    // Feature 110: Show prestige title on game over
+    const pt = getPrestigeTitle();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillStyle = pt.color;
+    ctx.shadowColor = pt.color;
+    ctx.shadowBlur = 6;
+    ctx.fillText(pt.title, W / 2, 252);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'left';
+    ctx.restore();
 
     // Leaderboard top-3
     const board = loadLeaderboard();
@@ -7774,6 +7876,18 @@ function renderVictory() {
     drawTitle('Финальный Марио повержен!', 198, 18, '#00ff88');
     drawTitle(`Счёт: ${totalScore}`, 232, 22, '#ffcc00');
     if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 262, 18, '#00ff44');
+    // Feature 110: Show prestige title on victory screen
+    const victoryPrestige = getPrestigeTitle();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillStyle = victoryPrestige.color;
+    ctx.shadowColor = victoryPrestige.color;
+    ctx.shadowBlur = 8;
+    ctx.fillText(victoryPrestige.title, W / 2, 285);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'left';
+    ctx.restore();
     // Feature 96: Speed Run total time display
     if (speedRunMode && speedRunTotalTime > 0) {
         const m = Math.floor(speedRunTotalTime / 60);
@@ -8972,6 +9086,26 @@ function render() {
                 ctx.fillText(milestoneBannerText, W / 2 + 2, H / 2 - 58);
                 ctx.fillStyle = milestoneBannerColor;
                 ctx.fillText(milestoneBannerText, W / 2, H / 2 - 60);
+                ctx.textAlign = 'left';
+                ctx.restore();
+            }
+            // Feature 109: Ultra Mode activation banner
+            if (ultraModeTimer > 0) {
+                ultraModeTimer--;
+                const fadeFrames = 30;
+                const a = ultraModeTimer < fadeFrames ? ultraModeTimer / fadeFrames : 1;
+                const sc = 1 + Math.sin(ultraModeTimer * 0.15) * 0.05;
+                ctx.save();
+                ctx.globalAlpha = a;
+                ctx.textAlign = 'center';
+                ctx.font = `bold ${Math.round(44 * sc)}px monospace`;
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillText('🌟 ULTRA MODE! 🌟', W / 2 + 3, H / 2 - 98);
+                ctx.fillStyle = '#ffee00';
+                ctx.shadowColor = '#ffaa00';
+                ctx.shadowBlur = 18;
+                ctx.fillText('🌟 ULTRA MODE! 🌟', W / 2, H / 2 - 101);
+                ctx.shadowBlur = 0;
                 ctx.textAlign = 'left';
                 ctx.restore();
             }
