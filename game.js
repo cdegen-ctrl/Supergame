@@ -4643,6 +4643,17 @@ let difficulty = localStorage.getItem('mushroomDifficulty') || 'normal';
 // === FEATURE 81: MIRROR MODE ===
 let mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true';
 
+// === FEATURE 97: COLORBLIND MODE ===
+let colorblindMode = localStorage.getItem('mushroomColorblind') === 'true';
+function applyColorblindMode() {
+    if (colorblindMode) {
+        canvas.classList.add('colorblind');
+    } else {
+        canvas.classList.remove('colorblind');
+    }
+}
+applyColorblindMode();
+
 // === FEATURE 82: COIN CAVE MODE ===
 let coinCaveMode = false;
 let coinCaveCountdown = 0;       // frames remaining (starts at 30*60)
@@ -4785,6 +4796,29 @@ function calcLevelGrade(deaths, coinsCollected, coinsTotal, timeSecs) {
     if (pct >= 0.75 && timeSecs < 50) return 'A';
     if (pct >= 0.50) return 'B';
     return 'C';
+}
+
+// === FEATURE 98: CHALLENGE CARDS ===
+// One challenge per level (deterministic per level index)
+const CHALLENGE_DEFS = [
+    { id: 'combo3',     desc: 'Убей 3 врагов комбо',        check: () => runStats.maxCombo >= 3 },
+    { id: 'noDeathLvl', desc: 'Пройди без смертей',         check: () => levelDeathCount === 0 },
+    { id: 'coins100',   desc: 'Собери 100 очков монетами',   check: () => runStats.coinsCollected >= 2 },
+    { id: 'fast30',     desc: 'Пройди за 30 секунд',        check: () => levelCompletionTime <= 30 },
+    { id: 'combo5',     desc: 'Комбо ×5 или больше',        check: () => runStats.maxCombo >= 5 },
+    { id: 'allCoins',   desc: 'Собери все монеты',           check: () => levelCoinsTotal > 0 && levelCoinsCollected >= levelCoinsTotal },
+    { id: 'fast20',     desc: 'Пройди за 20 секунд',        check: () => levelCompletionTime <= 20 },
+    { id: 'noDeathFast',desc: 'Без смертей и за 40 сек',    check: () => levelDeathCount === 0 && levelCompletionTime <= 40 },
+];
+let challengeCompleted = {};
+try { challengeCompleted = JSON.parse(localStorage.getItem('mushroomChallenges') || '{}'); } catch { challengeCompleted = {}; }
+let currentChallengeIdx = 0;
+let challengeCardTimer = 0;    // frames to show the card at level start (180 = 3 sec)
+const CHALLENGE_CARD_DURATION = 180;
+let challengeBonusAwarded = false; // flag so we only award once per level
+
+function getChallengeForLevel(lvlIdx) {
+    return CHALLENGE_DEFS[lvlIdx % CHALLENGE_DEFS.length];
 }
 
 // === MUSHROOM COLOR CUSTOMIZATION ===
@@ -5253,6 +5287,10 @@ function loadLevel(index) {
     initWeather(index);
     initBirds(); // Feature 60: spawn background birds
     shootingStars = []; // Feature 62: reset shooting stars on level load
+    // Feature 98: set up challenge card for this level
+    currentChallengeIdx = index % CHALLENGE_DEFS.length;
+    challengeCardTimer = CHALLENGE_CARD_DURATION;
+    challengeBonusAwarded = false;
     // Start BGM appropriate to this level's theme
     if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
 }
@@ -6425,6 +6463,43 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 98: Challenge Card — shown for first 3 seconds of each level
+    if (challengeCardTimer > 0) {
+        challengeCardTimer--;
+        const fadeIn  = Math.min(1, (CHALLENGE_CARD_DURATION - challengeCardTimer) / 20);
+        const fadeOut = Math.min(1, challengeCardTimer / 20);
+        const alpha = Math.min(fadeIn, fadeOut);
+        const ch = getChallengeForLevel(currentChallengeIdx);
+        const done = !!challengeCompleted[`${currentLevel}_${ch.id}`];
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        // Card background
+        ctx.fillStyle = done ? 'rgba(20,80,30,0.92)' : 'rgba(20,30,70,0.92)';
+        ctx.beginPath();
+        ctx.roundRect(W / 2 - 150, H / 2 - 42, 300, 68, 12);
+        ctx.fill();
+        ctx.strokeStyle = done ? '#44ff88' : '#8899ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(W / 2 - 150, H / 2 - 42, 300, 68, 12);
+        ctx.stroke();
+        // Title
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = done ? '#aaffaa' : '#aabbff';
+        ctx.fillText('🎯 ЗАДАНИЕ УРОВНЯ', W / 2, H / 2 - 24);
+        // Challenge text
+        ctx.font = 'bold 15px monospace';
+        ctx.fillStyle = done ? '#ccffcc' : '#ffffff';
+        ctx.fillText(ch.desc, W / 2, H / 2 - 4);
+        // Status
+        ctx.font = '11px monospace';
+        ctx.fillStyle = done ? '#44ff88' : '#ffcc44';
+        ctx.fillText(done ? '✓ Выполнено! +500 очков в прошлый раз' : 'Выполни для +500 очков!', W / 2, H / 2 + 16);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Feature 86: Daily Challenge indicator
     if (dailyChallengeMode) {
         ctx.save();
@@ -6542,6 +6617,12 @@ function drawHUD() {
     ctx.textAlign = 'right';
     ctx.fillStyle = soundMuted ? 'rgba(255,80,80,0.85)' : 'rgba(255,255,255,0.7)';
     ctx.fillText(soundMuted ? '🔇' : '🔊', W - 10, H - 10);
+    // Feature 97: Colorblind mode indicator
+    if (colorblindMode) {
+        ctx.font = '11px monospace';
+        ctx.fillStyle = 'rgba(0,220,255,0.85)';
+        ctx.fillText('👁CB', W - 10, H - 26);
+    }
     ctx.textAlign = 'left';
     ctx.restore();
 
@@ -7209,6 +7290,13 @@ function renderLevelSelect() {
                 ctx.fillStyle = 'rgba(255,255,255,0.3)';
                 ctx.fillText('—', bx + boxW / 2, by + 102);
             }
+            // Feature 98: Challenge complete badge (top-right corner of box)
+            const chKey = `${i}_${getChallengeForLevel(i % CHALLENGE_DEFS.length).id}`;
+            if (challengeCompleted[chKey]) {
+                ctx.font = 'bold 12px monospace';
+                ctx.fillStyle = '#44ff88';
+                ctx.fillText('🎯', bx + boxW - 8, by + 14);
+            }
         }
         ctx.restore();
     }
@@ -7660,6 +7748,19 @@ function update() {
                 if (speedRunMode) {
                     speedRunTotalTime += levelCompletionTime;
                 }
+                // Feature 98: Challenge Card — check if completed
+                if (!challengeBonusAwarded) {
+                    const ch = getChallengeForLevel(currentLevel % CHALLENGE_DEFS.length);
+                    const key = `${currentLevel}_${ch.id}`;
+                    if (!challengeCompleted[key] && ch.check()) {
+                        challengeCompleted[key] = true;
+                        localStorage.setItem('mushroomChallenges', JSON.stringify(challengeCompleted));
+                        player.score += 500;
+                        totalScore += 500;
+                        particles.push(new Particle(W / 2 - 80, H / 2 - 40, '🎯 ЗАДАНИЕ +500!', '#44ffaa'));
+                    }
+                    challengeBonusAwarded = true;
+                }
                 // Save best level time
                 if (!isBossLevel) {
                     const prev = levelBestTimes[currentLevel];
@@ -7773,6 +7874,14 @@ function update() {
                 gameState = 'MENU';
                 player = null;
             }
+            // Feature 97: C key toggles colorblind mode
+            if (keys['KeyC'] && !keys['_cPauseWas']) {
+                colorblindMode = !colorblindMode;
+                localStorage.setItem('mushroomColorblind', String(colorblindMode));
+                applyColorblindMode();
+                playSound('coin');
+            }
+            keys['_cPauseWas'] = keys['KeyC'];
             keys['_rWas'] = keys['KeyR'];
             keys['_mWas'] = keys['KeyM'];
             break;
@@ -7935,6 +8044,12 @@ function render() {
             ctx.fillStyle = 'rgba(150,60,200,0.8)';
             ctx.beginPath(); ctx.roundRect(btnX, 364, btnW - 2, btnH - 8, 8); ctx.fill();
             drawTitle('M — В меню', 386, 15, '#ffffff');
+
+            // Feature 97: Colorblind toggle button
+            const cbColor = colorblindMode ? 'rgba(0,180,200,0.85)' : 'rgba(60,60,80,0.75)';
+            ctx.fillStyle = cbColor;
+            ctx.beginPath(); ctx.roundRect(W / 2 - 110, 342, 220, 24, 6); ctx.fill();
+            drawTitle(`C — 👁 Дальтоник: ${colorblindMode ? 'ВКЛ' : 'ВЫКЛ'}`, 363, 11, colorblindMode ? '#aaffff' : '#aaaaaa');
             break;
     }
 

@@ -69,6 +69,10 @@
         @media (pointer: coarse) {
             #mobile-controls { display: block; }
         }
+        /* Feature 97: Colorblind Mode — hue shift for red-green distinction */
+        canvas.colorblind {
+            filter: hue-rotate(80deg) saturate(1.6) contrast(1.1);
+        }
     </style>
 </head>
 <body>
