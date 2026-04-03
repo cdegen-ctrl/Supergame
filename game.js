@@ -111,6 +111,9 @@ function setupTouchControls() {
                 keys['Enter'] = true;
                 setTimeout(() => { keys['Enter'] = false; }, 120);
             }
+        } else if (gameState === 'SHOP') { // Feature 107: tap to continue from shop
+            keys['Escape'] = true;
+            setTimeout(() => { keys['Escape'] = false; }, 120);
         }
     }, { passive: false });
 }
@@ -3998,6 +4001,31 @@ function resetRunStats() {
     runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 };
 }
 
+// === FEATURE 108: ALL-TIME PERSISTENT STATISTICS ===
+const ALL_TIME_STATS_KEY = 'mushroomAllTimeStats';
+let allTimeStats = { enemiesKilled: 0, coinsCollected: 0, deaths: 0, gamesPlayed: 0, levelsCleared: 0, maxCombo: 0, wins: 0 };
+try { allTimeStats = { ...allTimeStats, ...JSON.parse(localStorage.getItem(ALL_TIME_STATS_KEY) || '{}') }; } catch {}
+function saveAllTimeStats() { localStorage.setItem(ALL_TIME_STATS_KEY, JSON.stringify(allTimeStats)); }
+function mergeRunIntoAllTime() {
+    allTimeStats.enemiesKilled += runStats.enemiesKilled;
+    allTimeStats.coinsCollected += runStats.coinsCollected;
+    allTimeStats.deaths += runStats.deaths;
+    allTimeStats.levelsCleared += runStats.levelsCleared;
+    if (runStats.maxCombo > allTimeStats.maxCombo) allTimeStats.maxCombo = runStats.maxCombo;
+    saveAllTimeStats();
+}
+
+// === FEATURE 107: BETWEEN-LEVEL UPGRADE SHOP ===
+let shopCoins = 0;          // coins accumulated this run (wallet for the shop)
+let shopSelectedIdx = 0;    // currently highlighted shop item
+const SHOP_ITEMS = [
+    { id: 'life',   label: '❤️  +1 Жизнь',    desc: 'Получить дополнительную жизнь',  price: 8 },
+    { id: 'shield', label: '🛡️  Щит',           desc: 'Начать уровень со щитом',        price: 5 },
+    { id: 'ammo',   label: '🍄 +3 Споры',       desc: 'Восстановить все заряды спор',   price: 4 },
+    { id: 'magnet', label: '🧲 Магнит (10с)',   desc: 'Притягивать монеты 10 секунд',  price: 6 },
+];
+function resetShop() { shopCoins = 0; shopSelectedIdx = 0; }
+
 // === ACHIEVEMENT SYSTEM (Feature 79: Persistent) ===
 const achievementDefs = [
     { id: 'firstStomp',   label: '🦶 Первый стомп!',       desc: 'Раздавь первого Марио' },
@@ -5923,6 +5951,7 @@ function startGame() {
     mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true'; // restore persisted mirror
     resetAchievements();
     resetRunStats();
+    resetShop(); // Feature 107
     startGameFromLevel(0);
 }
 
@@ -7531,7 +7560,7 @@ function renderMenu() {
     ctx.restore();
 
     drawTitle("ENTER — Начать игру", 400, 18, C.text);
-    drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня    R — ⏱ Спидран", 425, 13, '#ffaa44');
+    drawTitle("S — 🏟 Выживание    A — 🏆 Достижения    D — 📅 Испытание дня    R — ⏱ Спидран    T — 📊 Статистика", 425, 12, '#ffaa44');
     drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
     drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
     if (survivalBestTime > 0) {
@@ -7602,6 +7631,61 @@ function renderAchievements() {
     });
 
     drawTitle('ESC — Назад', H - 30, 12, '#888888');
+}
+
+// Feature 108: All-time persistent statistics screen
+function renderStats() {
+    drawBackground();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 26px monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText('📊 СТАТИСТИКА ЗА ВСЁ ВРЕМЯ', W / 2 + 2, 82);
+    ctx.fillStyle = '#aaddff';
+    ctx.fillText('📊 СТАТИСТИКА ЗА ВСЁ ВРЕМЯ', W / 2, 80);
+    ctx.textAlign = 'left';
+    ctx.restore();
+
+    const rows = [
+        ['⚔️', 'Убито врагов',      allTimeStats.enemiesKilled],
+        ['💰', 'Монет собрано',     allTimeStats.coinsCollected],
+        ['🔥', 'Лучшее комбо',      allTimeStats.maxCombo],
+        ['🏁', 'Уровней пройдено',  allTimeStats.levelsCleared],
+        ['💀', 'Смертей всего',     allTimeStats.deaths],
+        ['🎮', 'Игр сыграно',       allTimeStats.gamesPlayed],
+        ['🏆', 'Побед',             allTimeStats.wins],
+        ['🌟', 'Лучший счёт',       highScore],
+    ];
+
+    const startY = 120;
+    const rowH = 42;
+    const panelW = 460;
+    const panelX = W / 2 - panelW / 2;
+
+    rows.forEach(([icon, label, value], i) => {
+        const ry = startY + i * rowH;
+        // Row background
+        ctx.save();
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(20,30,60,0.65)' : 'rgba(10,18,40,0.55)';
+        ctx.beginPath();
+        ctx.roundRect(panelX, ry, panelW, rowH - 2, 8);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.font = '16px monospace';
+        ctx.fillStyle = '#ccddff';
+        ctx.fillText(`${icon}  ${label}`, panelX + 18, ry + 26);
+
+        ctx.save();
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillStyle = '#ffdd44';
+        ctx.fillText(String(value), panelX + panelW - 16, ry + 26);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    });
+
+    drawTitle('ESC — Назад', H - 22, 12, '#888888');
 }
 
 function renderGameOver() {
@@ -7822,6 +7906,79 @@ function renderLevelComplete() {
         ctx.textAlign = 'left';
         ctx.restore();
     }
+}
+
+// Feature 107: Between-level upgrade shop renderer
+function renderShop() {
+    drawBackground();
+
+    // Title
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 28px monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText('🛒 МАГАЗИН АПГРЕЙДОВ', W / 2 + 2, 82);
+    ctx.fillStyle = '#ffcc00';
+    ctx.fillText('🛒 МАГАЗИН АПГРЕЙДОВ', W / 2, 80);
+
+    // Coin wallet display
+    ctx.font = 'bold 18px monospace';
+    ctx.fillStyle = '#ffd700';
+    ctx.fillText(`💰 Монеты: ${shopCoins}`, W / 2, 116);
+    ctx.textAlign = 'left';
+    ctx.restore();
+
+    // Shop items
+    const itemW = 480, itemH = 60, itemX = W / 2 - itemW / 2;
+    SHOP_ITEMS.forEach((item, i) => {
+        const itemY = 145 + i * 72;
+        const selected = i === shopSelectedIdx;
+        const canAfford = shopCoins >= item.price;
+
+        // Card background
+        ctx.save();
+        ctx.fillStyle = selected
+            ? (canAfford ? 'rgba(255,220,50,0.22)' : 'rgba(200,80,80,0.18)')
+            : 'rgba(15,25,55,0.72)';
+        ctx.beginPath();
+        ctx.roundRect(itemX, itemY, itemW, itemH, 12);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = selected ? (canAfford ? '#ffdd44' : '#ff6666') : (canAfford ? '#334466' : '#222233');
+        ctx.lineWidth = selected ? 2.5 : 1.2;
+        ctx.beginPath();
+        ctx.roundRect(itemX, itemY, itemW, itemH, 12);
+        ctx.stroke();
+        ctx.restore();
+
+        // Label
+        ctx.font = `bold 16px monospace`;
+        ctx.fillStyle = canAfford ? '#ffffff' : '#555566';
+        ctx.fillText(item.label, itemX + 18, itemY + 24);
+        // Description
+        ctx.font = `12px monospace`;
+        ctx.fillStyle = canAfford ? '#99aacc' : '#444455';
+        ctx.fillText(item.desc, itemX + 18, itemY + 46);
+
+        // Price badge
+        ctx.save();
+        ctx.textAlign = 'right';
+        ctx.font = `bold 16px monospace`;
+        ctx.fillStyle = canAfford ? '#ffd700' : '#555555';
+        ctx.fillText(`💰 ${item.price}`, itemX + itemW - 14, itemY + 36);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    });
+
+    // Instructions
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '12px monospace';
+    ctx.fillStyle = '#888899';
+    ctx.fillText('↑↓ — Навигация  |  ENTER — Купить  |  ESC — Продолжить', W / 2, H - 22);
+    ctx.textAlign = 'left';
+    ctx.restore();
 }
 
 function renderDifficultySelect() {
@@ -8196,6 +8353,17 @@ function update() {
                 gameState = 'PLAYING';
             }
             keys['_rMenuWas'] = keys['KeyR'];
+            // Feature 108: T key opens all-time stats screen
+            if (keys['KeyT'] && !keys['_tMenuWas']) {
+                gameState = 'STATS';
+            }
+            keys['_tMenuWas'] = keys['KeyT'];
+            break;
+
+        case 'STATS': // Feature 108
+            if (isEscape() && !escapeWasPressed) {
+                gameState = 'MENU';
+            }
             break;
 
         case 'ACHIEVEMENTS':
@@ -8568,8 +8736,15 @@ function update() {
                         playSound('victory');
                     } else {
                         loadLevel(currentLevel);
-                        gameState = 'LEVEL_TRANSITION';
                         levelTransitionTimer = 0;
+                        // Feature 107: show shop between levels (skip in survival/daily/speedrun)
+                        if (!survivalMode && !dailyChallengeMode && !speedRunMode) {
+                            shopCoins += levelCoinsCollected;
+                            shopSelectedIdx = 0;
+                            gameState = 'SHOP';
+                        } else {
+                            gameState = 'LEVEL_TRANSITION';
+                        }
                     }
                 }
             }
@@ -8593,6 +8768,9 @@ function update() {
                 confettiParticles = [];
                 speedRunMode = false;
                 speedRunTotalTime = 0;
+                allTimeStats.gamesPlayed++; // Feature 108
+                allTimeStats.wins++;        // Feature 108
+                mergeRunIntoAllTime();      // Feature 108
                 gameState = 'MENU';
             }
             break;
@@ -8604,6 +8782,45 @@ function update() {
             }
             break;
 
+        // Feature 107: Between-level shop
+        case 'SHOP': {
+            if (keys['ArrowUp'] && !keys['_shopUpWas']) {
+                shopSelectedIdx = (shopSelectedIdx - 1 + SHOP_ITEMS.length) % SHOP_ITEMS.length;
+                playSound('coin');
+            }
+            keys['_shopUpWas'] = keys['ArrowUp'];
+            if (keys['ArrowDown'] && !keys['_shopDownWas']) {
+                shopSelectedIdx = (shopSelectedIdx + 1) % SHOP_ITEMS.length;
+                playSound('coin');
+            }
+            keys['_shopDownWas'] = keys['ArrowDown'];
+            if (isEnter() && !enterWasPressed) {
+                const item = SHOP_ITEMS[shopSelectedIdx];
+                if (shopCoins >= item.price) {
+                    shopCoins -= item.price;
+                    if (item.id === 'life') {
+                        player.lives = Math.min(player.lives + 1, 9);
+                        particles.push(new Particle(player.x, player.y - 20, '❤️ +1 Жизнь!', '#ff3333'));
+                    } else if (item.id === 'shield') {
+                        player.shieldActive = true;
+                        particles.push(new Particle(player.x, player.y - 20, '🛡️ Щит!', '#4488ff'));
+                    } else if (item.id === 'ammo') {
+                        player.sporeAmmo = 3;
+                        player.sporeAmmoTimer = 0;
+                        particles.push(new Particle(player.x, player.y - 20, '🍄 Споры!', '#55dd33'));
+                    } else if (item.id === 'magnet') {
+                        player.magnetTimer = 600;
+                        particles.push(new Particle(player.x, player.y - 20, '🧲 Магнит!', '#aaddff'));
+                    }
+                    playSound('powerup');
+                }
+            }
+            if (isEscape() && !escapeWasPressed) {
+                gameState = 'LEVEL_TRANSITION';
+            }
+            break;
+        }
+
         case 'GAME_OVER':
             if (isEnter() && !enterWasPressed) {
                 if (totalScore > highScore) {
@@ -8611,6 +8828,8 @@ function update() {
                     localStorage.setItem('mushroomHighScore', String(highScore));
                 }
                 speedRunMode = false; speedRunTotalTime = 0; // Feature 96: reset speedrun on death
+                allTimeStats.gamesPlayed++; // Feature 108
+                mergeRunIntoAllTime();      // Feature 108
                 startGame();
             }
             break;
@@ -8668,6 +8887,10 @@ function render() {
             renderAchievements();
             break;
 
+        case 'STATS': // Feature 108
+            renderStats();
+            break;
+
         case 'DAILY_CHALLENGE':
             renderDailyChallenge();
             break;
@@ -8678,6 +8901,10 @@ function render() {
 
         case 'LEVEL_SELECT':
             renderLevelSelect();
+            break;
+
+        case 'SHOP': // Feature 107
+            renderShop();
             break;
 
         case 'PLAYING':
