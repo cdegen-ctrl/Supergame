@@ -1466,6 +1466,7 @@ class Mario extends Entity {
         this.vx = 0;
         this.vy = 0;
         spawnDeathParticles(this.x, this.y, this.w, this.h);
+        spawnStarBurst(this.x + this.w / 2, this.y + this.h / 2, comboCount); // Feature 117
         playSound('stomp');
         // 50% chance to drop a coin
         if (Math.random() < 0.5) {
@@ -3594,6 +3595,26 @@ function spawnDeathParticles(x, y, w, h) {
         const size = 3 + Math.floor(Math.random() * 4);
         particles.push(new DeathParticle(cx, cy, vx, vy, color, size));
     }
+}
+
+// Feature 117: Star burst effect on stomp kill
+function spawnStarBurst(cx, cy, comboN) {
+    const starColors = ['#ffee00', '#ffffff', '#ffaa00', '#ff88ff', '#88ffff'];
+    const count = 8 + Math.min(comboN * 3, 12); // more stars for higher combos
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+        const speed = 1.5 + Math.random() * 3;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed - 1;
+        const color = starColors[Math.floor(Math.random() * starColors.length)];
+        const p = new DeathParticle(cx, cy, vx, vy, color, 2 + Math.floor(Math.random() * 3));
+        p.gravity = 0.08;              // star bursts drift gently
+        p.timer = 50 + Math.random() * 30;
+        p.maxTimer = p.timer;
+        particles.push(p);
+    }
+    // Ring flash: brief screen flash at kill position
+    particles.push(new Particle(cx - 10, cy - 10, '✨', '#ffee88'));
 }
 
 // === TELEPORT PORTALS (Feature 49) ===
@@ -9408,15 +9429,15 @@ function render() {
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
             ctx.fillRect(0, 0, W, H);
 
-            // Pause panel
+            // Pause panel (Feature 118: expanded to include minimap)
             ctx.fillStyle = 'rgba(20,30,60,0.92)';
             ctx.beginPath();
-            ctx.roundRect(W / 2 - 170, 150, 340, 220, 16);
+            ctx.roundRect(W / 2 - 170, 150, 340, 360, 16);
             ctx.fill();
             ctx.strokeStyle = 'rgba(100,150,255,0.5)';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.roundRect(W / 2 - 170, 150, 340, 220, 16);
+            ctx.roundRect(W / 2 - 170, 150, 340, 360, 16);
             ctx.stroke();
 
             drawTitle('ПАУЗА', 205, 36, '#ffffff');
@@ -9457,6 +9478,68 @@ function render() {
             ctx.fillText(`${soundMuted ? '🔇' : '🔊'} ${Math.round(soundVolume * 100)}%`, W / 2, 408);
             ctx.textAlign = 'left';
             ctx.restore();
+
+            // Feature 118: Level minimap on pause screen (bottom section)
+            {
+                const mmW = 340, mmH = 90;
+                const mmX = W / 2 - mmW / 2;
+                const mmY = 418;
+                const scaleX = mmW / W;
+                const scaleY = mmH / H;
+
+                // Minimap background
+                ctx.save();
+                ctx.fillStyle = 'rgba(5,10,25,0.88)';
+                ctx.beginPath();
+                ctx.roundRect(mmX, mmY, mmW, mmH, 8);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(80,120,200,0.4)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(mmX, mmY, mmW, mmH, 8);
+                ctx.stroke();
+
+                ctx.font = '9px monospace';
+                ctx.fillStyle = '#6677aa';
+                ctx.fillText('КАРТА', mmX + 4, mmY + 9);
+
+                // Clip to minimap bounds
+                ctx.beginPath();
+                ctx.roundRect(mmX + 1, mmY + 1, mmW - 2, mmH - 2, 7);
+                ctx.clip();
+
+                // Platforms
+                platforms.forEach(p => {
+                    ctx.fillStyle = 'rgba(60,120,60,0.8)';
+                    ctx.fillRect(mmX + p.x * scaleX, mmY + p.y * scaleY, Math.max(p.w * scaleX, 2), Math.max(p.h * scaleY, 2));
+                });
+                // Spikes
+                spikes.forEach(s => {
+                    ctx.fillStyle = '#ff4444';
+                    ctx.fillRect(mmX + s.x * scaleX, mmY + s.y * scaleY, Math.max(s.w * scaleX, 2), 2);
+                });
+                // Coins
+                coins.filter(c => !c.collected).forEach(c => {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.fillRect(mmX + c.x * scaleX, mmY + c.y * scaleY, 3, 3);
+                });
+                // Enemies
+                marios.forEach(m => {
+                    ctx.fillStyle = m.isAlive ? '#ff3333' : 'rgba(255,80,80,0.3)';
+                    ctx.fillRect(mmX + m.x * scaleX, mmY + m.y * scaleY, Math.max(m.w * scaleX, 3), Math.max(m.h * scaleY, 3));
+                });
+                // Player
+                if (player) {
+                    ctx.fillStyle = '#00ff88';
+                    const px = mmX + player.x * scaleX;
+                    const py = mmY + player.y * scaleY;
+                    ctx.fillRect(px, py, Math.max(player.w * scaleX, 4), Math.max(player.h * scaleY, 4));
+                    // Player arrow marker
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(px + 1, py - 3, 2, 3);
+                }
+                ctx.restore();
+            }
             break;
     }
 
