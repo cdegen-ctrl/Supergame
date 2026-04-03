@@ -456,6 +456,8 @@ class Player extends Entity {
         // Feature 85: MagBoots power-up
         this.magBootsTimer = 0;
         this.ceilingLocked = false;
+        // Feature 87: Giant Mode power-up
+        this.giantTimer = 0;
         this.ceilingLockPlatform = null;
         this.ceilingLockTimer = 0;
         // Wall jump
@@ -672,6 +674,8 @@ class Player extends Entity {
                 this.vy = 2;
             }
         }
+        // Feature 87: Giant Mode timer
+        if (this.giantTimer > 0) this.giantTimer--;
         // freeze timer
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
@@ -919,6 +923,18 @@ class Player extends Entity {
             ctx.restore();
         }
 
+        // Feature 87: Giant Mode glow
+        if (this.giantTimer > 0) {
+            const pulse = 0.85 + Math.sin(this.giantTimer * 0.08) * 0.15;
+            ctx.save();
+            ctx.globalAlpha = 0.38 * pulse;
+            ctx.fillStyle = '#ff6600';
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2, this.w * 1.5 * pulse, this.h * 1.5 * pulse, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
         // 3D shadow
         drawShadow(this.x, this.y + this.h, this.w);
 
@@ -926,7 +942,9 @@ class Player extends Entity {
         const ghostAlpha = this.ghostTimer > 0 ? 0.42 + Math.sin(this.ghostTimer * 0.1) * 0.08 : 1;
         ctx.save();
         if (this.ghostTimer > 0) ctx.globalAlpha = ghostAlpha;
-        const px = 2.5;
+        // Feature 87: Giant Mode — scale sprite 2x around bottom-center
+        const giantScale = this.giantTimer > 0 ? 2.0 : 1.0;
+        const px = 2.5 * giantScale;
         const spriteW = 14 * px;
         const spriteH = 12 * px;
         // Pivot from bottom-center for squash/stretch
@@ -959,11 +977,11 @@ class Player extends Entity {
 }
 
 class Mario extends Entity {
-    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter'
+    // type: 'normal' | 'fast' | 'jumpy' | 'armored' | 'flying' | 'shooter' | 'teleporter'
     constructor(x, y, speed, type = 'normal') {
         super(x, y, 30, 36);
         this.type = type;
-        this.baseSpeed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : type === 'shooter' ? 0 : speed;
+        this.baseSpeed = type === 'fast' ? speed * 1.9 : type === 'armored' ? speed * 0.85 : (type === 'shooter' || type === 'teleporter') ? 0 : speed;
         this.speed = this.baseSpeed;
         this.direction = Math.random() > 0.5 ? 1 : -1;
         this.isAlive = true;
@@ -982,6 +1000,9 @@ class Mario extends Entity {
         // parachute: oscillation timer and deployed flag (Feature 71)
         this.parachuteDeployed = type === 'parachute';
         this.parachuteOscTimer = Math.random() * Math.PI * 2;
+        // Feature 89: teleporter
+        this.teleportTimer = type === 'teleporter' ? 180 + Math.floor(Math.random() * 120) : 99999;
+        this.teleportFlash = 0;
         // freeze
         this.frozenTimer = 0;
     }
@@ -1024,6 +1045,38 @@ class Mario extends Entity {
                     this.x + this.w / 2, this.y + this.h * 0.4, dir
                 ));
                 playSound('jump'); // reuse a sound
+            }
+            return true;
+        }
+
+        // Feature 89: Teleporter type — stands still, periodically teleports near player
+        if (this.type === 'teleporter') {
+            if (player) this.direction = player.x < this.x ? -1 : 1;
+            this.animTimer++;
+            if (this.animTimer > 20) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 2; }
+            // Apply gravity
+            this.vy += GRAVITY;
+            if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+            this.y += this.vy;
+            this.resolveCollisionsY();
+            // Teleport timer
+            if (this.teleportFlash > 0) this.teleportFlash--;
+            this.teleportTimer--;
+            if (this.teleportTimer <= 0 && player) {
+                this.teleportTimer = 200 + Math.floor(Math.random() * 80);
+                // Pick a position near the player
+                const side = Math.random() > 0.5 ? 1 : -1;
+                const newX = Math.max(10, Math.min(W - this.w - 10, player.x + side * (90 + Math.random() * 60)));
+                this.x = newX;
+                this.y = Math.max(player.y - 10, 0);
+                this.vy = 0;
+                this.teleportFlash = 25;
+                // Teleport particles at both source and destination
+                for (let i = 0; i < 10; i++) {
+                    const a = (Math.PI * 2 / 10) * i;
+                    const spd = 2 + Math.random() * 2;
+                    particles.push(new DeathParticle(this.x + this.w/2, this.y + this.h/2, Math.cos(a)*spd, Math.sin(a)*spd, '#44aaff', 4));
+                }
             }
             return true;
         }
@@ -1310,8 +1363,25 @@ class Mario extends Entity {
                     ctx.fillStyle = 'rgba(180,100,255,0.7)';
                     ctx.fillText('👻', badgeX, badgeY);
                 }
+            } else if (this.type === 'teleporter') {
+                ctx.fillStyle = '#000';
+                ctx.fillText('⚡', badgeX + 1, badgeY + 1);
+                ctx.fillStyle = '#44aaff';
+                ctx.fillText('⚡', badgeX, badgeY);
             }
             ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        // Feature 89: Teleporter flash effect on teleport
+        if (this.isAlive && this.type === 'teleporter' && this.teleportFlash > 0) {
+            const alpha = (this.teleportFlash / 25) * 0.7;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#88ccff';
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w/2, this.y + this.h/2, this.w * 1.2, this.h * 1.0, 0, 0, Math.PI * 2);
+            ctx.fill();
             ctx.restore();
         }
 
@@ -1415,6 +1485,28 @@ class Mario extends Entity {
             ctx.fillText('❄', this.x + this.w / 2, this.y - 2);
             ctx.textAlign = 'left';
             ctx.restore();
+        }
+
+        // Feature 89: Teleporter — blue tint overlay + countdown pulse
+        if (this.isAlive && this.type === 'teleporter') {
+            // Blue tint
+            ctx.save();
+            ctx.globalAlpha = 0.25 + Math.abs(Math.sin(Date.now() * 0.004)) * 0.15;
+            ctx.fillStyle = '#4488ff';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            ctx.restore();
+            // If about to teleport, show warning pulse
+            if (this.teleportTimer < 60) {
+                const urgency = 1 - this.teleportTimer / 60;
+                ctx.save();
+                ctx.globalAlpha = urgency * 0.6;
+                ctx.strokeStyle = '#88ccff';
+                ctx.lineWidth = 2 + urgency * 2;
+                ctx.beginPath();
+                ctx.rect(this.x - 3, this.y - 3, this.w + 6, this.h + 6);
+                ctx.stroke();
+                ctx.restore();
+            }
         }
 
         // Feature 69: Rage Mode — red glow on enraged enemies
@@ -2509,6 +2601,75 @@ function renderMagBootsEffect() {
     ctx.restore();
 }
 
+// === FEATURE 87: GIANT MODE POWER-UP ===
+const GIANT_DURATION = 360; // 6 seconds
+
+class GiantPU {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 22; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() { this.animTimer++; return !this.collected; }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.13) * 0.15;
+        ctx.save();
+        // Orange glow halo
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,100,0,${0.25 * pulse})`;
+        ctx.fill();
+        // Big mushroom icon
+        ctx.fillStyle = '#ff5500';
+        ctx.beginPath();
+        ctx.arc(cx, cy - 3, 8 * pulse, Math.PI, 0);
+        ctx.fill();
+        ctx.fillStyle = '#ff8833';
+        ctx.fillRect(cx - 5 * pulse, cy - 3, 10 * pulse, 8 * pulse);
+        // White spots
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(cx - 3, cy - 5, 2 * pulse, 0, Math.PI * 2);
+        ctx.arc(cx + 3, cy - 5, 2 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        // Orbiting stars
+        for (let i = 0; i < 4; i++) {
+            const a = (Math.PI * 2 / 4) * i + t * 0.08;
+            const sr = 14 * pulse;
+            ctx.fillStyle = `rgba(255,200,0,${0.6 + Math.sin(t * 0.15 + i) * 0.3})`;
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(a) * sr, cy + Math.sin(a) * sr, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+let giantPUs = [];
+
+function checkGiantPUCollisions() {
+    for (const g of giantPUs) {
+        if (g.collected) continue;
+        if (!aabb(player, g)) continue;
+        g.collected = true;
+        player.giantTimer = GIANT_DURATION;
+        particles.push(new Particle(g.x - 20, g.y - 16, '🔴 ГИГАНТ!', '#ff6600'));
+        for (let i = 0; i < 10; i++) {
+            const a = (Math.PI * 2 * i) / 10;
+            const spd = 2 + Math.random() * 3;
+            particles.push(new DeathParticle(g.x + g.w/2, g.y + g.h/2, Math.cos(a)*spd, Math.sin(a)*spd, '#ff6600', 5));
+        }
+        playSound('star');
+    }
+    giantPUs = giantPUs.filter(g => !g.collected);
+}
+
 function checkSlowMoCollisions() {
     for (const sm of slowMos) {
         if (sm.collected) continue;
@@ -3266,6 +3427,57 @@ class Particle {
     }
 }
 
+// === FEATURE 88: SCORE POPUPS — bigger, color-graded floating score indicators ===
+let scorePopups = [];
+
+class ScorePopup {
+    constructor(x, y, pts) {
+        this.x = x;
+        this.y = y;
+        this.pts = pts;
+        this.maxLife = 75;
+        this.life = this.maxLife;
+        this.vy = -2.2;
+        // Scale starts large, settles down
+        this.scale = 1.5;
+        // Color grade by point value
+        if (pts >= 1000)      this.color = '#ff00ff';
+        else if (pts >= 500)  this.color = '#ff4400';
+        else if (pts >= 200)  this.color = '#ff9900';
+        else if (pts >= 100)  this.color = '#ffdd00';
+        else                  this.color = '#ffffff';
+    }
+
+    update() {
+        this.y += this.vy;
+        this.vy *= 0.93;
+        this.scale = Math.max(1.0, this.scale - 0.03);
+        this.life--;
+        return this.life > 0;
+    }
+
+    render() {
+        const alpha = Math.min(1, this.life / 20);
+        const text = `+${this.pts}`;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = 'center';
+        const fs = Math.round(22 * this.scale);
+        ctx.font = `bold ${fs}px monospace`;
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = 4;
+        ctx.strokeText(text, this.x, this.y);
+        ctx.fillStyle = this.color;
+        ctx.fillText(text, this.x, this.y);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+function addScorePopup(x, y, pts) {
+    scorePopups.push(new ScorePopup(x + 16, y - 8, pts));
+}
+
 // === RUN STATISTICS ===
 let runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 }; // Feature 63: deaths counter
 function resetRunStats() {
@@ -3467,6 +3679,7 @@ const LEVELS = [
         ghostSpawns: [{ x: 270, y: 200 }],
         electroSpawns: [{ x: 460, y: 205 }], // Feature 72
         slowMoSpawns: [{ x: 210, y: 350 }], // Feature 75
+        giantSpawns: [{ x: 670, y: 350 }], // Feature 87
     },
     {
         // Level 5: The gauntlet with moving + crumbling platforms
@@ -3513,6 +3726,7 @@ const LEVELS = [
         electroSpawns: [{ x: 590, y: 230 }], // Feature 72
         slowMoSpawns: [{ x: 160, y: 235 }], // Feature 75
         rocketSpawns: [{ x: 520, y: 105 }], // Feature 80
+        giantSpawns: [{ x: 300, y: 105 }], // Feature 87
     },
     {
         // Level 6: Sky — lots of mid-air platforms, fast enemies
@@ -3562,6 +3776,7 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 300, y: -80 }, { x: 600, y: -50 }], // Feature 71
         electroSpawns: [{ x: 680, y: 375 }], // Feature 72
         slowMoSpawns: [{ x: 490, y: 125 }], // Feature 75
+        giantSpawns: [{ x: 240, y: 325 }], // Feature 87
     },
     {
         // Level 7: Chaos — all enemy types + moving + crumble + ice platforms
@@ -3614,6 +3829,7 @@ const LEVELS = [
         parachuteMarioSpawns: [{ x: 100, y: -70 }, { x: 450, y: -50 }, { x: 700, y: -90 }], // Feature 71
         electroSpawns: [{ x: 300, y: 65 }], // Feature 72
         rocketSpawns: [{ x: 640, y: 155 }], // Feature 80
+        giantSpawns: [{ x: 170, y: 200 }], // Feature 87
     },
     {
         // Level 8: Nightmare — extreme difficulty, maximum chaos
@@ -3673,6 +3889,7 @@ const LEVELS = [
         electroSpawns: [{ x: 210, y: 85 }, { x: 600, y: 185 }], // Feature 72
         slowMoSpawns: [{ x: 460, y: 85 }], // Feature 75
         magBootsSpawns: [{ x: 540, y: 165 }], // Feature 85
+        giantSpawns: [{ x: 320, y: 85 }], // Feature 87
     },
     {
         // Level 9: BOSS FIGHT — final battle arena
@@ -3759,6 +3976,7 @@ const LEVELS = [
         slowMoSpawns: [{ x: 650, y: 75 }, { x: 100, y: 185 }], // Feature 75
         rocketSpawns: [{ x: 450, y: 75 }], // Feature 80
         magBootsSpawns: [{ x: 240, y: 75 }], // Feature 85
+        giantSpawns: [{ x: 520, y: 75 }], // Feature 87
     },
     {
         // Level 11: «Апокалипсис» — Feature 74: megafinal with all mechanics
@@ -3833,6 +4051,7 @@ const LEVELS = [
         slowMoSpawns: [{ x: 360, y: 20 }, { x: 580, y: 100 }], // Feature 75
         rocketSpawns: [{ x: 160, y: 85 }, { x: 490, y: 85 }], // Feature 80
         magBootsSpawns: [{ x: 420, y: 20 }], // Feature 85
+        giantSpawns: [{ x: 220, y: 20 }, { x: 620, y: 20 }], // Feature 87
     },
     {
         // Level 12: «Олимп» — Feature 78: sky-high olympus, airborne enemies, strategic platforms
@@ -3899,6 +4118,7 @@ const LEVELS = [
         flyingMarioSpawns:    [{ x: 140, y: 220 }, { x: 400, y: 200 }, { x: 640, y: 215 }, { x: 270, y: 140 }, { x: 520, y: 140 }],
         shooterMarioSpawns:   [{ x: 310, y: 85  }, { x: 490, y: 100 }],
         parachuteMarioSpawns: [{ x: 150, y: -60 }, { x: 380, y: -80 }, { x: 620, y: -50 }, { x: 50, y: -110 }, { x: 750, y: -90 }], // Feature 71
+        giantSpawns: [{ x: 100, y: 185 }, { x: 540, y: 185 }], // Feature 87
     },
     ,{
         // Level 13: «Монетная пещера» — Feature 82: bonus coin-only timed challenge
@@ -3963,6 +4183,79 @@ const LEVELS = [
         ],
         springSpawns: [
             { x: 370, y: 446 },
+        ],
+    },
+    {
+        // Level 14: «Тьма» — Feature 90: dark level with teleporters and ghosts
+        platforms: [
+            // Broken floor with gaps
+            { x: 0,   y: 460, w: 150, h: 40 },
+            { x: 200, y: 460, w: 120, h: 40 },
+            { x: 380, y: 460, w: 100, h: 40 },
+            { x: 540, y: 460, w: 120, h: 40 },
+            { x: 720, y: 460, w: 80,  h: 40 },
+            // Lower platforms
+            { x: 60,  y: 390, w: 90,  h: 18 },
+            { x: 270, y: 375, w: 90,  h: 18, moveAxis: 'x', moveRange: 60, moveSpeed: 1.8 },
+            { x: 460, y: 390, w: 80,  h: 18 },
+            { x: 640, y: 375, w: 90,  h: 18, moveAxis: 'y', moveRange: 40, moveSpeed: 1.5 },
+            // Mid platforms
+            { x: 0,   y: 310, w: 80,  h: 18, crumble: true },
+            { x: 140, y: 295, w: 90,  h: 18 },
+            { x: 320, y: 310, w: 80,  h: 18, moveAxis: 'x', moveRange: 80, moveSpeed: 2.2 },
+            { x: 510, y: 295, w: 80,  h: 18, crumble: true },
+            { x: 680, y: 310, w: 80,  h: 18 },
+            // Upper-mid platforms
+            { x: 50,  y: 220, w: 90,  h: 18, ice: true },
+            { x: 220, y: 205, w: 90,  h: 18, moveAxis: 'y', moveRange: 50, moveSpeed: 2.0 },
+            { x: 410, y: 215, w: 90,  h: 18, crumble: true },
+            { x: 590, y: 200, w: 90,  h: 18, ice: true },
+            // Top platforms
+            { x: 100, y: 130, w: 100, h: 18, moveAxis: 'x', moveRange: 70, moveSpeed: 1.6 },
+            { x: 330, y: 115, w: 140, h: 18 },
+            { x: 580, y: 125, w: 90,  h: 18, crumble: true },
+        ],
+        marioSpawns: [
+            { x: 80,  y: 430 },
+            { x: 400, y: 430 },
+            { x: 680, y: 430 },
+            { x: 160, y: 340 },
+            { x: 530, y: 340 },
+        ],
+        marioTypes: ['ghost_mario', 'fast', 'ghost_mario', 'armored', 'ghost_mario'],
+        marioSpeed: 2.8,
+        playerSpawn: { x: 30, y: 420 },
+        coinSpawns: [
+            { x: 70,  y: 435 }, { x: 210, y: 435 }, { x: 390, y: 435 }, { x: 555, y: 435 }, { x: 735, y: 435 },
+            { x: 75,  y: 365 }, { x: 285, y: 350 }, { x: 470, y: 365 }, { x: 655, y: 350 },
+            { x: 10,  y: 285 }, { x: 150, y: 270 }, { x: 340, y: 285 }, { x: 520, y: 270 }, { x: 690, y: 285 },
+            { x: 60,  y: 195 }, { x: 235, y: 180 }, { x: 425, y: 190 }, { x: 605, y: 175 },
+            { x: 115, y: 105 }, { x: 360, y: 90  }, { x: 595, y: 100 },
+        ],
+        doubleCoinSpawns: [
+            { x: 400, y: 90  }, { x: 440, y: 90 },
+            { x: 290, y: 270 }, { x: 680, y: 165 },
+        ],
+        starSpawns:       [{ x: 380, y: 90 }, { x: 480, y: 90 }],
+        shieldSpawns:     [{ x: 0,   y: 295 }],
+        bombSpawns:       [{ x: 220, y: 270 }, { x: 600, y: 175 }],
+        springSpawns:     [{ x: 155, y: 446 }],
+        speedBoostSpawns: [{ x: 330, y: 270 }],
+        magnetSpawns:     [{ x: 450, y: 90  }],
+        freezeSpawns:     [{ x: 60,  y: 200 }, { x: 680, y: 190 }],
+        ghostSpawns:      [{ x: 540, y: 90  }],
+        electroSpawns:    [{ x: 360, y: 90  }],
+        slowMoSpawns:     [{ x: 160, y: 205 }],
+        rocketSpawns:     [{ x: 700, y: 295 }],
+        scoreBoostSpawns: [{ x: 500, y: 195 }],
+        magBootsSpawns:   [{ x: 250, y: 105 }],
+        giantSpawns:      [{ x: 140, y: 280 }, { x: 620, y: 280 }], // Feature 87
+        checkpointSpawns: [{ x: 395, y: 435 }],
+        flyingMarioSpawns:    [{ x: 200, y: 170 }, { x: 500, y: 155 }],
+        shooterMarioSpawns:   [{ x: 350, y: 90 }],
+        teleporterMarioSpawns: [{ x: 600, y: 420 }, { x: 150, y: 290 }], // Feature 89
+        portalSpawns: [
+            { blue: { x: 10, y: 420 }, orange: { x: 410, y: 90 } },
         ],
     }
 ];
@@ -4301,7 +4594,7 @@ function startSurvivalMode() {
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
-    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = [];
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = []; giantPUs = [];
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -4674,10 +4967,12 @@ function mirrorLevelData(lvl) {
         slowMoSpawns:         (lvl.slowMoSpawns         || []).map(msp),
         rocketSpawns:         (lvl.rocketSpawns         || []).map(msp),
         magBootsSpawns:       (lvl.magBootsSpawns       || []).map(msp), // Feature 85
+        giantSpawns:          (lvl.giantSpawns          || []).map(msp), // Feature 87
         checkpointSpawns:     (lvl.checkpointSpawns     || []).map(msp),
         flyingMarioSpawns:    (lvl.flyingMarioSpawns    || []).map(msp),
         shooterMarioSpawns:   (lvl.shooterMarioSpawns   || []).map(msp),
         parachuteMarioSpawns: (lvl.parachuteMarioSpawns || []).map(msp),
+        teleporterMarioSpawns: (lvl.teleporterMarioSpawns || []).map(msp), // Feature 89
         portalSpawns: (lvl.portalSpawns || []).map(p => ({
             blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
             orange: { x: mx(p.orange.x, 22), y: p.orange.y },
@@ -4733,6 +5028,9 @@ function loadLevel(index) {
     // Feature 71: Parachute Marios (descend slowly from above)
     const parachuteMarios = (lvl.parachuteMarioSpawns || []).map(s => new Mario(s.x, s.y, speed * 0.6, 'parachute'));
     marios = [...marios, ...parachuteMarios];
+    // Feature 89: Teleporter Marios
+    const teleporterMarios = (lvl.teleporterMarioSpawns || []).map(s => new Mario(s.x, s.y, 0, 'teleporter'));
+    marios = [...marios, ...teleporterMarios];
     fireballs = [];
 
     const sp = lvl.playerSpawn;
@@ -4749,6 +5047,7 @@ function loadLevel(index) {
     }
 
     particles = [];
+    scorePopups = []; // Feature 88
     droppedPowerups = []; // Feature 77: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
@@ -4778,6 +5077,7 @@ function loadLevel(index) {
     slowMos = (lvl.slowMoSpawns || []).map(s => new SlowMo(s.x, s.y)); // Feature 75
     rockets = (lvl.rocketSpawns || []).map(r => new RocketPU(r.x, r.y)); // Feature 80
     magBootsList = (lvl.magBootsSpawns || []).map(m => new MagBootsPU(m.x, m.y)); // Feature 85
+    giantPUs = (lvl.giantSpawns || []).map(g => new GiantPU(g.x, g.y)); // Feature 87
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -4864,6 +5164,7 @@ function checkCoinCollisions() {
             const pColor = coinFrenzyTimer > 0 ? '#ff8800' : (pts > 50 ? '#ff9900' : '#ffcc00');
             const pText = coinFrenzyTimer > 0 ? `x3 +${pts}` : `+${pts}`;
             particles.push(new Particle(coin.x, coin.y - 5, pText, pColor));
+            addScorePopup(coin.x, coin.y - 15, pts); // Feature 88
             playSound('coin');
         }
     }
@@ -4871,7 +5172,8 @@ function checkCoinCollisions() {
 }
 
 function checkPlayerMarioCollisions() {
-    if (player.invincibleTimer > 0 && player.starTimer <= 0) return;
+    // Feature 87: Giant Mode — allow entry (handled per-enemy inside loop)
+    if (player.invincibleTimer > 0 && player.starTimer <= 0 && player.giantTimer <= 0) return;
 
     for (const mario of marios) {
         if (!mario.isAlive) continue;
@@ -4891,6 +5193,24 @@ function checkPlayerMarioCollisions() {
             const pColor = comboColors[Math.min(comboCount - 1, 4)];
             const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
             particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+            shakeTimer = Math.min(6 + comboCount, 12);
+            shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+            continue;
+        }
+
+        // Feature 87: Giant Mode — kill on any contact
+        if (player.giantTimer > 0) {
+            mario.stomp();
+            comboCount++;
+            runStats.enemiesKilled++;
+            onEnemyKilledStreak(mario.x, mario.y);
+            let points = 200 * comboCount;
+            if (player.scoreBoostTimer > 0) points *= 2;
+            player.score += points;
+            totalScore += points;
+            comboDisplayTimer = 100;
+            const pText = `🔴 +${points}`;
+            particles.push(new Particle(mario.x, mario.y - 10, pText, '#ff6600'));
             shakeTimer = Math.min(6 + comboCount, 12);
             shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
             continue;
@@ -4954,6 +5274,7 @@ function checkPlayerMarioCollisions() {
                 const pColor = comboColors[Math.min(comboCount - 1, 4)];
                 const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
                 particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
+                addScorePopup(mario.x, mario.y - 20, points); // Feature 88
                 shakeTimer = Math.min(6 + comboCount, 12);
                 shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
             } else {
@@ -5706,6 +6027,37 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 87: Giant Mode timer bar
+    if (player && player.giantTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0);
+        const frac = player.giantTimer / GIANT_DURATION;
+        const pulse = 0.8 + Math.sin(Date.now() * 0.014) * 0.2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255,${Math.round(80 + 80 * pulse)},0,${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffaa66';
+        ctx.fillText('🔴 ГИГАНТ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Feature 81: Mirror mode HUD indicator
     if (mirrorMode) {
         ctx.save();
@@ -6032,7 +6384,7 @@ function drawTitle(text, y, size, color) {
 // Feature 86: Daily Challenge preview screen
 function renderDailyChallenge() {
     drawBackground();
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🌑 Тьма'];
     const lvlName = levelNames[dailyChallengeLevelIdx] || `Уровень ${dailyChallengeLevelIdx + 1}`;
     const dateStr = dailyChallengeDate;
 
@@ -6583,7 +6935,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера'];
+    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма'];
     if (selectedLevelIdx < unlockedLevels) {
         const nameColor = selectedLevelIdx === COIN_CAVE_LEVEL_INDEX ? '#ffd700' : '#88ffaa';
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, nameColor);
@@ -6672,7 +7024,7 @@ function renderLevelTransition() {
         ctx.save();
         ctx.globalAlpha = alpha;
         drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
-        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп'];
+        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🌑 Тьма'];
         const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
         drawTitle(name, H / 2 + 50, 20, '#aaffaa');
         ctx.restore();
@@ -6822,6 +7174,7 @@ function update() {
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
+            scorePopups = scorePopups.filter(p => p.update()); // Feature 88
             coins = coins.filter(c => c.update());
             stars = stars.filter(s => s.update());
             shields = shields.filter(s => s.update());
@@ -6853,6 +7206,8 @@ function update() {
             rockets = rockets.filter(r => r.update()); // Feature 80
             magBootsList = magBootsList.filter(mb => mb.update()); // Feature 85
             checkMagBootsCollisions();
+            giantPUs = giantPUs.filter(g => g.update()); // Feature 87
+            checkGiantPUCollisions();
             checkRocketCollisions();
             droppedPowerups = droppedPowerups.filter(dp => dp.update()); // Feature 77
             checkDroppedPowerupCollisions();
@@ -7165,6 +7520,7 @@ function render() {
             slowMos.forEach(sm => sm.render()); // Feature 75
             rockets.forEach(r => r.render()); // Feature 80
             magBootsList.forEach(mb => mb.render()); // Feature 85
+            giantPUs.forEach(g => g.render()); // Feature 87
             droppedPowerups.forEach(dp => dp.render()); // Feature 77
             for (const [pA, pB] of portalPairs) { pA.render(); pB.render(); }
             fireballs.forEach(fb => fb.render());
@@ -7176,6 +7532,7 @@ function render() {
             renderMagBootsEffect(); // Feature 85: mag boots aura
             player.render();
             particles.forEach(p => p.render());
+            scorePopups.forEach(p => p.render()); // Feature 88
             // Feature 48: red flash overlay on player death
             if (deathFlashTimer > 0) {
                 const flashAlpha = (deathFlashTimer / 35) * 0.55;
