@@ -133,6 +133,7 @@ const touchKeys = { left: false, right: false, jump: false, throw: false, dash: 
 const ctrlButtons = Array.from(document.querySelectorAll('#mobile-controls .ctrl-btn'));
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 let renderScale = 1; // backing-store pixels per logical canvas pixel
+let lowQuality = false; // Feature 124: set when the device can't keep up
 
 function enableTouchMode() {
     if (document.body.classList.contains('touch')) return;
@@ -186,7 +187,7 @@ function layoutScreen() {
     canvas.style.height = ch + 'px';
 
     const dpr = window.devicePixelRatio || 1;
-    renderScale = Math.max(1, Math.min(3, scale * dpr));
+    renderScale = Math.max(1, Math.min(lowQuality ? 1.25 : 2, scale * dpr));
     canvas.width = Math.round(W * renderScale);
     canvas.height = Math.round(H * renderScale);
     ctx.imageSmoothingEnabled = false;
@@ -240,6 +241,44 @@ function layoutScreen() {
 window.addEventListener('resize', layoutScreen);
 window.addEventListener('orientationchange', () => setTimeout(layoutScreen, 150));
 layoutScreen();
+
+// === FEATURE 123: PWA — offline cache, install prompt, fullscreen on phones ===
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+window.addEventListener('appinstalled', () => { installPrompt = null; });
+const isStandalone = window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+
+function goFullscreen() {
+    if (!document.body.classList.contains('touch') || isStandalone || document.fullscreenElement) return;
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req) return; // iPhone Safari: no element fullscreen — "add to home screen" gives it instead
+    Promise.resolve(req.call(el))
+        .then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'))
+        .catch(() => {});
+}
+
+// === FEATURE 124: haptics + automatic quality on slow phones ===
+function haptic(pattern) {
+    if (navigator.vibrate && document.body.classList.contains('touch') && !soundMuted) {
+        try { navigator.vibrate(pattern); } catch { /* not allowed before a user gesture */ }
+    }
+}
+let frameTimeAvg = 1000 / 60;
+let slowFrameCount = 0;
+function trackFrameTime(frameMs) {
+    if (lowQuality || gameState !== 'PLAYING' || frameMs <= 0 || frameMs > 250) return;
+    frameTimeAvg = frameTimeAvg * 0.95 + frameMs * 0.05;
+    slowFrameCount = frameTimeAvg > 24 ? slowFrameCount + 1 : 0;
+    if (slowFrameCount > 120) { // ~3+ seconds below ~40 fps
+        lowQuality = true;
+        layoutScreen(); // drops the canvas backing-store resolution
+        particles.push(new Particle(W / 2 - 110, 70, '⚙ Эффекты упрощены для плавности', '#aaddff'));
+    }
+}
 
 // Feature 122: every menu screen registers tappable/clickable buttons while it renders
 let uiButtons = [];
@@ -1001,6 +1040,7 @@ class Player extends Entity {
 
     die() {
         this.lives--;
+        haptic(this.lives <= 0 ? [80, 60, 160] : [60, 40, 60]); // Feature 124
         levelDeathCount++;  // Feature 59: track per-level deaths
         runStats.deaths++;  // Feature 63: track total deaths this run
         // Feature 83: reset kill streak on damage
@@ -6446,6 +6486,7 @@ function checkPlayerMarioCollisions() {
             // STOMP!
             const killed = mario.stomp();
             player.vy = STOMP_BOUNCE;
+            haptic(killed ? 18 : 8); // Feature 124
             if (killed) {
                 runStats.enemiesKilled++;
                 onEnemyKilledStreak(mario.x, mario.y); // Feature 83
@@ -7909,7 +7950,7 @@ function renderMenu() {
     ctx.restore();
 
     // Feature 122: tappable menu — every mode is reachable without a keyboard
-    uiButton(W / 2 - 140, 236, 280, 54, '▶  ИГРАТЬ', () => { initAudio(); gameState = 'DIFFICULTY_SELECT'; },
+    uiButton(W / 2 - 140, 236, 280, 54, '▶  ИГРАТЬ', () => { initAudio(); goFullscreen(); gameState = 'DIFFICULTY_SELECT'; },
         { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 22, hint: 'ENTER' });
     const modes = [
         ['🏟 Выживание', 'KeyS', 'S'], ['📅 Испытание', 'KeyD', 'D'], ['⏱ Спидран', 'KeyR', 'R'],
@@ -7921,6 +7962,14 @@ function renderMenu() {
         const col = i % 3, row = Math.floor(i / 3);
         uiButton(x0 + col * (bw + gap), 304 + row * (bh + gap), bw, bh, label, () => pressKey(key), { size: 14, hint });
     });
+
+    // Feature 123: install as an app (Chrome/Android/desktop offer this via beforeinstallprompt)
+    if (installPrompt) {
+        uiButton(W - 176, 12, 164, 36, '📲 Установить', () => {
+            installPrompt.prompt();
+            installPrompt.userChoice.finally(() => { installPrompt = null; });
+        }, { size: 13, color: 'rgba(30,100,60,0.9)', border: '#88ffaa' });
+    }
 
     // Records line
     const recs = [];
@@ -8861,6 +8910,7 @@ function update() {
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
+            if (lowQuality && particles.length > 80) particles.splice(0, particles.length - 80); // Feature 124
             scorePopups = scorePopups.filter(p => p.update()); // Feature 88
             coins = coins.filter(c => c.update());
             stars = stars.filter(s => s.update());
@@ -9036,6 +9086,7 @@ function update() {
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
                 playSound('levelup');
+                haptic([25, 40, 25, 40, 50]); // Feature 124
                 // Feature 86: Save daily challenge best score
                 if (dailyChallengeMode && dailyChallengeDate) {
                     if (dailyChallengeDate !== dailyChallengeBestDate || totalScore > dailyChallengeBest) {
@@ -9600,6 +9651,7 @@ let accumulator = 0;
 let lastLoopState = null;
 
 function gameLoop(timestamp) {
+    trackFrameTime(timestamp - lastTime); // Feature 124
     const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
     lastTime = timestamp;
     accumulator += dt;
