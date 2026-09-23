@@ -2,83 +2,100 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
     <title>Mushroom's Revenge</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
+        html, body {
+            width: 100%;
+            height: 100%;
             background: #1a1a2e;
+            overflow: hidden;
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 100vh;
-            overflow: hidden;
+            touch-action: none;
         }
         #game-container {
             position: relative;
-            display: inline-block;
-            max-width: 100%;
+            line-height: 0;
         }
         canvas {
             display: block;
-            max-width: 100%;
-            height: auto;
             border: 3px solid #333;
             border-radius: 4px;
-            image-rendering: pixelated;
-            image-rendering: crisp-edges;
+            touch-action: none;
         }
+        body.touch canvas { border: none; border-radius: 0; }
+
+        /* Feature 121: on-screen controls — laid out by layoutScreen() in game.js */
         #mobile-controls {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
+            position: fixed;
+            left: 0; right: 0; bottom: 0;
             display: none;
             pointer-events: none;
+            touch-action: none;
         }
+        body.touch.playing #mobile-controls { display: block; }
+        body.touch.portrait #mobile-controls { pointer-events: auto; }
         .ctrl-btn {
             position: absolute;
-            width: 13%;
-            aspect-ratio: 1;
-            background: rgba(255, 255, 255, 0.15);
-            border: 2px solid rgba(255, 255, 255, 0.35);
-            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 5vw;
-            color: rgba(255, 255, 255, 0.75);
-            pointer-events: all;
-            user-select: none;
-            -webkit-user-select: none;
-            touch-action: manipulation;
-            transition: background 0.08s;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.14);
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            color: rgba(255, 255, 255, 0.85);
+            font-family: monospace;
+            font-weight: bold;
+            pointer-events: auto;
+            touch-action: none;
+            transition: background 0.06s, transform 0.06s;
         }
-        .ctrl-btn.pressed {
-            background: rgba(255, 255, 255, 0.38);
+        .ctrl-btn.pressed { background: rgba(255, 255, 255, 0.4); transform: scale(0.94); }
+        #btn-jump  { background: rgba(80, 180, 255, 0.2); border-color: rgba(80, 180, 255, 0.55); color: #8fd3ff; }
+        #btn-jump.pressed  { background: rgba(80, 180, 255, 0.5); }
+        #btn-throw { background: rgba(60, 180, 50, 0.2); border-color: rgba(80, 220, 60, 0.5); }
+        #btn-throw.pressed { background: rgba(60, 180, 50, 0.5); }
+        #btn-dash  { background: rgba(255, 190, 40, 0.18); border-color: rgba(255, 200, 60, 0.5); color: #ffd966; }
+        #btn-dash.pressed  { background: rgba(255, 190, 40, 0.5); }
+        .ctrl-label {
+            position: absolute;
+            bottom: -1.3em;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            line-height: 1;
+            color: rgba(255, 255, 255, 0.45);
+            white-space: nowrap;
         }
-        #btn-left  { bottom: 4%; left: 3%; }
-        #btn-right { bottom: 4%; left: 18%; }
-        #btn-jump  {
-            bottom: 4%; right: 3%;
-            width: 15%;
-            background: rgba(80, 180, 255, 0.18);
-            border-color: rgba(80, 180, 255, 0.45);
-            color: rgba(80, 200, 255, 0.9);
-        }
-        #btn-jump.pressed { background: rgba(80, 180, 255, 0.42); }
-        /* Feature 101: Spore Throw button */
-        #btn-throw {
-            bottom: 22%; right: 3%;
-            width: 12%;
-            background: rgba(60, 180, 50, 0.18);
-            border-color: rgba(80, 220, 60, 0.45);
-            color: rgba(100, 230, 80, 0.9);
-            font-size: 4vw;
-        }
-        #btn-throw.pressed { background: rgba(60, 180, 50, 0.42); }
+        body.landscape .ctrl-label { display: none; }
 
-        @media (pointer: coarse) {
-            #mobile-controls { display: block; }
+        #rotate-hint {
+            position: fixed;
+            left: 50%;
+            bottom: 8px;
+            transform: translateX(-50%);
+            display: none;
+            font: 12px monospace;
+            color: rgba(255, 255, 255, 0.4);
+            pointer-events: none;
+            white-space: nowrap;
         }
+        body.touch.portrait:not(.playing) #rotate-hint { display: block; }
+
         /* Feature 97: Colorblind Mode — hue shift for red-green distinction */
         canvas.colorblind {
             filter: hue-rotate(80deg) saturate(1.6) contrast(1.1);
@@ -88,13 +105,15 @@
 <body>
     <div id="game-container">
         <canvas id="gameCanvas" width="800" height="500"></canvas>
-        <div id="mobile-controls">
-            <div id="btn-left"  class="ctrl-btn">&#9664;</div>
-            <div id="btn-right" class="ctrl-btn">&#9654;</div>
-            <div id="btn-jump"  class="ctrl-btn">&#9650;</div>
-            <div id="btn-throw" class="ctrl-btn">&#127812;</div>
-        </div>
     </div>
+    <div id="mobile-controls">
+        <div id="btn-left"  class="ctrl-btn" data-key="left">&#9664;</div>
+        <div id="btn-right" class="ctrl-btn" data-key="right">&#9654;</div>
+        <div id="btn-jump"  class="ctrl-btn" data-key="jump">&#9650;<span class="ctrl-label">прыжок</span></div>
+        <div id="btn-throw" class="ctrl-btn" data-key="throw">&#127812;<span class="ctrl-label">спора</span></div>
+        <div id="btn-dash"  class="ctrl-btn" data-key="dash">&#9889;<span class="ctrl-label">рывок</span></div>
+    </div>
+    <div id="rotate-hint">↻ Поверни телефон — так удобнее</div>
     <script src="game.js"></script>
 </body>
 </html>

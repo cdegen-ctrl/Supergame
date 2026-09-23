@@ -127,81 +127,137 @@ function activateUltraMode() {
 }
 
 // === TOUCH INPUT ===
-const touchKeys = { left: false, right: false, jump: false, throw: false };
+// Feature 121: multi-touch controls. Every active finger is hit-tested against the buttons on each
+// touch event, so sliding a finger from ◀ to ▶ (or holding ▶ + ▲) works like a real gamepad.
+const touchKeys = { left: false, right: false, jump: false, throw: false, dash: false };
+const ctrlButtons = Array.from(document.querySelectorAll('#mobile-controls .ctrl-btn'));
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+let renderScale = 1; // backing-store pixels per logical canvas pixel
 
-function setupTouchControls() {
-    const btnLeft  = document.getElementById('btn-left');
-    const btnRight = document.getElementById('btn-right');
-    const btnJump  = document.getElementById('btn-jump');
-    if (!btnLeft || !btnRight || !btnJump) return;
+function enableTouchMode() {
+    if (document.body.classList.contains('touch')) return;
+    document.body.classList.add('touch');
+    layoutScreen();
+}
+if (isTouchDevice) document.body.classList.add('touch');
+window.addEventListener('touchstart', enableTouchMode, { passive: true, capture: true });
 
-    function bindBtn(btn, key) {
-        btn.addEventListener('touchstart', e => {
-            e.preventDefault();
-            touchKeys[key] = true;
-            btn.classList.add('pressed');
-        }, { passive: false });
-        btn.addEventListener('touchend', e => {
-            e.preventDefault();
-            touchKeys[key] = false;
-            btn.classList.remove('pressed');
-        }, { passive: false });
-        btn.addEventListener('touchcancel', () => {
-            touchKeys[key] = false;
-            btn.classList.remove('pressed');
-        });
-    }
-
-    bindBtn(btnLeft,  'left');
-    bindBtn(btnRight, 'right');
-    bindBtn(btnJump,  'jump');
-    // Feature 101: Spore throw button
-    const btnThrow = document.getElementById('btn-throw');
-    if (btnThrow) bindBtn(btnThrow, 'throw');
-
-    // Tap on canvas to interact with menus
-    let touchStartX = 0;
-    canvas.addEventListener('touchstart', e => {
-        if (e.touches.length > 0) touchStartX = e.touches[0].clientX;
-    }, { passive: true });
-    canvas.addEventListener('touchend', e => {
-        e.preventDefault();
-        if (gameState === 'MENU' || gameState === 'GAME_OVER' || gameState === 'VICTORY') {
-            initAudio();
-            keys['Enter'] = true;
-            setTimeout(() => { keys['Enter'] = false; }, 120);
-        } else if (gameState === 'PAUSED') {
-            keys['Escape'] = true;
-            setTimeout(() => { keys['Escape'] = false; }, 120);
-        } else if (gameState === 'LEVEL_SELECT' || gameState === 'DIFFICULTY_SELECT') {
-            const endX = e.changedTouches[0]?.clientX ?? touchStartX;
-            const dx = endX - touchStartX;
-            if (Math.abs(dx) > 30) {
-                const k = dx < 0 ? 'ArrowLeft' : 'ArrowRight';
-                keys[k] = true;
-                setTimeout(() => { keys[k] = false; }, 120);
-            } else {
-                keys['Enter'] = true;
-                setTimeout(() => { keys['Enter'] = false; }, 120);
+function updateTouchKeys(touches) {
+    const held = { left: false, right: false, jump: false, throw: false, dash: false };
+    for (const t of touches) {
+        for (const btn of ctrlButtons) {
+            const r = btn.getBoundingClientRect();
+            const pad = r.width * 0.18; // forgiving hit area around each button
+            if (t.clientX >= r.left - pad && t.clientX <= r.right + pad &&
+                t.clientY >= r.top - pad && t.clientY <= r.bottom + pad) {
+                held[btn.dataset.key] = true;
+                break;
             }
-        } else if (gameState === 'SHOP') { // Feature 107: tap to continue from shop
-            keys['Escape'] = true;
-            setTimeout(() => { keys['Escape'] = false; }, 120);
         }
+    }
+    for (const btn of ctrlButtons) btn.classList.toggle('pressed', held[btn.dataset.key]);
+    Object.assign(touchKeys, held);
+}
+
+const ctrlLayer = document.getElementById('mobile-controls');
+for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+    ctrlLayer.addEventListener(type, e => {
+        e.preventDefault();
+        updateTouchKeys(e.touches);
     }, { passive: false });
 }
 
-window.addEventListener('DOMContentLoaded', setupTouchControls);
+// Fit the 800×500 game into the screen. Portrait: controls get the space under the canvas.
+// Landscape: the canvas uses the full height and the buttons sit in the side margins / corners.
+function layoutScreen() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const touch = document.body.classList.contains('touch');
+    const portrait = vh > vw;
+    document.body.classList.toggle('portrait', portrait);
+    document.body.classList.toggle('landscape', !portrait);
 
-// Canvas click for mute icon (bottom-right corner ~40x30 area in canvas coordinates)
-canvas.addEventListener('click', e => {
+    const border = touch ? 0 : 6;
+    const ctrlH = touch && portrait ? Math.min(Math.max(vh * 0.34, 190), 300) : 0;
+    const scale = Math.min((vw - border) / W, (vh - border - ctrlH) / H);
+    const cw = Math.floor(W * scale);
+    const ch = Math.floor(H * scale);
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
+
+    const dpr = window.devicePixelRatio || 1;
+    renderScale = Math.max(1, Math.min(3, scale * dpr));
+    canvas.width = Math.round(W * renderScale);
+    canvas.height = Math.round(H * renderScale);
+    ctx.imageSmoothingEnabled = false;
+
+    // Portrait: canvas + control block are centred together as one group
+    const bigP = Math.min(vw * 0.22, (vh - ch) * 0.42 * 0.72, 110);
+    const blockH = bigP * 3;
+    const topPad = touch && portrait ? Math.max(0, (vh - ch - blockH) / 2) : 0;
+    const container = document.getElementById('game-container');
+    document.body.style.alignItems = touch && portrait ? 'flex-start' : 'center';
+    container.style.marginTop = topPad + 'px';
+
+    if (!touch) return;
+    const btn = id => document.getElementById(id);
+    const place = (el, x, y, size) => {
+        el.style.left = Math.round(x - size / 2) + 'px';
+        el.style.top = Math.round(y - size / 2) + 'px';
+        el.style.width = el.style.height = Math.round(size) + 'px';
+        el.style.fontSize = Math.round(size * 0.4) + 'px';
+    };
+    if (portrait) {
+        const areaH = blockH;
+        ctrlLayer.style.top = (topPad + ch) + 'px';
+        ctrlLayer.style.bottom = 'auto';
+        ctrlLayer.style.height = areaH + 'px';
+        const big = bigP;
+        const small = big * 0.72;
+        const cy = areaH * 0.55;
+        place(btn('btn-left'), vw * 0.14, cy, big);
+        place(btn('btn-right'), vw * 0.14 + big * 1.15, cy, big);
+        place(btn('btn-jump'), vw * 0.84, cy + big * 0.15, big * 1.1);
+        place(btn('btn-throw'), vw * 0.84 - big * 1.05, cy + big * 0.45, small);
+        place(btn('btn-dash'), vw * 0.84 - big * 0.6, cy - big * 0.75, small);
+    } else {
+        ctrlLayer.style.top = '0px';
+        ctrlLayer.style.bottom = '0px';
+        ctrlLayer.style.height = vh + 'px';
+        const side = (vw - cw) / 2;
+        const big = Math.max(56, Math.min(vh * 0.22, 96));
+        const small = big * 0.72;
+        const by = vh - big * 0.75;
+        const lx = Math.max(big * 0.6, side / 2);
+        place(btn('btn-left'), lx, by, big);
+        place(btn('btn-right'), lx + big * 1.1, by, big);
+        const rx = vw - Math.max(big * 0.6, side / 2);
+        place(btn('btn-jump'), rx, by, big * 1.1);
+        place(btn('btn-throw'), rx - big * 1.1, by + big * 0.1, small);
+        place(btn('btn-dash'), rx - big * 0.2, by - big * 1.15, small);
+    }
+}
+window.addEventListener('resize', layoutScreen);
+window.addEventListener('orientationchange', () => setTimeout(layoutScreen, 150));
+layoutScreen();
+
+// Feature 122: every menu screen registers tappable/clickable buttons while it renders
+let uiButtons = [];
+function pressKey(k) {
+    keys[k] = true;
+    setTimeout(() => { keys[k] = false; }, 120);
+}
+canvas.addEventListener('pointerup', e => {
+    initAudio();
     const rect = canvas.getBoundingClientRect();
-    const scaleX = W / rect.width;
-    const scaleY = H / rect.height;
-    const cx = (e.clientX - rect.left) * scaleX;
-    const cy = (e.clientY - rect.top) * scaleY;
-    if (cx > W - 50 && cy > H - 35 && gameState === 'PLAYING') {
-        setMuted(!soundMuted);
+    const x = (e.clientX - rect.left - canvas.clientLeft) * W / canvas.clientWidth;
+    const y = (e.clientY - rect.top - canvas.clientTop) * H / canvas.clientHeight;
+    for (let i = uiButtons.length - 1; i >= 0; i--) {
+        const b = uiButtons[i];
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+            b.action();
+            return;
+        }
     }
 });
 
@@ -614,7 +670,7 @@ class Player extends Entity {
         const currentSpeed = this.speedBoostTimer > 0 ? PLAYER_SPEED * 2 : PLAYER_SPEED;
         const leftDown  = isLeft();
         const rightDown = isRight();
-        const shiftDown = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+        const shiftDown = !!(keys['ShiftLeft'] || keys['ShiftRight'] || touchKeys.dash);
 
         // Feature 65: Dash — double-tap direction or Shift key
         if (leftDown && !this.leftWasDown) {
@@ -745,7 +801,9 @@ class Player extends Entity {
         if (this.vy > MAX_FALL * levelGravityMult) this.vy = MAX_FALL * levelGravityMult;
 
         // Feature 104: Parachute Glide — hold DOWN while falling to slow descent
-        const downHeld = !!(keys['ArrowDown'] || keys['KeyS']);
+        // Touch/gamepad: keep holding jump after the double jump to glide
+        const holdGlide = (touchKeys.jump || gamepadKeys.jump) && this.jumpCount >= 2 && !this.canDoubleJump;
+        const downHeld = !!(keys['ArrowDown'] || keys['KeyS'] || holdGlide);
         if (!this.isGrounded && this.vy > 1.5 && downHeld && this.jetpackTimer <= 0 && !this.ceilingLocked) {
             this.parachuting = true;
             this.vy = Math.min(this.vy, 1.8);
@@ -6979,17 +7037,29 @@ function drawHUD() {
     // Level
     const lvlText = `УР. ${currentLevel + 1}`;
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(lvlText, W - 192, 27);
+    ctx.fillText(lvlText, W - 232, 27);
     ctx.fillStyle = C.hud;
-    ctx.fillText(lvlText, W - 194, 25);
+    ctx.fillText(lvlText, W - 234, 25);
 
     // Timer
     const secs = Math.floor(levelTimer / 60);
     const timerColor = secs >= 50 ? '#ff4444' : secs >= 35 ? '#ffaa00' : '#ffffff';
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(`⏱ ${secs}s`, W - 92, 27);
+    ctx.fillText(`⏱ ${secs}s`, W - 132, 27);
     ctx.fillStyle = timerColor;
-    ctx.fillText(`⏱ ${secs}s`, W - 94, 25);
+    ctx.fillText(`⏱ ${secs}s`, W - 134, 25);
+
+    // Feature 122: pause button (tap/click) — the only way to pause on a phone
+    uiButtons.push({ x: W - 52, y: 0, w: 52, h: 44, action: () => { if (gameState === 'PLAYING') gameState = 'PAUSED'; } });
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.roundRect(W - 44, 5, 34, 30, 7);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(W - 34, 12, 5, 16);
+    ctx.fillRect(W - 25, 12, 5, 16);
+    ctx.restore();
 
     // Feature 96: Speed Run Mode — live timer with PB delta
     if (speedRunMode) {
@@ -7628,6 +7698,7 @@ function drawHUD() {
     }
 
     // Mute icon (bottom-right, clickable area)
+    uiButtons.push({ x: W - 50, y: H - 36, w: 50, h: 36, action: () => setMuted(!soundMuted) });
     ctx.save();
     ctx.font = '18px monospace';
     ctx.textAlign = 'right';
@@ -7677,10 +7748,40 @@ function drawTitle(text, y, size, color) {
     ctx.font = `bold ${size}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(text, W / 2 + 3, y + 3);
+    const sh = Math.max(1, Math.round(size / 12)); // shadow offset scales with text size
+    ctx.fillText(text, W / 2 + sh, y + sh);
     ctx.fillStyle = color || C.text;
     ctx.fillText(text, W / 2, y);
     ctx.textAlign = 'left';
+}
+
+// Feature 122: rounded canvas button that also registers a tap/click hotspot
+function uiButton(x, y, w, h, label, action, opts = {}) {
+    uiButtons.push({ x, y, w, h, action });
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.roundRect(x + 3, y + 3, w, h, 10);
+    ctx.fill();
+    ctx.fillStyle = opts.color || 'rgba(35,55,110,0.88)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 10);
+    ctx.fill();
+    ctx.strokeStyle = opts.border || 'rgba(160,190,255,0.55)';
+    ctx.lineWidth = opts.active ? 3 : 1.5;
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${opts.size || 15}px monospace`;
+    ctx.fillStyle = opts.textColor || '#ffffff';
+    ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+    if (opts.hint) {
+        ctx.font = '10px monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.textAlign = 'right';
+        ctx.fillText(opts.hint, x + w - 6, y + h - 8);
+    }
+    ctx.restore();
 }
 
 // Feature 86: Daily Challenge preview screen
@@ -7722,7 +7823,9 @@ function renderDailyChallenge() {
         drawTitle(`Лучший результат сегодня: ${dailyChallengeBest}`, 400, 14, '#ffcc44');
     }
 
-    drawTitle('ENTER — Начать   ESC — Назад', 445, 14, '#aaaaaa');
+    uiButton(20, H - 58, 150, 42, '← Назад', () => pressKey('Escape'), { hint: 'ESC' });
+    uiButton(W - 220, H - 62, 200, 48, '▶ НАЧАТЬ', () => pressKey('Enter'),
+        { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 18, hint: 'ENTER' });
 }
 
 // Feature 93: Animated menu background — floating coins and stars
@@ -7784,37 +7887,54 @@ function renderMenu() {
     drawBackground();
     updateRenderMenuDecor(); // Feature 93: animated floating coins & stars
 
-    drawTitle("MUSHROOM'S REVENGE", 160, 36, '#ff4444');
-    drawTitle("Прыгай на Марио!", 210, 20, '#ffcc00');
+    drawTitle("MUSHROOM'S REVENGE", 82, 40, '#ff4444');
+    drawTitle("Прыгай на Марио!", 114, 18, '#ffcc00');
 
-    // Draw big mushroom
-    ctx.save();
-    const px = 5;
-    const sx = W / 2 - (14 * px) / 2;
-    drawPixelSprite(sx, 240, px, MUSHROOM_SPRITE);
-    ctx.restore();
+    // Big mushroom in the player's chosen colour
+    const mcols = getMushroomColors();
+    const sprite = MUSHROOM_SPRITE.map(row => row.map(c =>
+        c === C.mushroomCap ? mcols.cap : c === C.mushroomCapLight ? mcols.capLight : c));
+    const bob = Math.sin(Date.now() * 0.004) * 4;
+    drawPixelSprite(W / 2 - 35, 128 + bob, 5, sprite);
 
     // Feature 110: Prestige title display on menu
     const prestige = getPrestigeTitle();
     ctx.save();
     ctx.textAlign = 'center';
-    ctx.font = 'bold 14px monospace';
+    ctx.font = 'bold 13px monospace';
     ctx.fillStyle = prestige.color;
     ctx.shadowColor = prestige.color;
     ctx.shadowBlur = 8;
-    ctx.fillText(prestige.title, W / 2, 395);
-    ctx.shadowBlur = 0;
-    ctx.textAlign = 'left';
+    ctx.fillText(prestige.title, W / 2, 222);
     ctx.restore();
 
-    drawTitle("ENTER — Начать игру", 400, 18, C.text);
-    drawTitle("S — 🏟 Выживание  A — 🏆 Достижения  D — 📅 Испытание  R — ⏱ Спидран  E — ♾️ Бесконечный  T — 📊 Стат", 425, 11, '#ffaa44');
-    if (endlessBestScore > 0) drawTitle(`♾️ Рекорд бесконечного: ${endlessBestScore}`, 440, 11, '#aaffcc');
-    drawTitle("←→ / AD — Движение  |  ↑ / W / SPACE — Прыжок  |  SHIFT — Рывок", 452, 11, '#aaaaaa');
-    drawTitle("На мобильном: кнопки ◀ ▶ ▲  |  M — звук", 465, 11, '#888888');
-    if (survivalBestTime > 0) {
-        drawTitle(`Рекорд выживания: ${survivalBestTime} сек`, 482, 12, '#ffcc44');
-    }
+    // Feature 122: tappable menu — every mode is reachable without a keyboard
+    uiButton(W / 2 - 140, 236, 280, 54, '▶  ИГРАТЬ', () => { initAudio(); gameState = 'DIFFICULTY_SELECT'; },
+        { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 22, hint: 'ENTER' });
+    const modes = [
+        ['🏟 Выживание', 'KeyS', 'S'], ['📅 Испытание', 'KeyD', 'D'], ['⏱ Спидран', 'KeyR', 'R'],
+        ['♾️ Бесконечный', 'KeyE', 'E'], ['🏆 Достижения', 'KeyA', 'A'], ['📊 Статистика', 'KeyT', 'T'],
+    ];
+    const bw = 196, bh = 42, gap = 12;
+    const x0 = W / 2 - (bw * 3 + gap * 2) / 2;
+    modes.forEach(([label, key, hint], i) => {
+        const col = i % 3, row = Math.floor(i / 3);
+        uiButton(x0 + col * (bw + gap), 304 + row * (bh + gap), bw, bh, label, () => pressKey(key), { size: 14, hint });
+    });
+
+    // Records line
+    const recs = [];
+    const board = loadLeaderboard();
+    if (board.length > 0) recs.push(`🥇 ${board[0].score}`);
+    if (survivalBestTime > 0) recs.push(`🏟 ${survivalBestTime}с`);
+    if (endlessBestScore > 0) recs.push(`♾️ ${endlessBestScore}`);
+    if (recs.length) drawTitle('РЕКОРДЫ:  ' + recs.join('   '), 425, 12, '#ffdd66');
+
+    const touch = document.body.classList.contains('touch');
+    drawTitle(touch ? 'Кнопки ◀ ▶ ▲ внизу экрана  ·  ⚡ рывок  ·  🍄 спора'
+                    : '←→ / AD — движение · ↑ W SPACE — прыжок · SHIFT — рывок · Z — спора · ↓ — парашют',
+        452, 11, '#dddddd');
+    if (!touch) drawTitle('ESC — пауза · M — звук · Геймпад поддерживается', 470, 11, '#aaaaaa');
 
     // Feature 109: Ultra Mode active banner on menu
     if (ultraModeTimer > 0) {
@@ -7826,27 +7946,7 @@ function renderMenu() {
         ctx.fillStyle = '#ffee00';
         ctx.shadowColor = '#ff8800';
         ctx.shadowBlur = 12;
-        ctx.fillText('🌟 ULTRA MODE АКТИВЕН! 🌟', W / 2, 355);
-        ctx.shadowBlur = 0;
-        ctx.textAlign = 'left';
-        ctx.restore();
-    }
-
-    // Mini leaderboard on menu
-    const board = loadLeaderboard();
-    if (board.length > 0) {
-        ctx.save();
-        const medals = ['🥇', '🥈', '🥉'];
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#ffdd44';
-        ctx.fillText('РЕКОРДЫ:', W / 2, 468);
-        board.forEach((entry, i) => {
-            ctx.font = '11px monospace';
-            ctx.fillStyle = i === 0 ? '#ffcc00' : '#aaaaaa';
-            ctx.fillText(`${medals[i]} ${entry.score}`, W / 2 - 80 + i * 80, 484);
-        });
-        ctx.textAlign = 'left';
+        ctx.fillText('🌟 ULTRA MODE АКТИВЕН! 🌟', W / 2, 400);
         ctx.restore();
     }
 }
@@ -7895,7 +7995,7 @@ function renderAchievements() {
         ctx.restore();
     });
 
-    drawTitle('ESC — Назад', H - 30, 12, '#888888');
+    uiButton(20, H - 58, 150, 42, '← Назад', () => pressKey('Escape'), { hint: 'ESC' });
 }
 
 // Feature 108: All-time persistent statistics screen
@@ -7930,8 +8030,8 @@ function renderStats() {
         ['🌟', 'Лучший счёт',       highScore],
     ];
 
-    const startY = 120;
-    const rowH = 42;
+    const startY = 118;
+    const rowH = 36;
     const panelW = 460;
     const panelX = W / 2 - panelW / 2;
 
@@ -7947,29 +8047,26 @@ function renderStats() {
 
         ctx.font = '16px monospace';
         ctx.fillStyle = '#ccddff';
-        ctx.fillText(`${icon}  ${label}`, panelX + 18, ry + 26);
+        ctx.fillText(`${icon}  ${label}`, panelX + 18, ry + 23);
 
         ctx.save();
         ctx.textAlign = 'right';
         ctx.font = 'bold 18px monospace';
         ctx.fillStyle = '#ffdd44';
-        ctx.fillText(String(value), panelX + panelW - 16, ry + 26);
+        ctx.fillText(String(value), panelX + panelW - 16, ry + 23);
         ctx.textAlign = 'left';
         ctx.restore();
     });
 
-    drawTitle('ESC — Назад', H - 22, 12, '#888888');
+    uiButton(20, H - 58, 150, 42, '← Назад', () => pressKey('Escape'), { hint: 'ESC' });
 }
 
 function renderGameOver() {
     drawBackground();
 
-    drawTitle("GAME OVER", 150, 42, '#ff4444');
-    drawTitle(`Счёт: ${totalScore}`, 200, 22, '#ffcc00');
-
-    if (totalScore >= highScore && highScore > 0) {
-        drawTitle("НОВЫЙ РЕКОРД!", 230, 20, '#00ff00');
-    }
+    drawTitle("GAME OVER", 100, 42, '#ff4444');
+    drawTitle(`Счёт: ${totalScore}`, 145, 22, '#ffcc00');
+    if (totalScore >= highScore && highScore > 0) drawTitle("НОВЫЙ РЕКОРД!", 173, 18, '#00ff00');
 
     // Feature 110: Show prestige title on game over
     const pt = getPrestigeTitle();
@@ -7979,39 +8076,30 @@ function renderGameOver() {
     ctx.fillStyle = pt.color;
     ctx.shadowColor = pt.color;
     ctx.shadowBlur = 6;
-    ctx.fillText(pt.title, W / 2, 252);
-    ctx.shadowBlur = 0;
-    ctx.textAlign = 'left';
+    ctx.fillText(pt.title, W / 2, 196);
     ctx.restore();
 
-    // Leaderboard top-3
+    const panelY = 214, panelH = 176;
+    // Leaderboard top-3 (left)
     const board = loadLeaderboard();
-    if (board.length > 0) {
-        ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.beginPath();
-        ctx.roundRect(W / 2 - 130, 255, 260, board.length * 28 + 30, 10);
-        ctx.fill();
-
-        ctx.font = 'bold 13px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#ffdd00';
-        ctx.fillText('🏆 ТАБЛИЦА РЕКОРДОВ', W / 2, 275);
-
-        const medals = ['🥇', '🥈', '🥉'];
-        board.forEach((entry, i) => {
-            ctx.font = '12px monospace';
-            ctx.fillStyle = i === 0 ? '#ffcc00' : i === 1 ? '#cccccc' : '#cd7f32';
-            ctx.fillText(`${medals[i] || (i + 1 + '.')} ${entry.score}   ${entry.date}`, W / 2, 298 + i * 26);
-        });
-        ctx.textAlign = 'left';
-        ctx.restore();
-    }
-
-    // Run statistics panel
     ctx.save();
-    const panelX = W / 2 - 160;
-    const panelY = board.length > 0 ? 255 + board.length * 28 + 40 : 260;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(W / 2 - 330, panelY, 310, panelH, 10);
+    ctx.fill();
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffdd00';
+    ctx.fillText('🏆 ТАБЛИЦА РЕКОРДОВ', W / 2 - 175, panelY + 24);
+    const medals = ['🥇', '🥈', '🥉'];
+    board.forEach((entry, i) => {
+        ctx.font = '13px monospace';
+        ctx.fillStyle = i === 0 ? '#ffcc00' : i === 1 ? '#cccccc' : '#cd7f32';
+        ctx.fillText(`${medals[i] || (i + 1 + '.')} ${entry.score}   ${entry.date}`, W / 2 - 175, panelY + 58 + i * 30);
+    });
+    ctx.restore();
+
+    // Run statistics (right)
     const statData = [
         ['⚔️', 'Убито врагов', runStats.enemiesKilled],
         ['💰', 'Монет собрано', runStats.coinsCollected],
@@ -8019,28 +8107,45 @@ function renderGameOver() {
         ['🏁', 'Уровней пройдено', runStats.levelsCleared],
         ['💀', 'Смертей', runStats.deaths],  // Feature 63
     ];
+    const sx = W / 2 + 20;
+    ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.beginPath();
-    ctx.roundRect(panelX, panelY, 320, statData.length * 24 + 24, 10);
+    ctx.roundRect(sx, panelY, 310, panelH, 10);
     ctx.fill();
-    ctx.font = 'bold 12px monospace';
+    ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#aaddff';
-    ctx.fillText('📊 СТАТИСТИКА', W / 2, panelY + 16);
+    ctx.fillText('📊 СТАТИСТИКА', sx + 155, panelY + 24);
     statData.forEach(([icon, label, val], i) => {
-        const sy = panelY + 16 + (i + 1) * 24;
-        ctx.font = '11px monospace';
+        const sy = panelY + 52 + i * 26;
+        ctx.font = '12px monospace';
         ctx.textAlign = 'left';
         ctx.fillStyle = '#cccccc';
-        ctx.fillText(`${icon} ${label}:`, panelX + 12, sy);
+        ctx.fillText(`${icon} ${label}:`, sx + 14, sy);
         ctx.textAlign = 'right';
         ctx.fillStyle = '#ffee88';
-        ctx.fillText(String(val), panelX + 308, sy);
+        ctx.fillText(String(val), sx + 296, sy);
     });
-    ctx.textAlign = 'left';
     ctx.restore();
 
-    drawTitle("ENTER — Играть снова", H - 20, 18, C.text);
+    uiButton(W / 2 - 230, 412, 220, 52, '↻ ЕЩЁ РАЗ', () => pressKey('Enter'),
+        { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 18, hint: 'ENTER' });
+    uiButton(W / 2 + 10, 412, 220, 52, '☰ В МЕНЮ', gameOverToMenu, { size: 18, hint: 'ESC' });
+}
+
+// Leave the game-over screen for the main menu (keeps the same bookkeeping as "play again")
+function gameOverToMenu() {
+    if (totalScore > highScore) {
+        highScore = totalScore;
+        localStorage.setItem('mushroomHighScore', String(highScore));
+    }
+    speedRunMode = false; speedRunTotalTime = 0;
+    allTimeStats.gamesPlayed++;
+    mergeRunIntoAllTime();
+    stopBGM();
+    player = null;
+    gameState = 'MENU';
 }
 
 function renderVictory() {
@@ -8056,10 +8161,10 @@ function renderVictory() {
     ctx.fillRect(0, 80, W, 90);
     ctx.restore();
 
-    drawTitle('🏆 ТЫ ПОБЕДИЛ! 🏆', 145, 40, '#ffee00');
-    drawTitle('Все 17 уровней пройдены!', 198, 18, '#00ff88');
-    drawTitle(`Счёт: ${totalScore}`, 232, 22, '#ffcc00');
-    if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 262, 18, '#00ff44');
+    drawTitle('🏆 ТЫ ПОБЕДИЛ! 🏆', 120, 40, '#ffee00');
+    drawTitle(`Все ${LEVELS.length} уровней пройдены!`, 160, 18, '#00ff88');
+    drawTitle(`Счёт: ${totalScore}`, 192, 22, '#ffcc00');
+    if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 218, 16, '#00ff44');
     // Feature 110: Show prestige title on victory screen
     const victoryPrestige = getPrestigeTitle();
     ctx.save();
@@ -8068,7 +8173,7 @@ function renderVictory() {
     ctx.fillStyle = victoryPrestige.color;
     ctx.shadowColor = victoryPrestige.color;
     ctx.shadowBlur = 8;
-    ctx.fillText(victoryPrestige.title, W / 2, 285);
+    ctx.fillText(victoryPrestige.title, W / 2, 240);
     ctx.shadowBlur = 0;
     ctx.textAlign = 'left';
     ctx.restore();
@@ -8078,13 +8183,13 @@ function renderVictory() {
         const s = Math.floor(speedRunTotalTime % 60);
         const ms = Math.floor((speedRunTotalTime % 1) * 100);
         const srStr = `⏱ Спидран: ${m}:${String(s).padStart(2,'0')}.${String(ms).padStart(2,'0')}`;
-        drawTitle(srStr, 282, 15, '#aaffff');
-        if (speedRunNewRecord) drawTitle('⚡ РЕКОРД СПИДРАНА!', 300, 14, '#44ffcc');
+        drawTitle(srStr, 262, 15, '#aaffff');
+        if (speedRunNewRecord) drawTitle('⚡ РЕКОРД СПИДРАНА!', 280, 14, '#44ffcc');
         else if (speedRunBestTotal > 0) {
             const bm = Math.floor(speedRunBestTotal / 60);
             const bs = Math.floor(speedRunBestTotal % 60);
             const bms = Math.floor((speedRunBestTotal % 1) * 100);
-            drawTitle(`Рекорд: ${bm}:${String(bs).padStart(2,'0')}.${String(bms).padStart(2,'0')}`, 300, 13, '#778899');
+            drawTitle(`Рекорд: ${bm}:${String(bs).padStart(2,'0')}.${String(bms).padStart(2,'0')}`, 280, 13, '#778899');
         }
     }
 
@@ -8097,12 +8202,13 @@ function renderVictory() {
         return c;
     }));
     const spx = 6;
-    drawPixelSprite(W / 2 - (14 * spx) / 2, 285, spx, bigSprite);
+    drawPixelSprite(W / 2 - 250, 305, spx, bigSprite);
+    drawPixelSprite(W / 2 + 250 - 14 * spx, 305, spx, bigSprite);
     ctx.restore();
 
     // Stats
     const panelX = W / 2 - 160;
-    const panelY = 385;
+    const panelY = 292;
     const statData = [
         ['⚔️', 'Убито врагов', runStats.enemiesKilled],
         ['💰', 'Монет собрано', runStats.coinsCollected],
@@ -8135,7 +8241,7 @@ function renderVictory() {
     // Feature 56: Confetti
     confettiParticles.forEach(p => p.render());
 
-    drawTitle('ENTER — В меню', H - 12, 16, C.text);
+    uiButton(W / 2 - 110, 438, 220, 48, '☰ В МЕНЮ', () => pressKey('Enter'), { size: 18, hint: 'ENTER' });
 }
 
 function renderLevelComplete() {
@@ -8229,9 +8335,10 @@ function renderShop() {
     // Shop items
     const itemW = 480, itemH = 60, itemX = W / 2 - itemW / 2;
     SHOP_ITEMS.forEach((item, i) => {
-        const itemY = 145 + i * 72;
+        const itemY = 140 + i * 70;
         const selected = i === shopSelectedIdx;
         const canAfford = shopCoins >= item.price;
+        uiButtons.push({ x: itemX, y: itemY, w: itemW, h: itemH, action: () => { shopSelectedIdx = i; pressKey('Enter'); } });
 
         // Card background
         ctx.save();
@@ -8274,14 +8381,17 @@ function renderShop() {
     ctx.textAlign = 'center';
     ctx.font = '12px monospace';
     ctx.fillStyle = '#888899';
-    ctx.fillText('↑↓ — Навигация  |  ENTER — Купить  |  ESC — Продолжить', W / 2, H - 22);
+    ctx.fillText('Нажми на товар, чтобы купить  ·  ↑↓ + ENTER', W / 2, 432);
     ctx.textAlign = 'left';
     ctx.restore();
+    uiButton(W - 250, H - 60, 230, 48, 'ПРОДОЛЖИТЬ ▶', () => pressKey('Escape'),
+        { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 17, hint: 'ESC' });
 }
 
 function renderDifficultySelect() {
     drawBackground();
-    drawTitle('ВЫБОР СЛОЖНОСТИ', 90, 30, '#ffcc00');
+    drawTitle('ВЫБОР СЛОЖНОСТИ', 70, 30, '#ffcc00');
+    drawTitle('Нажми на карточку, чтобы выбрать', 100, 12, '#dddddd');
 
     const opts = [
         {
@@ -8327,12 +8437,18 @@ function renderDifficultySelect() {
     const gap = 14;
     const totalW = opts.length * cardW + (opts.length - 1) * gap;
     const startX = (W - totalW) / 2;
-    const startY = 160;
+    const startY = 120;
 
     opts.forEach((opt, i) => {
         const bx = startX + i * (cardW + gap);
         const by = startY;
         const isSel = difficulty === opt.key;
+        // Feature 122: tap a card to select it, tap the selected card again to continue
+        uiButtons.push({ x: bx, y: by, w: cardW, h: cardH, action: () => {
+            if (difficulty === opt.key) { pressKey('Enter'); return; }
+            difficulty = opt.key;
+            localStorage.setItem('mushroomDifficulty', difficulty);
+        } });
 
         // Shadow
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -8379,184 +8495,148 @@ function renderDifficultySelect() {
         ctx.restore();
     });
 
-    drawTitle('← → — Выбор   ENTER — Начать   ESC — Назад', 390, 13, '#aaaaaa');
-
     // Show current difficulty label
     const labels = { easy: 'ЛЁГКИЙ', normal: 'НОРМАЛЬНЫЙ', hard: 'СЛОЖНЫЙ', hardcore: '💀 ХАРДКОР' };
-    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 420, 16, difficulty === 'hardcore' ? '#ff44ff' : '#ffffaa');
+    drawTitle(`Выбрано: ${labels[difficulty] || difficulty}`, 352, 16, difficulty === 'hardcore' ? '#ff44ff' : '#ffffaa');
 
     // Feature 81: Mirror Mode toggle button
-    const mirBtnW = 220;
-    const mirBtnH = 36;
-    const mirBtnX = W / 2 - mirBtnW / 2;
-    const mirBtnY = 445;
-    ctx.save();
-    ctx.fillStyle = mirrorMode ? 'rgba(0,200,255,0.28)' : 'rgba(60,60,80,0.5)';
-    ctx.beginPath();
-    ctx.roundRect(mirBtnX, mirBtnY, mirBtnW, mirBtnH, 8);
-    ctx.fill();
-    ctx.strokeStyle = mirrorMode ? '#44eeff' : 'rgba(150,150,180,0.4)';
-    ctx.lineWidth = mirrorMode ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(mirBtnX, mirBtnY, mirBtnW, mirBtnH, 8);
-    ctx.stroke();
-    ctx.font = 'bold 14px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = mirrorMode ? '#44eeff' : '#888899';
-    ctx.fillText(`🪞 ЗЕРКАЛО: ${mirrorMode ? 'ВКЛ' : 'ВЫКЛ'}   [M]`, W / 2, mirBtnY + 24);
-    ctx.textAlign = 'left';
-    ctx.restore();
+    uiButton(W / 2 - 120, 368, 240, 40, `🪞 ЗЕРКАЛО: ${mirrorMode ? 'ВКЛ' : 'ВЫКЛ'}`, () => pressKey('KeyM'),
+        { color: mirrorMode ? 'rgba(0,150,200,0.7)' : 'rgba(60,60,80,0.75)', border: mirrorMode ? '#44eeff' : 'rgba(150,150,180,0.5)',
+          textColor: mirrorMode ? '#aaffff' : '#bbbbcc', size: 14, hint: 'M' });
+
+    uiButton(20, H - 62, 170, 48, '← Назад', () => pressKey('Escape'), { hint: 'ESC' });
+    uiButton(W - 210, H - 62, 190, 48, 'ДАЛЕЕ ▶', () => pressKey('Enter'),
+        { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 18, hint: 'ENTER' });
 }
 
 function renderLevelSelect() {
     drawBackground();
 
-    drawTitle('ВЫБОР УРОВНЯ', 90, 30, '#ffcc00');
+    drawTitle('ВЫБОР УРОВНЯ', 58, 28, '#ffcc00');
 
     const n = LEVELS.length;
-    const gap = n > 5 ? 10 : 16;
-    const boxW = Math.min(120, Math.floor((W - 40 - gap * (n - 1)) / n));
-    const boxH = 100;
-    const totalW = n * boxW + (n - 1) * gap;
-    const startX = (W - totalW) / 2;
-    const startY = 165;
+    const cols = 9;
+    const gap = 8;
+    const boxW = 76, boxH = 66;
+    const startX = (W - (cols * boxW + (cols - 1) * gap)) / 2;
+    const startY = 80;
 
-    for (let i = 0; i < LEVELS.length; i++) {
-        const bx = startX + i * (boxW + gap);
-        const by = startY;
+    for (let i = 0; i < n; i++) {
+        const col = i % cols, row = Math.floor(i / cols);
+        const rowCount = Math.min(cols, n - row * cols);
+        const rowX = startX + (cols - rowCount) * (boxW + gap) / 2; // centre a shorter last row
+        const bx = rowX + col * (boxW + gap);
+        const by = startY + row * (boxH + gap);
         const locked = i >= unlockedLevels;
         const isSelected = i === selectedLevelIdx;
+        const isBonusLvl = LEVELS[i] && LEVELS[i].isBonusLevel;
+        const isBoss = LEVELS[i] && LEVELS[i].isBossLevel;
 
-        // Box shadow
+        // Feature 122: tap selects, tapping the selected unlocked level starts it
+        uiButtons.push({ x: bx, y: by, w: boxW, h: boxH, action: () => {
+            if (i === selectedLevelIdx && !locked) startGameFromLevel(i);
+            else selectedLevelIdx = i;
+        } });
+
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.beginPath();
         ctx.roundRect(bx + 3, by + 3, boxW, boxH, 10);
         ctx.fill();
-
-        // Box background
-        const isBonusLvl = LEVELS[i] && LEVELS[i].isBonusLevel;
-        if (locked) {
-            ctx.fillStyle = 'rgba(40,40,60,0.8)';
-        } else if (isSelected) {
-            ctx.fillStyle = isBonusLvl ? 'rgba(160,80,220,0.9)' : 'rgba(80,180,80,0.85)';
-        } else {
-            ctx.fillStyle = isBonusLvl ? 'rgba(100,40,160,0.75)' : 'rgba(60,120,200,0.75)';
-        }
+        if (locked) ctx.fillStyle = 'rgba(40,40,60,0.85)';
+        else if (isSelected) ctx.fillStyle = isBonusLvl ? 'rgba(160,80,220,0.92)' : 'rgba(80,180,80,0.9)';
+        else ctx.fillStyle = isBonusLvl ? 'rgba(100,40,160,0.8)' : isBoss ? 'rgba(170,50,50,0.8)' : 'rgba(60,120,200,0.8)';
         ctx.beginPath();
         ctx.roundRect(bx, by, boxW, boxH, 10);
         ctx.fill();
-
-        // Selected border glow
-        if (isSelected && !locked) {
-            ctx.strokeStyle = '#ffff00';
+        if (isSelected) {
+            ctx.strokeStyle = locked ? '#ff6666' : '#ffff00';
             ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.roundRect(bx, by, boxW, boxH, 10);
             ctx.stroke();
         }
 
         ctx.save();
         ctx.textAlign = 'center';
+        const cx = bx + boxW / 2;
         if (locked) {
-            // Lock icon
-            ctx.font = 'bold 32px monospace';
+            ctx.font = '22px monospace';
             ctx.fillStyle = '#888';
-            ctx.fillText('🔒', bx + boxW / 2, by + 52);
-            ctx.font = 'bold 13px monospace';
-            ctx.fillStyle = '#666';
-            ctx.fillText(`УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 85);
+            ctx.fillText('🔒', cx, by + 34);
+            ctx.font = 'bold 12px monospace';
+            ctx.fillStyle = '#777';
+            ctx.fillText(`${i + 1}`, cx, by + 56);
         } else {
-            // Level number
-            if (isBonusLvl) {
-                ctx.font = 'bold 28px monospace';
-                ctx.fillStyle = '#ffd700';
-                ctx.fillText('🪙', bx + boxW / 2, by + 52);
-                ctx.font = 'bold 11px monospace';
-                ctx.fillStyle = '#eebb88';
-                ctx.fillText('БОНУС', bx + boxW / 2, by + 72);
-            } else {
-                ctx.font = 'bold 40px monospace';
-                ctx.fillStyle = '#fff';
-                ctx.fillText(`${i + 1}`, bx + boxW / 2, by + 55);
-            }
-            ctx.font = 'bold 13px monospace';
-            ctx.fillStyle = isBonusLvl ? '#ffd700' : '#ddd';
-            ctx.fillText(isBonusLvl ? 'ПЕЩЕРА' : `УРОВЕНЬ ${i + 1}`, bx + boxW / 2, by + 82);
+            ctx.font = 'bold 28px monospace';
+            ctx.fillStyle = '#fff';
+            ctx.fillText(isBonusLvl ? '🪙' : isBoss ? '👑' : `${i + 1}`, cx, by + 36);
             // Feature 59: letter grade badge
             const savedGrade = levelGrades[i];
-            if (savedGrade) {
-                const gc = { S: '#ffdd00', A: '#00ff88', B: '#55bbff', C: '#aaaaaa', D: '#ff4444' }[savedGrade] || '#fff';
-                ctx.font = 'bold 16px monospace';
-                ctx.fillStyle = gc;
-                ctx.fillText(savedGrade, bx + boxW / 2, by + 102);
-            } else {
-                ctx.font = '14px monospace';
-                ctx.fillStyle = 'rgba(255,255,255,0.3)';
-                ctx.fillText('—', bx + boxW / 2, by + 102);
-            }
-            // Feature 98: Challenge complete badge (top-right corner of box)
+            const gc = { S: '#ffdd00', A: '#00ff88', B: '#55bbff', C: '#aaaaaa', D: '#ff4444' }[savedGrade] || 'rgba(255,255,255,0.35)';
+            ctx.font = 'bold 14px monospace';
+            ctx.fillStyle = gc;
+            ctx.fillText(savedGrade || '—', cx, by + 58);
+            // Feature 98: Challenge complete badge
             const chKey = `${i}_${getChallengeForLevel(i % CHALLENGE_DEFS.length).id}`;
             if (challengeCompleted[chKey]) {
-                ctx.font = 'bold 12px monospace';
-                ctx.fillStyle = '#44ff88';
-                ctx.fillText('🎯', bx + boxW - 8, by + 14);
+                ctx.font = '11px monospace';
+                ctx.fillText('🎯', bx + boxW - 10, by + 14);
             }
         }
         ctx.restore();
     }
 
-    // Selected level name
-    const levelNames = LEVEL_NAMES;
+    // Selected level info
+    const infoY = startY + 2 * (boxH + gap) + 26;
+    const name = LEVEL_NAMES[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`;
     if (selectedLevelIdx < unlockedLevels) {
         const nameColor = selectedLevelIdx === COIN_CAVE_LEVEL_INDEX ? '#ffd700' : '#88ffaa';
-        drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, nameColor);
-        if (selectedLevelIdx === COIN_CAVE_LEVEL_INDEX) {
-            drawTitle('БОНУС: собери монеты за 30 секунд!', 335, 13, '#cc88ff');
-        }
+        drawTitle(`${selectedLevelIdx + 1}. ${name}`, infoY, 20, nameColor);
+        if (selectedLevelIdx === COIN_CAVE_LEVEL_INDEX) drawTitle('БОНУС: собери монеты за 30 секунд!', infoY + 22, 13, '#cc88ff');
+    } else {
+        drawTitle('🔒 Уровень заблокирован — пройди предыдущий', infoY, 15, '#ff6666');
     }
-
     const diffLabel = difficulty === 'easy' ? '😊 ЛЕГКО' : difficulty === 'hard' ? '😤 СЛОЖНО' : difficulty === 'hardcore' ? '💀 ХАРДКОР' : '😐 НОРМА';
-    drawTitle(`Сложность: ${diffLabel}  (ESC → изменить)`, 350, 12, '#aaddff');
-    drawTitle('← → — Выбор   ENTER — Играть   ESC — Назад', 380, 13, '#aaaaaa');
-    if (selectedLevelIdx >= unlockedLevels) {
-        drawTitle('Уровень заблокирован! Пройди предыдущий.', 405, 12, '#ff6666');
-    }
+    drawTitle(`Сложность: ${diffLabel}${mirrorMode ? '  ·  🪞 зеркало' : ''}`, infoY + 44, 12, '#aaddff');
 
-    // Mushroom color selector
+    // Mushroom color selector (tap a dot)
     ctx.save();
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('ЦВЕТ ГРИБА:', W / 2, 430);
+    const colorY = infoY + 92;
+    ctx.fillText(`ЦВЕТ ГРИБА: ${getMushroomColors().name}`, W / 2, colorY - 22);
     const dotR = 14;
-    const dotSpacing = 36;
+    const dotSpacing = 40;
     const dotsStartX = W / 2 - (MUSHROOM_COLORS.length - 1) * dotSpacing / 2;
     MUSHROOM_COLORS.forEach((col, i) => {
         const dx = dotsStartX + i * dotSpacing;
-        const dy = 448;
-        // Selected ring
+        uiButtons.push({ x: dx - 19, y: colorY - 19, w: 38, h: 38, action: () => {
+            mushroomColorIdx = i;
+            localStorage.setItem('mushroomColorIdx', String(mushroomColorIdx));
+        } });
         if (i === mushroomColorIdx) {
             ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2.5;
             ctx.beginPath();
-            ctx.arc(dx, dy, dotR + 3, 0, Math.PI * 2);
+            ctx.arc(dx, colorY, dotR + 4, 0, Math.PI * 2);
             ctx.stroke();
         }
         ctx.fillStyle = col.cap;
         ctx.beginPath();
-        ctx.arc(dx, dy, dotR, 0, Math.PI * 2);
+        ctx.arc(dx, colorY, dotR, 0, Math.PI * 2);
         ctx.fill();
-        // Dot highlight
         ctx.fillStyle = col.capLight;
         ctx.beginPath();
-        ctx.arc(dx - 4, dy - 4, 4, 0, Math.PI * 2);
+        ctx.arc(dx - 4, colorY - 4, 4, 0, Math.PI * 2);
         ctx.fill();
     });
-    ctx.font = '10px monospace';
-    ctx.fillStyle = '#888888';
-    ctx.fillText('Z / X — смена цвета', W / 2, 475);
-    ctx.textAlign = 'left';
     ctx.restore();
+
+    uiButton(20, H - 62, 170, 48, '← Назад', () => pressKey('Escape'), { hint: 'ESC' });
+    if (selectedLevelIdx < unlockedLevels) {
+        uiButton(W - 210, H - 62, 190, 48, '▶ ИГРАТЬ', () => pressKey('Enter'),
+            { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 18, hint: 'ENTER' });
+    }
+    if (!document.body.classList.contains('touch')) drawTitle('← → выбор · Z / X цвет', H - 32, 11, '#aaaaaa');
 }
 
 // === LEVEL TRANSITION ===
@@ -8735,7 +8815,7 @@ function update() {
             if (isLeft() && !leftWasPressed && selectedLevelIdx > 0) {
                 selectedLevelIdx--;
             }
-            if (isRight() && !rightWasPressed && selectedLevelIdx < Math.min(LEVELS.length, unlockedLevels) - 1) {
+            if (isRight() && !rightWasPressed && selectedLevelIdx < LEVELS.length - 1) {
                 selectedLevelIdx++;
             }
             if (isEnter() && !enterWasPressed) {
@@ -9136,6 +9216,10 @@ function update() {
         }
 
         case 'GAME_OVER':
+            if (isEscape() && !escapeWasPressed) {
+                gameOverToMenu();
+                break;
+            }
             if (isEnter() && !enterWasPressed) {
                 if (totalScore > highScore) {
                     highScore = totalScore;
@@ -9194,6 +9278,8 @@ function update() {
 
 // === RENDER ===
 function render() {
+    ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+    uiButtons = [];
     ctx.save();
 
     // Screen shake
@@ -9404,61 +9490,48 @@ function render() {
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
             ctx.fillRect(0, 0, W, H);
 
-            // Pause panel (Feature 118: expanded to include minimap)
-            ctx.fillStyle = 'rgba(20,30,60,0.92)';
+            // Pause panel (Feature 122: fits the screen, every option is a tappable button)
+            ctx.fillStyle = 'rgba(20,30,60,0.94)';
             ctx.beginPath();
-            ctx.roundRect(W / 2 - 170, 150, 340, 360, 16);
+            ctx.roundRect(W / 2 - 180, 28, 360, 448, 16);
             ctx.fill();
             ctx.strokeStyle = 'rgba(100,150,255,0.5)';
             ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.roundRect(W / 2 - 170, 150, 340, 360, 16);
             ctx.stroke();
 
-            drawTitle('ПАУЗА', 205, 36, '#ffffff');
-            drawTitle(`Счёт: ${player.score}`, 242, 16, '#ffcc00');
+            drawTitle('ПАУЗА', 70, 32, '#ffffff');
+            drawTitle(`Счёт: ${player.score}  ·  Уровень ${currentLevel + 1}`, 96, 14, '#ffcc00');
 
-            // Buttons
-            const btnW = 220; const btnH = 38; const btnX = W / 2 - btnW / 2;
-            ctx.fillStyle = 'rgba(60,180,60,0.8)';
-            ctx.beginPath(); ctx.roundRect(btnX, 268, btnW, btnH, 8); ctx.fill();
-            drawTitle('ESC — Продолжить', 293, 15, '#ffffff');
-
-            ctx.fillStyle = 'rgba(200,120,30,0.8)';
-            ctx.beginPath(); ctx.roundRect(btnX, 316, btnW, btnH, 8); ctx.fill();
-            drawTitle('R — Рестарт', 341, 15, '#ffffff');
-
-            ctx.fillStyle = 'rgba(150,60,200,0.8)';
-            ctx.beginPath(); ctx.roundRect(btnX, 364, btnW - 2, btnH - 8, 8); ctx.fill();
-            drawTitle('M — В меню', 386, 15, '#ffffff');
-
-            // Feature 97: Colorblind toggle button
-            const cbColor = colorblindMode ? 'rgba(0,180,200,0.85)' : 'rgba(60,60,80,0.75)';
-            ctx.fillStyle = cbColor;
-            ctx.beginPath(); ctx.roundRect(W / 2 - 110, 342, 220, 24, 6); ctx.fill();
-            drawTitle(`C — 👁 Дальтоник: ${colorblindMode ? 'ВКЛ' : 'ВЫКЛ'}`, 363, 11, colorblindMode ? '#aaffff' : '#aaaaaa');
-
-            // Feature 112: Volume control display
-            ctx.save();
-            ctx.textAlign = 'center';
-            ctx.font = '11px monospace';
-            ctx.fillStyle = '#888899';
-            ctx.fillText('[ / ] — Громкость', W / 2, 382);
-            const volBarW = 180, volBarH = 7, volBarX = W / 2 - volBarW / 2, volBarY = 387;
-            ctx.fillStyle = 'rgba(255,255,255,0.12)';
-            ctx.beginPath(); ctx.roundRect(volBarX, volBarY, volBarW, volBarH, 4); ctx.fill();
-            ctx.fillStyle = soundMuted ? '#ff4444' : '#55ddff';
-            ctx.beginPath(); ctx.roundRect(volBarX, volBarY, Math.round(volBarW * soundVolume), volBarH, 4); ctx.fill();
-            ctx.fillStyle = '#aabbcc';
-            ctx.fillText(`${soundMuted ? '🔇' : '🔊'} ${Math.round(soundVolume * 100)}%`, W / 2, 408);
-            ctx.textAlign = 'left';
-            ctx.restore();
+            {
+                const bw = 280, bh = 40, bx = W / 2 - bw / 2;
+                uiButton(bx, 110, bw, bh, '▶ ПРОДОЛЖИТЬ', () => pressKey('Escape'),
+                    { color: 'rgba(40,150,60,0.92)', border: '#88ff99', size: 16, hint: 'ESC' });
+                uiButton(bx, 158, bw, bh, '↻ РЕСТАРТ', () => pressKey('KeyR'), { color: 'rgba(190,110,30,0.9)', size: 15, hint: 'R' });
+                uiButton(bx, 206, bw, bh, '☰ В МЕНЮ', () => pressKey('KeyM'), { color: 'rgba(130,60,190,0.9)', size: 15, hint: 'M' });
+                uiButton(bx, 254, bw, 34, `👁 Дальтоник: ${colorblindMode ? 'ВКЛ' : 'ВЫКЛ'}`, () => pressKey('KeyC'),
+                    { color: colorblindMode ? 'rgba(0,160,190,0.85)' : 'rgba(60,60,80,0.8)', size: 13, hint: 'C' });
+                // Feature 112: volume row  [−] ████░░ [+]
+                const vy = 298;
+                uiButton(bx, vy, 44, 34, '−', () => pressKey('BracketLeft'), { size: 20 });
+                uiButton(bx + bw - 44, vy, 44, 34, '+', () => pressKey('BracketRight'), { size: 20 });
+                const volBarX = bx + 54, volBarW = bw - 108;
+                ctx.fillStyle = 'rgba(255,255,255,0.12)';
+                ctx.beginPath(); ctx.roundRect(volBarX, vy + 8, volBarW, 8, 4); ctx.fill();
+                ctx.fillStyle = soundMuted ? '#ff4444' : '#55ddff';
+                ctx.beginPath(); ctx.roundRect(volBarX, vy + 8, Math.round(volBarW * soundVolume), 8, 4); ctx.fill();
+                ctx.save();
+                ctx.textAlign = 'center';
+                ctx.font = '11px monospace';
+                ctx.fillStyle = '#aabbcc';
+                ctx.fillText(`${soundMuted ? '🔇' : '🔊'} Громкость ${Math.round(soundVolume * 100)}%`, W / 2, vy + 31);
+                ctx.restore();
+            }
 
             // Feature 118: Level minimap on pause screen (bottom section)
             {
-                const mmW = 340, mmH = 90;
+                const mmW = 320, mmH = 120;
                 const mmX = W / 2 - mmW / 2;
-                const mmY = 418;
+                const mmY = 344;
                 const scaleX = mmW / W;
                 const scaleY = mmH / H;
 
@@ -9524,6 +9597,7 @@ function render() {
 // === GAME LOOP ===
 let lastTime = 0;
 let accumulator = 0;
+let lastLoopState = null;
 
 function gameLoop(timestamp) {
     const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
@@ -9536,6 +9610,12 @@ function gameLoop(timestamp) {
     }
 
     render();
+    // Feature 121: on-screen controls are only shown during gameplay
+    if (gameState !== lastLoopState) {
+        lastLoopState = gameState;
+        document.body.classList.toggle('playing', gameState === 'PLAYING');
+        if (gameState !== 'PLAYING') updateTouchKeys([]);
+    }
     requestAnimationFrame(gameLoop);
 }
 
