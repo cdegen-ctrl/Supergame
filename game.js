@@ -3,7 +3,7 @@
 
 // === CONSTANTS ===
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d', { alpha: false }); // opaque: every frame paints the full background. `let`: renderToBitmap() temporarily points it at an offscreen canvas
 const W = 800;
 const H = 500;
 
@@ -316,16 +316,50 @@ function aabb(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+// Feature 125: pixel sprites are baked once into a 1-pixel-per-cell bitmap and drawn with a single
+// nearest-neighbour drawImage (was one fillRect per pixel — ~150 calls per Mario per frame).
+const spriteBitmaps = new WeakMap();
 function drawPixelSprite(x, y, pxSize, data) {
-    for (let r = 0; r < data.length; r++) {
-        for (let c = 0; c < data[r].length; c++) {
-            const color = data[r][c];
-            if (color) {
-                ctx.fillStyle = color;
-                ctx.fillRect(x + c * pxSize, y + r * pxSize, pxSize, pxSize);
+    let bmp = spriteBitmaps.get(data);
+    if (!bmp) {
+        bmp = document.createElement('canvas');
+        bmp.width = Math.max(...data.map(row => row.length));
+        bmp.height = data.length;
+        const g = bmp.getContext('2d');
+        for (let r = 0; r < data.length; r++) {
+            for (let c = 0; c < data[r].length; c++) {
+                if (data[r][c]) { g.fillStyle = data[r][c]; g.fillRect(c, r, 1, 1); }
             }
         }
+        spriteBitmaps.set(data, bmp);
     }
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bmp, x, y, bmp.width * pxSize, bmp.height * pxSize);
+}
+
+// Recoloured mushroom sprites are built once per colour pair (they used to be rebuilt every frame)
+const mushroomSpriteVariants = new Map();
+function getMushroomSprite(cap, capLight) {
+    const key = cap + capLight;
+    let sprite = mushroomSpriteVariants.get(key);
+    if (!sprite) {
+        sprite = MUSHROOM_SPRITE.map(row => row.map(cell =>
+            cell === C.mushroomCap ? cap : cell === C.mushroomCapLight ? capLight : cell));
+        mushroomSpriteVariants.set(key, sprite);
+    }
+    return sprite;
+}
+
+// Render arbitrary existing drawing code into an offscreen bitmap at the current render scale
+function renderToBitmap(w, h, drawFn) {
+    const bmp = document.createElement('canvas');
+    bmp.width = Math.max(1, Math.ceil(w * renderScale));
+    bmp.height = Math.max(1, Math.ceil(h * renderScale));
+    const saved = ctx;
+    ctx = bmp.getContext('2d');
+    ctx.scale(renderScale, renderScale);
+    try { drawFn(); } finally { ctx = saved; }
+    return bmp;
 }
 
 // === SPRITE DATA ===
@@ -452,7 +486,6 @@ class Platform extends Entity {
         // Feature 66: Don't render while respawning
         if (this.crumble && this.crumbleState === 'respawning') return;
 
-        const d = DEPTH_3D;
         // Feature 66: Shake crumbling platform visually
         let shakeX = 0;
         if (this.crumble && this.crumbleState === 'shaking') {
@@ -461,7 +494,74 @@ class Platform extends Entity {
 
         ctx.save();
         if (shakeX !== 0) ctx.translate(shakeX, 0);
+        // Feature 66: fade out when falling
+        if (this.crumble && this.crumbleState === 'falling') {
+            ctx.globalAlpha = Math.max(0, this.crumbleTimer / 50);
+        }
 
+        // Feature 125: the static 3D body (faces + bricks + labels) is baked once into a bitmap
+        const padL = 2, padT = Math.ceil(DEPTH_3D * 0.3) + 2;
+        const bw = this.w + DEPTH_3D * 0.5 + padL + 3, bh = this.h + DEPTH_3D + padT + 2;
+        if (!this._bmp || this._bmpScale !== renderScale) {
+            const ox = this.x - padL, oy = this.y - padT;
+            this._bmp = renderToBitmap(bw, bh, () => {
+                ctx.translate(-ox, -oy);
+                this.renderStatic();
+            });
+            this._bmpScale = renderScale;
+        }
+        const snap = v => Math.round(v * renderScale) / renderScale;
+        ctx.drawImage(this._bmp, snap(this.x - padL), snap(this.y - padT), bw, bh);
+
+        // Feature 66: Draw cracks on crumbling platforms when shaking
+        if (this.crumble && this.crumbleState === 'shaking') {
+            ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+            ctx.lineWidth = 1.5;
+            const progress = 1 - this.crumbleTimer / 65;
+            const crackCount = Math.floor(progress * 5) + 1;
+            for (let i = 0; i < crackCount; i++) {
+                const cx = this.x + (i + 1) * this.w / (crackCount + 1);
+                ctx.beginPath();
+                ctx.moveTo(cx, this.y);
+                ctx.lineTo(cx + (Math.random() - 0.5) * 6, this.y + this.h * 0.5);
+                ctx.lineTo(cx + (Math.random() - 0.5) * 8, this.y + this.h);
+                ctx.stroke();
+            }
+        }
+
+        // Feature 102: Conveyor belt — animated direction strips
+        if (this.conveyor) {
+            const stripeW = 10;
+            const gap = 10;
+            const pitch = stripeW + gap;
+            const t = Math.floor(Date.now() / 45) * this.conveyor;
+            const offset = ((t % pitch) + pitch) % pitch;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+            ctx.clip();
+            ctx.globalAlpha = 0.52;
+            for (let sx = this.x - pitch + offset; sx < this.x + this.w + pitch; sx += pitch) {
+                ctx.fillStyle = this.conveyor > 0 ? '#dd8822' : '#2288dd';
+                ctx.fillRect(sx, this.y + 1, stripeW, this.h - 2);
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
+            // Direction label
+            ctx.save();
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = this.conveyor > 0 ? '#ffcc55' : '#55ccff';
+            ctx.fillText(this.conveyor > 0 ? '►' : '◄', this.x + this.w / 2, this.y + this.h / 2 + 4);
+            ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        ctx.restore();
+    }
+
+    renderStatic() {
+        const d = DEPTH_3D;
         // Choose colors based on platform type
         const mainColor  = this.ice ? '#88ccee' : this.crumble ? '#8c7060' : C.brick;
         const frontColor = this.ice ? '#5599bb' : this.crumble ? '#5c4030' : '#1a5c24';
@@ -469,11 +569,6 @@ class Platform extends Entity {
         const topColor   = this.ice ? '#aaddff' : this.crumble ? '#a08070' : '#3aad4e';
         const lineColor  = this.ice ? '#4488aa' : this.crumble ? '#4a3028' : C.brickLine;
         const edgeColor  = this.ice ? '#cceeff' : this.crumble ? '#c0a090' : '#5cd670';
-
-        // Feature 66: fade out when falling
-        if (this.crumble && this.crumbleState === 'falling') {
-            ctx.globalAlpha = Math.max(0, this.crumbleTimer / 50);
-        }
 
         // 3D front face (bottom side)
         ctx.fillStyle = frontColor;
@@ -502,22 +597,6 @@ class Platform extends Entity {
         // Main top face
         ctx.fillStyle = mainColor;
         ctx.fillRect(this.x, this.y, this.w, this.h);
-
-        // Feature 66: Draw cracks on crumbling platforms when shaking
-        if (this.crumble && this.crumbleState === 'shaking') {
-            ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-            ctx.lineWidth = 1.5;
-            const progress = 1 - this.crumbleTimer / 65;
-            const crackCount = Math.floor(progress * 5) + 1;
-            for (let i = 0; i < crackCount; i++) {
-                const cx = this.x + (i + 1) * this.w / (crackCount + 1);
-                ctx.beginPath();
-                ctx.moveTo(cx, this.y);
-                ctx.lineTo(cx + (Math.random() - 0.5) * 6, this.y + this.h * 0.5);
-                ctx.lineTo(cx + (Math.random() - 0.5) * 8, this.y + this.h);
-                ctx.stroke();
-            }
-        }
 
         // Brick pattern on top face
         const bw = 24; const bh = 12;
@@ -590,35 +669,6 @@ class Platform extends Entity {
             ctx.fillText(label, this.x + this.w / 2, this.y + this.h / 2 + 4);
         }
 
-        // Feature 102: Conveyor belt — animated direction strips
-        if (this.conveyor) {
-            const stripeW = 10;
-            const gap = 10;
-            const pitch = stripeW + gap;
-            const t = Math.floor(Date.now() / 45) * this.conveyor;
-            const offset = ((t % pitch) + pitch) % pitch;
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
-            ctx.clip();
-            ctx.globalAlpha = 0.52;
-            for (let sx = this.x - pitch + offset; sx < this.x + this.w + pitch; sx += pitch) {
-                ctx.fillStyle = this.conveyor > 0 ? '#dd8822' : '#2288dd';
-                ctx.fillRect(sx, this.y + 1, stripeW, this.h - 2);
-            }
-            ctx.globalAlpha = 1;
-            ctx.restore();
-            // Direction label
-            ctx.save();
-            ctx.font = 'bold 11px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillStyle = this.conveyor > 0 ? '#ffcc55' : '#55ccff';
-            ctx.fillText(this.conveyor > 0 ? '►' : '◄', this.x + this.w / 2, this.y + this.h / 2 + 4);
-            ctx.textAlign = 'left';
-            ctx.restore();
-        }
-
-        ctx.restore();
     }
 }
 
@@ -1235,11 +1285,7 @@ class Player extends Entity {
 
         // Build a color-customized sprite copy
         const mc = getMushroomColors();
-        const coloredSprite = MUSHROOM_SPRITE.map(row => row.map(cell => {
-            if (cell === C.mushroomCap) return mc.cap;
-            if (cell === C.mushroomCapLight) return mc.capLight;
-            return cell;
-        }));
+        const coloredSprite = getMushroomSprite(mc.cap, mc.capLight);
 
         if (!this.facingRight) {
             ctx.translate(drawX + spriteW, drawY);
@@ -1654,8 +1700,6 @@ class Mario extends Entity {
             const badgeX = this.x + this.w / 2;
             const badgeY = this.y - 4;
             if (this.type === 'fast') {
-                ctx.fillStyle = '#000';
-                ctx.fillText('⚡', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#ff6600';
                 ctx.fillText('⚡', badgeX, badgeY);
             } else if (this.type === 'jumpy') {
@@ -1664,8 +1708,6 @@ class Mario extends Entity {
                 ctx.fillStyle = '#44aaff';
                 ctx.fillText('↑', badgeX, badgeY);
             } else if (this.type === 'armored') {
-                ctx.fillStyle = '#000';
-                ctx.fillText('🛡', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#aabbcc';
                 ctx.fillText('🛡', badgeX, badgeY);
             } else if (this.type === 'flying') {
@@ -1674,13 +1716,9 @@ class Mario extends Entity {
                 ctx.fillStyle = '#88ddff';
                 ctx.fillText('✈', badgeX, badgeY);
             } else if (this.type === 'shooter') {
-                ctx.fillStyle = '#000';
-                ctx.fillText('🎯', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#ff8800';
                 ctx.fillText('🎯', badgeX, badgeY);
             } else if (this.type === 'parachute') {
-                ctx.fillStyle = '#000';
-                ctx.fillText('🪂', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#ffeeaa';
                 ctx.fillText('🪂', badgeX, badgeY);
             } else if (this.type === 'ghost_mario') {
@@ -1691,13 +1729,9 @@ class Mario extends Entity {
                     ctx.fillText('👻', badgeX, badgeY);
                 }
             } else if (this.type === 'teleporter') {
-                ctx.fillStyle = '#000';
-                ctx.fillText('⚡', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = '#44aaff';
                 ctx.fillText('⚡', badgeX, badgeY);
             } else if (this.type === 'berserker') {
-                ctx.fillStyle = '#000';
-                ctx.fillText(this.berserkerRage ? '😡' : '😤', badgeX + 1, badgeY + 1);
                 ctx.fillStyle = this.berserkerRage ? '#ff2200' : '#aa6600';
                 ctx.fillText(this.berserkerRage ? '😡' : '😤', badgeX, badgeY);
             }
@@ -1886,6 +1920,33 @@ class Mario extends Entity {
 }
 
 // === COINS ===
+// Feature 126: coin body + shine + label pre-rendered per kind (1 = normal, 2 = x2, 3 = x3)
+const coinBitmaps = {};
+function getCoinBitmap(kind, r) {
+    const key = kind + '@' + renderScale;
+    if (coinBitmaps[key]) return coinBitmaps[key];
+    const isTriple = kind === 3, isDouble = kind === 2;
+    const sz = r * 2 + 4, cx = sz / 2, cy = sz / 2;
+    coinBitmaps[key] = renderToBitmap(sz, sz, () => {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = isTriple ? '#cc44ff' : isDouble ? '#ff9900' : '#ffcc00';
+        ctx.fill();
+        ctx.strokeStyle = isTriple ? '#ff99ff' : isDouble ? '#ffcc00' : '#e6a800';
+        ctx.lineWidth = isTriple ? 2.5 : isDouble ? 2 : 1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.35, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fill();
+        ctx.font = `bold ${isTriple ? 10 : isDouble ? 9 : 8}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = isTriple ? '#ffffff' : isDouble ? '#7a3c00' : '#b8860b';
+        ctx.fillText(isTriple ? 'x3' : isDouble ? 'x2' : '$', cx, cy + r * 0.45);
+    });
+    return coinBitmaps[key];
+}
+
 class Coin {
     constructor(x, y, bonus = 50) {
         this.x = x;
@@ -1984,27 +2045,11 @@ class Coin {
             ? `rgba(255, 160, 0, ${glow * 0.4})`
             : `rgba(255, 220, 0, ${glow * 0.25})`;
         ctx.fill();
-        // Coin body (with spin for double/triple)
-        ctx.translate(cx, cy);
-        ctx.scale(Math.abs(spin), 1);
-        ctx.translate(-cx, -cy);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = isTriple ? '#cc44ff' : isDouble ? '#ff9900' : '#ffcc00';
-        ctx.fill();
-        ctx.strokeStyle = isTriple ? '#ff99ff' : isDouble ? '#ffcc00' : '#e6a800';
-        ctx.lineWidth = isTriple ? 2.5 : isDouble ? 2 : 1;
-        ctx.stroke();
-        // Shine
-        ctx.beginPath();
-        ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.35, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.fill();
-        // Label
-        ctx.font = `bold ${isTriple ? 10 : isDouble ? 9 : 8}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = isTriple ? '#ffffff' : isDouble ? '#7a3c00' : '#b8860b';
-        ctx.fillText(isTriple ? 'x3' : isDouble ? 'x2' : '$', cx, cy + r * 0.45);
+        // Coin body (with spin for double/triple) — Feature 126: baked once per coin kind
+        const kind = isTriple ? 3 : isDouble ? 2 : 1;
+        const bmp = getCoinBitmap(kind, r);
+        const sz = r * 2 + 4, sx = Math.max(0.08, Math.abs(spin));
+        ctx.drawImage(bmp, cx - (sz / 2) * sx, cy - sz / 2, sz * sx, sz);
         ctx.restore();
     }
 }
@@ -4129,15 +4174,23 @@ class Particle {
     }
 
     render() {
-        const alpha = Math.min(1, this.timer / 15);
+        // Feature 126: outlined text is baked once per particle (strokeText every frame was costly)
+        if (!this.bmp || this.bmpScale !== renderScale) {
+            ctx.font = 'bold 18px monospace';
+            this.bmpW = Math.ceil(ctx.measureText(this.text).width) + 8;
+            this.bmp = renderToBitmap(this.bmpW, 30, () => {
+                ctx.font = 'bold 18px monospace';
+                ctx.fillStyle = this.color;
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 3;
+                ctx.strokeText(this.text, 4, 22);
+                ctx.fillText(this.text, 4, 22);
+            });
+            this.bmpScale = renderScale;
+        }
         ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.font = 'bold 18px monospace';
-        ctx.fillStyle = this.color;
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 3;
-        ctx.strokeText(this.text, this.x, this.y);
-        ctx.fillText(this.text, this.x, this.y);
+        ctx.globalAlpha = Math.min(1, this.timer / 15);
+        ctx.drawImage(this.bmp, this.x - 4, this.y - 22, this.bmpW, 30);
         ctx.restore();
     }
 }
@@ -6592,7 +6645,6 @@ function checkPlayerBossCollision() {
 // === FEATURE 53: Afterimage trail ===
 function renderAfterimages() {
     if (afterimages.length === 0) return;
-    const mc = getMushroomColors();
     const px = 2.5;
     const spriteW = 14 * px;
     const spriteH = 12 * px;
@@ -6601,7 +6653,6 @@ function renderAfterimages() {
         ctx.save();
         ctx.globalAlpha = alpha;
         // Feature 65: cyan tint for dash afterimages, green for speed boost
-        ctx.filter = img.dashTint ? 'hue-rotate(180deg) saturate(3)' : 'hue-rotate(90deg) saturate(2)';
         const pivotX = img.x + 16;
         const pivotY = img.y + 32;
         ctx.translate(pivotX, pivotY);
@@ -6609,11 +6660,8 @@ function renderAfterimages() {
         ctx.translate(-pivotX, -pivotY);
         const drawX = img.x + (32 - spriteW) / 2;
         const drawY = img.y + (32 - spriteH);
-        const coloredSprite = MUSHROOM_SPRITE.map(row => row.map(cell => {
-            if (cell === C.mushroomCap) return mc.cap;
-            if (cell === C.mushroomCapLight) return mc.capLight;
-            return cell;
-        }));
+        // Feature 65 tint via a recoloured sprite (ctx.filter per afterimage was very expensive)
+        const coloredSprite = img.dashTint ? getMushroomSprite('#1fb8e0', '#7ff0ff') : getMushroomSprite('#22b844', '#88ff99');
         if (!img.facingRight) {
             ctx.translate(drawX + spriteW, drawY);
             ctx.scale(-1, 1);
@@ -6746,27 +6794,35 @@ function prlx(factor) {
     return (player.x - W / 2) * factor;
 }
 
-function drawBackground() {
-    // Feature 100: Space background for Cosmos level
-    if (gameState === 'PLAYING' && LEVELS[currentLevel] && LEVELS[currentLevel].lowGravity) {
+// Feature 125: background layers are baked into bitmaps once per theme; each frame only blits them
+// with their parallax offsets (the full-screen gradient + shapes used to be redrawn every frame).
+let bgCache = null;
+
+function getBackgroundTheme() {
+    const lvl = gameState === 'PLAYING' ? LEVELS[currentLevel] : null;
+    if (lvl && lvl.lowGravity) return 'space';
+    if (lvl && lvl.isUnderground) return 'underground';
+    if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
+    if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
+    if (gameState === 'PLAYING' && currentLevel >= 4) return 'dusk';
+    return 'day';
+}
+
+function paintSolidBackground(theme) {
+    if (theme === 'space') {
         const spaceGrad = ctx.createLinearGradient(0, 0, 0, H);
         spaceGrad.addColorStop(0, '#000010');
         spaceGrad.addColorStop(0.6, '#050025');
         spaceGrad.addColorStop(1, '#0a0535');
         ctx.fillStyle = spaceGrad;
         ctx.fillRect(0, 0, W, H);
-        // Stars
-        const t = Date.now() * 0.001;
-        ctx.save();
         for (let i = 0; i < 80; i++) {
             const sx = (i * 137.5 + 17) % W;
             const sy = (i * 73.1 + 11) % (H * 0.85);
-            const pulse = 0.4 + Math.abs(Math.sin(t * 0.9 + i * 1.3)) * 0.6;
-            ctx.globalAlpha = pulse;
+            ctx.globalAlpha = 0.4 + (i % 5) * 0.12;
             ctx.fillStyle = i % 5 === 0 ? '#aaddff' : i % 7 === 0 ? '#ffddaa' : '#ffffff';
             ctx.fillRect(sx, sy, i % 4 === 0 ? 2 : 1, i % 4 === 0 ? 2 : 1);
         }
-        // Distant planet
         ctx.globalAlpha = 0.18;
         ctx.beginPath();
         ctx.arc(680, 80, 55, 0, Math.PI * 2);
@@ -6779,42 +6835,30 @@ function drawBackground() {
         ctx.lineWidth = 6;
         ctx.stroke();
         ctx.globalAlpha = 1;
-        // 🚀 indicator
         ctx.font = 'bold 11px monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(100,200,255,0.35)';
-        ctx.fillText('⚠ ПОНИЖЕННАЯ ГРАВИТАЦИЯ', W / 2, 20);
+        ctx.fillText('⚠ ПОНИЖЕННАЯ ГРАВИТАЦИЯ', W / 2, 52);
         ctx.textAlign = 'left';
-        ctx.restore();
-        // Ground
         const groundGrad = ctx.createLinearGradient(0, 440, 0, H);
         groundGrad.addColorStop(0, '#1a1a3a');
         groundGrad.addColorStop(1, '#0a0a20');
         ctx.fillStyle = groundGrad;
         ctx.fillRect(0, 440, W, H - 440);
-        return;
-    }
-
-    // Feature 106: Underground cave background for Level 17
-    if (gameState === 'PLAYING' && LEVELS[currentLevel] && LEVELS[currentLevel].isUnderground) {
+    } else if (theme === 'underground') {
         const caveGrad = ctx.createLinearGradient(0, 0, 0, H);
         caveGrad.addColorStop(0, '#0d0804');
         caveGrad.addColorStop(0.4, '#1a1008');
         caveGrad.addColorStop(1, '#251608');
         ctx.fillStyle = caveGrad;
         ctx.fillRect(0, 0, W, H);
-        const t = Date.now() * 0.001;
-        // Rock texture dots
-        ctx.save();
         for (let i = 0; i < 40; i++) {
             const rx = (i * 197.3 + 11) % W;
             const ry = (i * 113.7 + 23) % (H * 0.85);
-            const pulse = 0.1 + Math.abs(Math.sin(t * 0.3 + i * 1.1)) * 0.12;
-            ctx.globalAlpha = pulse;
+            ctx.globalAlpha = 0.12 + (i % 4) * 0.03;
             ctx.fillStyle = i % 4 === 0 ? '#554433' : '#443322';
             ctx.fillRect(rx, ry, i % 5 === 0 ? 4 : 2, i % 5 === 0 ? 4 : 2);
         }
-        // Stalactites (top edge)
         ctx.globalAlpha = 0.7;
         ctx.fillStyle = '#221408';
         for (let i = 0; i < 12; i++) {
@@ -6823,119 +6867,108 @@ function drawBackground() {
             ctx.beginPath();
             ctx.moveTo(sx - 8, 0);
             ctx.lineTo(sx + 8, 0);
-            ctx.lineTo(sx + (Math.random() > 0.5 ? 3 : -3), sh);
+            ctx.lineTo(sx + (i % 2 ? 3 : -3), sh);
             ctx.closePath();
             ctx.fill();
         }
         ctx.globalAlpha = 1;
-        ctx.restore();
-        // Ground layer
         const groundGrad = ctx.createLinearGradient(0, 440, 0, H);
         groundGrad.addColorStop(0, '#2a1808');
         groundGrad.addColorStop(1, '#180e04');
         ctx.fillStyle = groundGrad;
         ctx.fillRect(0, 440, W, H - 440);
-        return;
-    }
-
-    // Feature 82: Cave background for bonus level
-    if (coinCaveMode) {
+    } else if (theme === 'coincave') {
         const caveGrad = ctx.createLinearGradient(0, 0, 0, H);
         caveGrad.addColorStop(0, '#0a0010');
         caveGrad.addColorStop(0.5, '#15003a');
         caveGrad.addColorStop(1, '#220050');
         ctx.fillStyle = caveGrad;
         ctx.fillRect(0, 0, W, H);
-        // Glowing coin-like particles in background
-        const t = Date.now() * 0.001;
-        ctx.save();
         for (let i = 0; i < 25; i++) {
-            const bx = ((i * 137.5 + 7) % W);
-            const by = ((i * 97.3 + 31) % (H * 0.9));
-            const pulse = 0.2 + Math.abs(Math.sin(t * 0.7 + i * 0.8)) * 0.4;
-            ctx.globalAlpha = pulse;
+            ctx.globalAlpha = 0.25 + (i % 3) * 0.12;
             ctx.fillStyle = i % 3 === 0 ? '#ffd700' : i % 3 === 1 ? '#cc44ff' : '#44ffcc';
             ctx.beginPath();
-            ctx.arc(bx, by, 1.5, 0, Math.PI * 2);
+            ctx.arc((i * 137.5 + 7) % W, (i * 97.3 + 31) % (H * 0.9), 1.5, 0, Math.PI * 2);
             ctx.fill();
         }
         ctx.globalAlpha = 1;
-        ctx.restore();
-        return;
     }
+}
 
-    // Sky gradient — changes based on level
-    const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-    let mountainColor, hillColorLight, hillColorDark, cloudAlpha;
+const BG_THEMES = {
+    night: { sky: ['#05051a', '#0d0d2e', '#161630'], mountain: '#1a1a3a', hillLight: '#0f2010', hillDark: '#0a150b', cloudAlpha: 0.15 },
+    dusk:  { sky: ['#1a0530', '#3d1060', '#7a2060'], mountain: '#3a2060', hillLight: '#2a1a40', hillDark: '#1e1030', cloudAlpha: 0.25 },
+    day:   { sky: ['#3060c0', '#5c94fc', '#88bbff'], mountain: '#4a6fa0', hillLight: '#3a7c2f', hillDark: '#2d6025', cloudAlpha: 0.85 },
+};
+const BG_MARGIN = 80; // extra width on each side of parallax layers
 
-    if (gameState === 'PLAYING' && currentLevel >= 6) {
-        // Level 7-8: Night sky with stars
-        skyGrad.addColorStop(0, '#05051a');
-        skyGrad.addColorStop(0.5, '#0d0d2e');
-        skyGrad.addColorStop(1, '#161630');
-        mountainColor = '#1a1a3a';
-        hillColorLight = '#0f2010';
-        hillColorDark  = '#0a150b';
-        cloudAlpha = 0.15;
-    } else if (gameState === 'PLAYING' && currentLevel >= 4) {
-        // Levels 5-6: Dusk/Twilight
-        skyGrad.addColorStop(0, '#1a0530');
-        skyGrad.addColorStop(0.5, '#3d1060');
-        skyGrad.addColorStop(1, '#7a2060');
-        mountainColor = '#3a2060';
-        hillColorLight = '#2a1a40';
-        hillColorDark  = '#1e1030';
-        cloudAlpha = 0.25;
-    } else {
-        // Levels 1-4: Day sky
-        skyGrad.addColorStop(0, '#3060c0');
-        skyGrad.addColorStop(0.5, '#5c94fc');
-        skyGrad.addColorStop(1, '#88bbff');
-        mountainColor = '#4a6fa0';
-        hillColorLight = '#3a7c2f';
-        hillColorDark  = '#2d6025';
-        cloudAlpha = 0.85;
+function buildBackgroundCache(theme) {
+    const cache = { key: theme + '@' + renderScale, theme };
+    if (!BG_THEMES[theme]) {
+        cache.sky = renderToBitmap(W, H, () => paintSolidBackground(theme));
+        return cache;
     }
-    ctx.fillStyle = skyGrad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Night stars (level 7 only)
-    if (gameState === 'PLAYING' && currentLevel >= 6) {
-        ctx.save();
-        const starSeed = 42; // deterministic
-        for (let i = 0; i < 60; i++) {
-            const sx = ((i * 137.508 + starSeed) % W);
-            const sy = ((i * 97.31 + starSeed * 0.5) % (H * 0.65));
-            const sr = 0.5 + (i % 3) * 0.5;
-            const twinkle = 0.4 + Math.abs(Math.sin(Date.now() * 0.002 + i)) * 0.6;
-            ctx.globalAlpha = twinkle;
+    const t = BG_THEMES[theme];
+    const dark = theme !== 'day';
+    cache.sky = renderToBitmap(W, H, () => {
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+        skyGrad.addColorStop(0, t.sky[0]);
+        skyGrad.addColorStop(0.5, t.sky[1]);
+        skyGrad.addColorStop(1, t.sky[2]);
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, W, H);
+        if (theme === 'night') {
             ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-            ctx.fill();
+            for (let i = 0; i < 60; i++) {
+                ctx.globalAlpha = 0.45 + (i % 4) * 0.15;
+                ctx.beginPath();
+                ctx.arc((i * 137.508 + 42) % W, (i * 97.31 + 21) % (H * 0.65), 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
         }
-        ctx.restore();
-        // Feature 62: Shooting stars on night levels
-        updateAndDrawShootingStars();
-    }
+    });
+    const layerW = W + BG_MARGIN * 2;
+    cache.mountains = renderToBitmap(layerW, 240, () => {
+        ctx.translate(BG_MARGIN, -230);
+        ctx.fillStyle = t.mountain;
+        drawMountain(80, 460, 200, 180); // (later mountains inherit the snow-cap fill — the original look)
+        drawMountain(300, 460, 280, 220);
+        drawMountain(580, 460, 250, 190);
+        drawMountain(750, 460, 180, 160);
+    });
+    cache.clouds = renderToBitmap(layerW, 180, () => {
+        ctx.translate(BG_MARGIN, 0);
+        ctx.globalAlpha = t.cloudAlpha;
+        drawCloud3D(100, 60, 60);
+        drawCloud3D(350, 90, 45);
+        drawCloud3D(600, 50, 55);
+        drawCloud3D(750, 110, 35);
+    });
+    cache.hills = renderToBitmap(layerW, 140, () => {
+        ctx.translate(BG_MARGIN, -340);
+        drawHill3D(100, 460, 160, 80, t.hillLight, t.hillDark);
+        drawHill3D(500, 460, 200, 100, t.hillLight, t.hillDark);
+        drawHill3D(300, 460, 140, 60, dark ? t.hillDark : '#4a8c3f', dark ? '#0a0a18' : '#3a7c2f');
+        drawHill3D(700, 460, 120, 50, dark ? t.hillDark : '#4a8c3f', dark ? '#0a0a18' : '#3a7c2f');
+    });
+    return cache;
+}
 
-    // Distant mountains (layer 1 — slowest parallax)
-    const mo = prlx(-0.04);
-    ctx.fillStyle = mountainColor;
-    drawMountain(80 + mo, 460, 200, 180);
-    drawMountain(300 + mo, 460, 280, 220);
-    drawMountain(580 + mo, 460, 250, 190);
-    drawMountain(750 + mo, 460, 180, 160);
+function drawBackground() {
+    const theme = getBackgroundTheme();
+    if (!bgCache || bgCache.key !== theme + '@' + renderScale) bgCache = buildBackgroundCache(theme);
+    ctx.drawImage(bgCache.sky, 0, 0, W, H);
+    if (!bgCache.mountains) return;
 
-    // Clouds (layer 2 — medium parallax) — dimmed at night/dusk
-    const co = prlx(-0.08);
-    ctx.save();
-    ctx.globalAlpha = cloudAlpha;
-    drawCloud3D(100 + co, 60, 60);
-    drawCloud3D(350 + co, 90, 45);
-    drawCloud3D(600 + co, 50, 55);
-    drawCloud3D(750 + co, 110, 35);
-    ctx.restore();
+    // Feature 62: Shooting stars on night levels
+    if (theme === 'night') updateAndDrawShootingStars();
+
+    const layerW = W + BG_MARGIN * 2;
+    // Snap offsets to whole device pixels: a sub-pixel blit takes a ~10x slower resampling path
+    const snap = v => Math.round(v * renderScale) / renderScale;
+    ctx.drawImage(bgCache.mountains, snap(prlx(-0.04)) - BG_MARGIN, 230, layerW, 240);
+    ctx.drawImage(bgCache.clouds, snap(prlx(-0.08)) - BG_MARGIN, 0, layerW, 180);
 
     // Feature 60: Background birds (day levels only)
     if (gameState === 'PLAYING' && currentLevel < 4 && backgroundBirds.length) {
@@ -6947,16 +6980,7 @@ function drawBackground() {
         ctx.restore();
     }
 
-    // Hills (layer 3 — fastest parallax)
-    const ho = prlx(-0.14);
-    drawHill3D(100 + ho, 460, 160, 80, hillColorLight, hillColorDark);
-    drawHill3D(500 + ho, 460, 200, 100, hillColorLight, hillColorDark);
-    drawHill3D(300 + ho, 460, 140, 60,
-        gameState === 'PLAYING' && currentLevel >= 4 ? hillColorDark : '#4a8c3f',
-        gameState === 'PLAYING' && currentLevel >= 4 ? '#0a0a18'     : '#3a7c2f');
-    drawHill3D(700 + ho, 460, 120, 50,
-        gameState === 'PLAYING' && currentLevel >= 4 ? hillColorDark : '#4a8c3f',
-        gameState === 'PLAYING' && currentLevel >= 4 ? '#0a0a18'     : '#3a7c2f');
+    ctx.drawImage(bgCache.hills, snap(prlx(-0.14)) - BG_MARGIN, 340, layerW, 140);
 }
 
 function drawCloud3D(x, y, size) {
@@ -7933,8 +7957,7 @@ function renderMenu() {
 
     // Big mushroom in the player's chosen colour
     const mcols = getMushroomColors();
-    const sprite = MUSHROOM_SPRITE.map(row => row.map(c =>
-        c === C.mushroomCap ? mcols.cap : c === C.mushroomCapLight ? mcols.capLight : c));
+    const sprite = getMushroomSprite(mcols.cap, mcols.capLight);
     const bob = Math.sin(Date.now() * 0.004) * 4;
     drawPixelSprite(W / 2 - 35, 128 + bob, 5, sprite);
 
@@ -8245,11 +8268,7 @@ function renderVictory() {
     // Big mushroom
     ctx.save();
     const mcols = getMushroomColors();
-    const bigSprite = MUSHROOM_SPRITE.map(row => row.map(c => {
-        if (c === C.mushroomCap) return mcols.cap;
-        if (c === C.mushroomCapLight) return mcols.capLight;
-        return c;
-    }));
+    const bigSprite = getMushroomSprite(mcols.cap, mcols.capLight);
     const spx = 6;
     drawPixelSprite(W / 2 - 250, 305, spx, bigSprite);
     drawPixelSprite(W / 2 + 250 - 14 * spx, 305, spx, bigSprite);
@@ -8910,7 +8929,8 @@ function update() {
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
-            if (lowQuality && particles.length > 80) particles.splice(0, particles.length - 80); // Feature 124
+            const particleCap = lowQuality ? 80 : 180; // Feature 124/126: bursts can pile up hundreds
+            if (particles.length > particleCap) particles.splice(0, particles.length - particleCap);
             scorePopups = scorePopups.filter(p => p.update()); // Feature 88
             coins = coins.filter(c => c.update());
             stars = stars.filter(s => s.update());
@@ -9656,12 +9676,16 @@ function gameLoop(timestamp) {
     lastTime = timestamp;
     accumulator += dt;
 
+    // Feature 126: draw only when the simulation advanced — on 120 Hz displays (MacBook ProMotion)
+    // every other frame used to redraw an identical picture
+    let stepped = false;
     while (accumulator >= TICK) {
         update();
         accumulator -= TICK;
+        stepped = true;
     }
 
-    render();
+    if (stepped) render();
     // Feature 121: on-screen controls are only shown during gameplay
     if (gameState !== lastLoopState) {
         lastLoopState = gameState;
