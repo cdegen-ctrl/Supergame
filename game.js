@@ -977,6 +977,7 @@ class Player extends Entity {
             this.vx = 0;
             this.vy = 0;
             this.invincibleTimer = 120; // 2 seconds
+            this.portalLock = true; // Feature 119: don't get teleported straight off the respawn point
             comboCount = 0;
             comboDisplayTimer = 0;
             coinFrenzyActivated = false; // Feature 73
@@ -3275,7 +3276,6 @@ function checkSporeCollisions() {
                 comboDisplayTimer = 100;
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
                 particles.push(new Particle(mario.x, mario.y - 10, `🍄 +${pts}`, '#44cc22'));
-                addScorePopup(mario.x, mario.y - 15, pts);
             } else {
                 particles.push(new Particle(mario.x, mario.y - 10, '💥 ОГЛУШЁН!', '#88ff44'));
             }
@@ -3683,12 +3683,17 @@ let portalPairs = []; // each pair: [portalA, portalB]
 
 function checkPortalCollisions() {
     if (!player) return;
+    // Feature 119: after spawning or teleporting the player must step out of every portal first
+    if (player.portalLock) {
+        if (!portalPairs.some(([a, b]) => aabb(player, a) || aabb(player, b))) player.portalLock = false;
+        return;
+    }
     for (const [pA, pB] of portalPairs) {
         // Check blue portal entry
         if (pA.cooldown <= 0 && pB.cooldown <= 0 && aabb(player, pA)) {
             player.x = pB.x + pB.w / 2 - player.w / 2;
             player.y = pB.y + pB.h / 2 - player.h / 2;
-            player.vx = player.vx;
+            player.portalLock = true;
             pA.cooldown = 45;
             pB.cooldown = 45;
             // Teleport flash particles
@@ -3707,6 +3712,7 @@ function checkPortalCollisions() {
         if (pA.cooldown <= 0 && pB.cooldown <= 0 && aabb(player, pB)) {
             player.x = pA.x + pA.w / 2 - player.w / 2;
             player.y = pA.y + pA.h / 2 - player.h / 2;
+            player.portalLock = true;
             pA.cooldown = 45;
             pB.cooldown = 45;
             for (let i = 0; i < 10; i++) {
@@ -4281,6 +4287,8 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье'];
+
 const LEVELS = [
     {
         // Level 1: Simple ground + 2 platforms
@@ -4858,7 +4866,7 @@ const LEVELS = [
         spikeSpawns: [{ x: 0, y: 444, count: 2 }, { x: 744, y: 444, count: 2 }], // Feature 91
         tripleCoinSpawns: [{ x: 310, y: 185 }], // Feature 92
     },
-    ,{
+    {
         // Level 13: «Монетная пещера» — Feature 82: bonus coin-only timed challenge
         isBonusLevel: true,
         platforms: [
@@ -5622,12 +5630,12 @@ function calcLevelGrade(deaths, coinsCollected, coinsTotal, timeSecs) {
 // === FEATURE 98: CHALLENGE CARDS ===
 // One challenge per level (deterministic per level index)
 const CHALLENGE_DEFS = [
-    { id: 'combo3',     desc: 'Убей 3 врагов комбо',        check: () => runStats.maxCombo >= 3 },
+    { id: 'coins100',   desc: 'Собери 100 очков монетами',   check: () => levelCoinsCollected >= 2 },
     { id: 'noDeathLvl', desc: 'Пройди без смертей',         check: () => levelDeathCount === 0 },
-    { id: 'coins100',   desc: 'Собери 100 очков монетами',   check: () => runStats.coinsCollected >= 2 },
+    { id: 'combo3',     desc: 'Убей 3 врагов комбо',        check: () => levelMaxCombo >= 3 },
     { id: 'fast30',     desc: 'Пройди за 30 секунд',        check: () => levelCompletionTime <= 30 },
-    { id: 'combo5',     desc: 'Комбо ×5 или больше',        check: () => runStats.maxCombo >= 5 },
     { id: 'allCoins',   desc: 'Собери все монеты',           check: () => levelCoinsTotal > 0 && levelCoinsCollected >= levelCoinsTotal },
+    { id: 'combo5',     desc: 'Комбо ×5 или больше',        check: () => levelMaxCombo >= 5 },
     { id: 'fast20',     desc: 'Пройди за 20 секунд',        check: () => levelCompletionTime <= 20 },
     { id: 'noDeathFast',desc: 'Без смертей и за 40 сек',    check: () => levelDeathCount === 0 && levelCompletionTime <= 40 },
 ];
@@ -5637,6 +5645,8 @@ let currentChallengeIdx = 0;
 let challengeCardTimer = 0;    // frames to show the card at level start (180 = 3 sec)
 const CHALLENGE_CARD_DURATION = 180;
 let challengeBonusAwarded = false; // flag so we only award once per level
+
+let levelMaxCombo = 0; // best combo within the current level (for challenge cards)
 
 function getChallengeForLevel(lvlIdx) {
     return CHALLENGE_DEFS[lvlIdx % CHALLENGE_DEFS.length];
@@ -6043,7 +6053,7 @@ function loadLevel(index) {
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
     const rawLvl = LEVELS[lvlIndex];
     // Feature 81: apply horizontal mirror if mode is active
-    const lvl = (mirrorMode && !rawLvl.isBonusLevel) ? mirrorLevelData(rawLvl) : rawLvl;
+    let lvl = (mirrorMode && !rawLvl.isBonusLevel) ? mirrorLevelData(rawLvl) : rawLvl;
     const speedMult = index >= LEVELS.length ? 1 + (index - LEVELS.length) * 0.15 : 1;
 
     // Feature 86: Apply Daily Challenge modifier — strip certain powerup spawns
@@ -6113,6 +6123,7 @@ function loadLevel(index) {
     droppedPowerups = []; // Feature 77: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
+    levelMaxCombo = 0;
     killStreakCount = 0; // Feature 83: reset streak on new level
     coinRainTimer = 0; coinRainBannerTimer = 0; coinRainEventInterval = COIN_RAIN_CHECK_INTERVAL; // Feature 111
     killStreakTimer = 0;
@@ -6167,6 +6178,49 @@ function loadLevel(index) {
     // Start BGM appropriate to this level's theme
     if (audioCtx && !soundMuted) startBGM(getBGMThemeForLevel(index));
     showLevelTip(index); // Feature 113
+    makeSpawnSafe(lvl);
+}
+
+function snapToGround(obj) {
+    const solid = platforms.filter(p => !p.moveAxis && !p.crumble);
+    const cx = obj.x + obj.w / 2;
+    const bottom = obj.y + obj.h;
+    if (solid.some(p => cx >= p.x && cx <= p.x + p.w && p.y >= bottom - 6 && p.y - bottom < 140)) return;
+    let best = null, bestD = Infinity;
+    for (const p of solid) {
+        if (p.w < obj.w + 4) continue;
+        const nx = Math.max(p.x + obj.w / 2 + 2, Math.min(p.x + p.w - obj.w / 2 - 2, cx));
+        const d = Math.hypot(nx - cx, p.y - bottom);
+        if (d < bestD) { bestD = d; best = { x: nx, y: p.y }; }
+    }
+    if (best) { obj.x = best.x - obj.w / 2; obj.y = best.y - obj.h; }
+}
+
+// Feature 119: keep the level start fair — no enemies, spikes or portals right on the spawn point
+function makeSpawnSafe(lvl) {
+    const sp = lvl.playerSpawn;
+    const cx = sp.x + player.w / 2;
+    player.invincibleTimer = Math.max(player.invincibleTimer, 90);
+    player.portalLock = true;
+    spikes = spikes.filter(s => s.x + s.w < cx - 70 || s.x > cx + 70 || Math.abs(s.y - sp.y) > 80);
+    // Farthest regular spawn from the player — used to relocate enemies that start too close
+    const far = (lvl.marioSpawns || []).reduce((best, s) =>
+        (!best || Math.abs(s.x - sp.x) > Math.abs(best.x - sp.x)) ? s : best, null);
+    // Portals and checkpoints must stand on solid ground, otherwise they teleport/respawn the player into a pit
+    for (const [pA, pB] of portalPairs) { snapToGround(pA); snapToGround(pB); }
+    checkpoints.forEach(snapToGround);
+    let shift = 0;
+    for (const m of marios) {
+        if (m.type === 'flying' || m.type === 'parachute') continue;
+        const near = Math.abs(m.x + m.w / 2 - cx) < 150 && Math.abs(m.y - sp.y) < 90;
+        if (!near) continue;
+        if (far && Math.abs(far.x - sp.x) >= 200) {
+            m.x = far.x + shift;
+            m.y = far.y;
+            shift += 34;
+        }
+        m.direction = m.x > sp.x ? 1 : -1;
+    }
 }
 
 // Feature 83: Kill Streak — call on every confirmed enemy kill
@@ -6253,7 +6307,6 @@ function checkCoinCollisions() {
             const pColor = coinFrenzyTimer > 0 ? '#ff8800' : (pts > 50 ? '#ff9900' : '#ffcc00');
             const pText = coinFrenzyTimer > 0 ? `x3 +${pts}` : `+${pts}`;
             particles.push(new Particle(coin.x, coin.y - 5, pText, pColor));
-            addScorePopup(coin.x, coin.y - 15, pts); // Feature 88
             playSound('coin');
         }
     }
@@ -6363,7 +6416,6 @@ function checkPlayerMarioCollisions() {
                 const pColor = comboColors[Math.min(comboCount - 1, 4)];
                 const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
                 particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
-                addScorePopup(mario.x, mario.y - 20, points); // Feature 88
                 shakeTimer = Math.min(6 + comboCount, 12);
                 shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
             } else {
@@ -6878,17 +6930,21 @@ function drawHill3D(x, baseY, width, height, colorLight, colorDark) {
 
 // === HUD ===
 function drawHUD() {
+    // Feature 120: translucent top strip keeps the score row readable over any background
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(0, 0, W, 40);
     ctx.font = 'bold 16px monospace';
 
     // Score (animated display)
     const scoreShown = Math.floor(hudScoreDisplay);
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(`SCORE: ${scoreShown}`, 22, 32);
+    ctx.fillText(`СЧЁТ: ${scoreShown}`, 16, 27);
     ctx.fillStyle = C.hud;
-    ctx.fillText(`SCORE: ${scoreShown}`, 20, 30);
+    ctx.fillText(`СЧЁТ: ${scoreShown}`, 14, 25);
 
-    // Lives — heart icons
-    for (let i = 0; i < 3; i++) {
+    // Lives — heart icons (shop and Ultra Mode can push lives above the starting count)
+    const heartSlots = Math.max(3, Math.min(player.lives, 9));
+    for (let i = 0; i < heartSlots; i++) {
         ctx.font = '20px monospace';
         ctx.fillStyle = i < player.lives ? '#ff3333' : 'rgba(120,40,40,0.45)';
         ctx.fillText('♥', 20 + i * 22, 57);
@@ -6921,19 +6977,19 @@ function drawHUD() {
     }
 
     // Level
-    const lvlText = `LEVEL: ${currentLevel + 1}`;
+    const lvlText = `УР. ${currentLevel + 1}`;
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(lvlText, W - 152, 32);
+    ctx.fillText(lvlText, W - 192, 27);
     ctx.fillStyle = C.hud;
-    ctx.fillText(lvlText, W - 150, 30);
+    ctx.fillText(lvlText, W - 194, 25);
 
     // Timer
     const secs = Math.floor(levelTimer / 60);
     const timerColor = secs >= 50 ? '#ff4444' : secs >= 35 ? '#ffaa00' : '#ffffff';
     ctx.fillStyle = C.textShadow;
-    ctx.fillText(`T: ${secs}s`, W - 152, 57);
+    ctx.fillText(`⏱ ${secs}s`, W - 92, 27);
     ctx.fillStyle = timerColor;
-    ctx.fillText(`T: ${secs}s`, W - 150, 55);
+    ctx.fillText(`⏱ ${secs}s`, W - 94, 25);
 
     // Feature 96: Speed Run Mode — live timer with PB delta
     if (speedRunMode) {
@@ -6973,14 +7029,14 @@ function drawHUD() {
     if (endlessMode) {
         const cycleStr = `♾️ ЦИКЛ ${endlessCycle + 1}`;
         ctx.fillStyle = C.textShadow;
-        ctx.fillText(cycleStr, W / 2 - 48, 32);
+        ctx.fillText(cycleStr, W / 2 - 48, 27);
         ctx.fillStyle = '#aaffcc';
-        ctx.fillText(cycleStr, W / 2 - 50, 30);
+        ctx.fillText(cycleStr, W / 2 - 50, 25);
     } else if (highScore > 0) {
         ctx.fillStyle = C.textShadow;
-        ctx.fillText(`HI: ${highScore}`, W / 2 - 38, 32);
+        ctx.fillText(`🏆 ${highScore}`, W / 2 - 38, 27);
         ctx.fillStyle = '#ffcc00';
-        ctx.fillText(`HI: ${highScore}`, W / 2 - 40, 30);
+        ctx.fillText(`🏆 ${highScore}`, W / 2 - 40, 25);
     }
 
     // Combo indicator (Feature 47: large animated combo display)
@@ -7403,33 +7459,6 @@ function drawHUD() {
         ctx.restore();
     }
 
-    // Enemy progress bar (thin strip below top HUD row, hidden on boss level)
-    if (levelTotalMarios > 0 && !isBossLevel) {
-        const aliveCount = marios.filter(m => m.isAlive).length;
-        const frac = aliveCount / levelTotalMarios;
-        const barW = W - 4;
-        const barH = 6;
-        const barX = 2;
-        const barY = 30;
-        const isLast = aliveCount === 1;
-        const pulse = isLast ? 0.7 + Math.abs(Math.sin(Date.now() * 0.012)) * 0.3 : 1;
-        // Color: green → yellow → red based on remaining fraction
-        const r = Math.round(frac < 0.5 ? 255 * (frac * 2) : 255);
-        const g = Math.round(frac >= 0.5 ? 255 * ((1 - frac) * 2) : 255);
-        ctx.save();
-        ctx.globalAlpha = 0.85 * pulse;
-        ctx.fillStyle = 'rgba(0,0,0,0.4)';
-        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
-        ctx.fillStyle = `rgb(${r},${g},30)`;
-        ctx.fillRect(barX, barY, barW * frac, barH);
-        // Bright top highlight
-        ctx.globalAlpha = 0.3 * pulse;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(barX, barY, barW * frac, barH * 0.4);
-        ctx.globalAlpha = 1;
-        ctx.restore();
-    }
-
     // Enemy counter (bottom-left area)
     if (levelTotalMarios > 0 && !isBossLevel) {
         const aliveCount = marios.filter(m => m.isAlive).length;
@@ -7574,7 +7603,7 @@ function drawHUD() {
     // Feature 65 & 70: Dash indicator in HUD (above enemy counter)
     if (player) {
         const dashReady = player.dashCooldown <= 0;
-        const dashX = 10; const dashY = H - 35;
+        const dashX = 140; const dashY = H - 30;
         ctx.save();
         ctx.globalAlpha = dashReady ? 1 : 0.55;
         ctx.fillStyle = dashReady ? '#44aaff' : '#223344';
@@ -7594,51 +7623,6 @@ function drawHUD() {
             ctx.arc(dashX + 38, dashY + 9, 7, -Math.PI / 2, -Math.PI / 2 + cdFrac * Math.PI * 2);
             ctx.stroke();
         }
-        ctx.textAlign = 'left';
-        ctx.restore();
-    }
-
-    // Feature 51: Mini-map (enemy tracker) — bottom-right area, above mute
-    if (levelTotalMarios > 0 && !isBossLevel) {
-        const mmW = 80;
-        const mmH = 40;
-        const mmX = W - mmW - 8;
-        const mmY = H - mmH - 30;
-        ctx.save();
-        ctx.globalAlpha = 0.75;
-        // Background
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.beginPath();
-        ctx.roundRect(mmX - 2, mmY - 2, mmW + 4, mmH + 4, 3);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        // Enemy dots (red)
-        ctx.fillStyle = '#ff4444';
-        for (const m of marios) {
-            if (!m.isAlive) continue;
-            const dx = (m.x / W) * mmW;
-            const dy = (m.y / H) * mmH;
-            ctx.beginPath();
-            ctx.arc(mmX + dx, mmY + dy, 2, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        // Player dot (green)
-        if (player) {
-            const px = (player.x / W) * mmW;
-            const py = (player.y / H) * mmH;
-            ctx.fillStyle = '#44ff88';
-            ctx.beginPath();
-            ctx.arc(mmX + px, mmY + py, 3, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        ctx.globalAlpha = 1;
-        // Label
-        ctx.font = 'bold 7px monospace';
-        ctx.textAlign = 'right';
-        ctx.fillStyle = 'rgba(200,200,200,0.7)';
-        ctx.fillText('MAP', W - 10, mmY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -7682,9 +7666,6 @@ function drawHUD() {
         if (player.wallSlideDir !== 0 && player.wallJumpLockTimer <= 0) {
             ctx.fillStyle = 'rgba(255,220,80,0.92)';
             ctx.fillText('↑ ПРЫЖОК ОТ СТЕНЫ!', W / 2, H - 15);
-        } else if (player.canDoubleJump) {
-            ctx.fillStyle = 'rgba(100,200,255,0.8)';
-            ctx.fillText('2x прыжок!', W / 2, H - 15);
         }
         ctx.textAlign = 'left';
         ctx.restore();
@@ -7705,7 +7686,7 @@ function drawTitle(text, y, size, color) {
 // Feature 86: Daily Challenge preview screen
 function renderDailyChallenge() {
     drawBackground();
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🌑 Тьма'];
+    const levelNames = LEVEL_NAMES;
     const lvlName = levelNames[dailyChallengeLevelIdx] || `Уровень ${dailyChallengeLevelIdx + 1}`;
     const dateStr = dailyChallengeDate;
 
@@ -8076,7 +8057,7 @@ function renderVictory() {
     ctx.restore();
 
     drawTitle('🏆 ТЫ ПОБЕДИЛ! 🏆', 145, 40, '#ffee00');
-    drawTitle('Финальный Марио повержен!', 198, 18, '#00ff88');
+    drawTitle('Все 17 уровней пройдены!', 198, 18, '#00ff88');
     drawTitle(`Счёт: ${totalScore}`, 232, 22, '#ffcc00');
     if (totalScore >= highScore && highScore > 0) drawTitle('НОВЫЙ РЕКОРД! 🎉', 262, 18, '#00ff44');
     // Feature 110: Show prestige title on victory screen
@@ -8525,7 +8506,7 @@ function renderLevelSelect() {
     }
 
     // Selected level name
-    const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье'];
+    const levelNames = LEVEL_NAMES;
     if (selectedLevelIdx < unlockedLevels) {
         const nameColor = selectedLevelIdx === COIN_CAVE_LEVEL_INDEX ? '#ffd700' : '#88ffaa';
         drawTitle(levelNames[selectedLevelIdx] || `Уровень ${selectedLevelIdx + 1}`, 310, 18, nameColor);
@@ -8614,7 +8595,7 @@ function renderLevelTransition() {
         ctx.save();
         ctx.globalAlpha = alpha;
         drawTitle(`УРОВЕНЬ ${currentLevel + 1}`, H / 2 + 10, 38, '#ffcc00');
-        const levelNames = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🌑 Тьма', '🕯 Подземелье'];
+        const levelNames = LEVEL_NAMES;
         const name = levelNames[currentLevel] || `Уровень ${currentLevel + 1}`;
         drawTitle(name, H / 2 + 50, 20, '#aaffaa');
         ctx.restore();
@@ -8856,6 +8837,7 @@ function update() {
 
             if (shakeTimer > 0) shakeTimer--;
             if (comboDisplayTimer > 0) comboDisplayTimer--;
+            if (comboCount > levelMaxCombo) levelMaxCombo = comboCount;
             if (coinFrenzyTimer > 0) { coinFrenzyTimer--; if (coinFrenzyTimer === 0) coinFrenzyActivated = false; } // Feature 73
             // Feature 76: check score milestones
             if (nextMilestoneIdx < SCORE_MILESTONES.length && totalScore >= SCORE_MILESTONES[nextMilestoneIdx]) {
@@ -8881,7 +8863,9 @@ function update() {
             {
                 const aliveNow = marios.filter(m => m.isAlive);
                 const wasRage = rageModeActive;
-                rageModeActive = aliveNow.length <= 3 && aliveNow.length > 0 && !isBossLevel;
+                // Threshold scales with level size so small levels don't start in rage mode
+                const rageAt = levelTotalMarios >= 6 ? 3 : levelTotalMarios >= 4 ? 2 : 1;
+                rageModeActive = aliveNow.length <= rageAt && aliveNow.length > 0 && aliveNow.length < levelTotalMarios && !isBossLevel;
                 if (rageModeActive && !wasRage) {
                     rageModeWarningTimer = 120; // show warning 2 sec
                     playSound('rage');
@@ -9031,18 +9015,8 @@ function update() {
             levelCompleteTimer--;
             if (levelCompleteTimer <= 0) {
                 runStats.levelsCleared++;
-                if (isBossLevel) {
-                    // Final boss defeated → Victory!
-                    if (totalScore > highScore) {
-                        highScore = totalScore;
-                        localStorage.setItem('mushroomHighScore', String(highScore));
-                    }
-                    submitScore(totalScore);
-                    stopBGM();
-                    gameState = 'VICTORY';
-                    spawnConfetti(); // Feature 56
-                    playSound('victory'); // Feature 58
-                } else {
+                {
+                    // Boss level is a mid-campaign milestone — the run continues to the next level
                     currentLevel++;
                     // Unlock next level (up to LEVELS.length)
                     if (currentLevel < LEVELS.length && currentLevel >= unlockedLevels) {
@@ -9068,6 +9042,7 @@ function update() {
                                 highScore = totalScore;
                                 localStorage.setItem('mushroomHighScore', String(highScore));
                             }
+                            submitScore(totalScore);
                             stopBGM();
                             gameState = 'VICTORY';
                             spawnConfetti();
@@ -9352,12 +9327,12 @@ function render() {
                 ctx.globalAlpha = a113;
                 ctx.fillStyle = 'rgba(0,0,0,0.5)';
                 ctx.beginPath();
-                ctx.roundRect(W / 2 - 230, H - 60, 460, 30, 8);
+                ctx.roundRect(W / 2 - 230, H / 2 + 36, 460, 30, 8);
                 ctx.fill();
                 ctx.textAlign = 'center';
                 ctx.font = '13px monospace';
                 ctx.fillStyle = '#ddeeFF';
-                ctx.fillText(tip, W / 2, H - 40);
+                ctx.fillText(tip, W / 2, H / 2 + 56);
                 ctx.textAlign = 'left';
                 ctx.restore();
             }
