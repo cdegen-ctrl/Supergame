@@ -4332,8 +4332,9 @@ const SHOP_ITEMS = [
     { id: 'shield', label: '🛡️  Щит',           desc: 'Начать уровень со щитом',        price: 5 },
     { id: 'ammo',   label: '🍄 +3 Споры',       desc: 'Восстановить все заряды спор',   price: 4 },
     { id: 'magnet', label: '🧲 Магнит (10с)',   desc: 'Притягивать монеты 10 секунд',  price: 6 },
+    { id: 'skip',   label: '⏭ Пропустить ур.',  desc: 'Пропустить следующий уровень',  price: 25 }, // Feature 130
 ];
-function resetShop() { shopCoins = 0; shopSelectedIdx = 0; }
+function resetShop() { shopCoins = dailyStreakBonusCoins || 0; shopSelectedIdx = 0; }
 
 // === ACHIEVEMENT SYSTEM (Feature 79: Persistent) ===
 const achievementDefs = [
@@ -5608,6 +5609,26 @@ function applyColorblindMode() {
     }
 }
 applyColorblindMode();
+
+// === FEATURE 129: DAILY STREAK ===
+let dailyStreak = parseInt(localStorage.getItem('mushroomDailyStreak') || '0');
+let dailyStreakLastDate = localStorage.getItem('mushroomDailyStreakDate') || '';
+let dailyStreakBonusCoins = 0;
+(function initDailyStreak() {
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    if (dailyStreakLastDate === today) {
+        // already counted today
+    } else if (dailyStreakLastDate === yesterday) {
+        dailyStreak++;
+    } else {
+        dailyStreak = 1;
+    }
+    dailyStreakLastDate = today;
+    localStorage.setItem('mushroomDailyStreak', String(dailyStreak));
+    localStorage.setItem('mushroomDailyStreakDate', today);
+    dailyStreakBonusCoins = dailyStreak >= 7 ? 10 : dailyStreak >= 3 ? 3 : 0;
+})();
 
 // === FEATURE 82: COIN CAVE MODE ===
 let coinCaveMode = false;
@@ -8081,9 +8102,15 @@ function renderMenu() {
     if (recs.length) drawTitle('РЕКОРДЫ:  ' + recs.join('   '), 456, 12, '#ffdd66');
 
     const touch = document.body.classList.contains('touch');
+    // Feature 129: Daily Streak display
+    if (dailyStreak >= 2) {
+        const streakColor = dailyStreak >= 7 ? '#ffd700' : '#ff8800';
+        const bonusNote = dailyStreak >= 7 ? '  +10🪙 в магазин' : dailyStreak >= 3 ? '  +3🪙 в магазин' : '';
+        drawTitle(`🔥 Серия: ${dailyStreak} дн.${bonusNote}`, 472, 11, streakColor);
+    }
     const hint1 = touch ? 'Кнопки ◀ ▶ ▲ внизу · ⚡ рывок · 🍄 спора'
                         : '←→/AD движение · ↑/W/SPACE прыжок · SHIFT рывок · Z спора · ↓ парашют · ESC пауза';
-    drawTitle(hint1, 476, 10, '#cccccc');
+    drawTitle(hint1, 487, 10, '#aaaaaa');
 
     // Feature 109: Ultra Mode active banner on menu
     if (ultraModeTimer > 0) {
@@ -9404,6 +9431,19 @@ function update() {
                     } else if (item.id === 'magnet') {
                         player.magnetTimer = 600;
                         particles.push(new Particle(player.x, player.y - 20, '🧲 Магнит!', '#aaddff'));
+                    } else if (item.id === 'skip') {
+                        // Feature 130: skip to the level after next
+                        const skipTarget = currentLevel + 1;
+                        if (skipTarget < LEVELS.length) {
+                            currentLevel = skipTarget;
+                            loadLevel(currentLevel);
+                            levelTransitionTimer = 0;
+                            particles.push(new Particle(W / 2 - 80, H / 2 - 30, '⏭ УРОВЕНЬ ПРОПУЩЕН!', '#aabbff'));
+                            gameState = 'LEVEL_TRANSITION';
+                        } else {
+                            shopCoins += item.price; // refund
+                            particles.push(new Particle(W / 2 - 80, H / 2 - 30, 'Это последний уровень!', '#ff8800'));
+                        }
                     }
                     playSound('powerup');
                 }
