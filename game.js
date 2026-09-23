@@ -5735,10 +5735,22 @@ let endlessMode = false;
 let endlessCycle = 0;           // how many times all levels have been cleared
 let endlessBestScore = parseInt(localStorage.getItem('mushroomEndlessBest') || '0');
 
+// === FEATURE 127: MARATHON MODE ===
+let marathonMode = false;
+const MARATHON_LEVELS = [0, 2, 4, 6, 8]; // play levels 1, 3, 5, 7, 9 back-to-back
+let marathonLevelIdx = 0;
+let marathonBestScore = parseInt(localStorage.getItem('mushroomMarathonBest') || '0');
+
+// === FEATURE 128: NEW RECORD FLASH ===
+let newRecordFlashTimer = 0;   // frames for on-screen "NEW RECORD" golden flash
+let newRecordThisRun = false;  // whether the record was beaten in this run
+let runStartHighScore = 0;     // highScore value at run start (for mid-run detection)
+
 function startEndlessMode() {
     endlessMode = true;
     endlessCycle = 0;
     survivalMode = false;
+    marathonMode = false;
     dailyChallengeMode = false;
     speedRunMode = false;
     resetRunStats();
@@ -5749,6 +5761,30 @@ function startEndlessMode() {
     milestoneBannerTimer = 0;
     player = null;
     stars = [];
+    loadLevel(currentLevel);
+    player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
+    player.score = 0;
+    gameState = 'PLAYING';
+}
+
+function startMarathonMode() {
+    marathonMode = true;
+    marathonLevelIdx = 0;
+    endlessMode = false;
+    survivalMode = false;
+    dailyChallengeMode = false;
+    speedRunMode = false;
+    resetRunStats();
+    resetShop();
+    currentLevel = MARATHON_LEVELS[0];
+    totalScore = 0;
+    nextMilestoneIdx = 0;
+    milestoneBannerTimer = 0;
+    player = null;
+    stars = [];
+    runStartHighScore = highScore;
+    newRecordThisRun = false;
+    newRecordFlashTimer = 0;
     loadLevel(currentLevel);
     player.lives = difficulty === 'easy' ? 5 : difficulty === 'hard' ? 2 : difficulty === 'hardcore' ? 1 : 3;
     player.score = 0;
@@ -6401,10 +6437,14 @@ function startGame() {
     dailyChallengeMode = false; // Feature 86: clear daily challenge on new game
     endlessMode = false;        // Feature 115: clear endless mode on new game
     endlessCycle = 0;
+    marathonMode = false;       // Feature 127: clear marathon mode on new game
     mirrorMode = localStorage.getItem('mushroomMirrorMode') === 'true'; // restore persisted mirror
     resetAchievements();
     resetRunStats();
     resetShop(); // Feature 107
+    runStartHighScore = highScore;
+    newRecordThisRun = false;
+    newRecordFlashTimer = 0;
     startGameFromLevel(0);
 }
 
@@ -7659,6 +7699,42 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 127: Marathon mode indicator in HUD
+    if (marathonMode) {
+        ctx.save();
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(`🏃 МАРАФОН ${marathonLevelIdx + 1}/${MARATHON_LEVELS.length}`, W / 2 + 1, 58);
+        ctx.fillStyle = '#ffbb33';
+        ctx.fillText(`🏃 МАРАФОН ${marathonLevelIdx + 1}/${MARATHON_LEVELS.length}`, W / 2, 56);
+        if (marathonBestScore > 0) {
+            ctx.font = '11px monospace';
+            ctx.fillStyle = '#ccaa66';
+            ctx.fillText(`РЕКОРД МАРАФОНА: ${marathonBestScore}`, W / 2, 73);
+        }
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 128: New record flash — golden banner during gameplay
+    if (newRecordFlashTimer > 0) {
+        newRecordFlashTimer--;
+        const alpha = Math.min(1, newRecordFlashTimer / 30) * Math.min(1, (200 - newRecordFlashTimer + 1) / 30);
+        const pulse = 1 + Math.sin(Date.now() * 0.012) * 0.06;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${Math.round(26 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#000';
+        ctx.shadowColor = '#ffcc00';
+        ctx.shadowBlur = 18;
+        ctx.fillText('🏆 НОВЫЙ РЕКОРД!', W / 2 + 1, H / 2 + 1);
+        ctx.fillStyle = '#ffd700';
+        ctx.fillText('🏆 НОВЫЙ РЕКОРД!', W / 2, H / 2);
+        ctx.restore();
+    }
+
     // Feature 98: Challenge Card — shown for first 3 seconds of each level
     if (challengeCardTimer > 0) {
         challengeCardTimer--;
@@ -7978,12 +8054,13 @@ function renderMenu() {
     const modes = [
         ['🏟 Выживание', 'KeyS', 'S'], ['📅 Испытание', 'KeyD', 'D'], ['⏱ Спидран', 'KeyR', 'R'],
         ['♾️ Бесконечный', 'KeyE', 'E'], ['🏆 Достижения', 'KeyA', 'A'], ['📊 Статистика', 'KeyT', 'T'],
+        ['🏃 Марафон', 'KeyQ', 'Q'],
     ];
     const bw = 196, bh = 42, gap = 12;
     const x0 = W / 2 - (bw * 3 + gap * 2) / 2;
     modes.forEach(([label, key, hint], i) => {
         const col = i % 3, row = Math.floor(i / 3);
-        uiButton(x0 + col * (bw + gap), 304 + row * (bh + gap), bw, bh, label, () => pressKey(key), { size: 14, hint });
+        uiButton(x0 + col * (bw + gap), 300 + row * (bh + gap), bw, bh, label, () => pressKey(key), { size: 14, hint });
     });
 
     // Feature 123: install as an app (Chrome/Android/desktop offer this via beforeinstallprompt)
@@ -8000,13 +8077,13 @@ function renderMenu() {
     if (board.length > 0) recs.push(`🥇 ${board[0].score}`);
     if (survivalBestTime > 0) recs.push(`🏟 ${survivalBestTime}с`);
     if (endlessBestScore > 0) recs.push(`♾️ ${endlessBestScore}`);
-    if (recs.length) drawTitle('РЕКОРДЫ:  ' + recs.join('   '), 425, 12, '#ffdd66');
+    if (marathonBestScore > 0) recs.push(`🏃 ${marathonBestScore}`);
+    if (recs.length) drawTitle('РЕКОРДЫ:  ' + recs.join('   '), 456, 12, '#ffdd66');
 
     const touch = document.body.classList.contains('touch');
-    drawTitle(touch ? 'Кнопки ◀ ▶ ▲ внизу экрана  ·  ⚡ рывок  ·  🍄 спора'
-                    : '←→ / AD — движение · ↑ W SPACE — прыжок · SHIFT — рывок · Z — спора · ↓ — парашют',
-        452, 11, '#dddddd');
-    if (!touch) drawTitle('ESC — пауза · M — звук · Геймпад поддерживается', 470, 11, '#aaaaaa');
+    const hint1 = touch ? 'Кнопки ◀ ▶ ▲ внизу · ⚡ рывок · 🍄 спора'
+                        : '←→/AD движение · ↑/W/SPACE прыжок · SHIFT рывок · Z спора · ↓ парашют · ESC пауза';
+    drawTitle(hint1, 476, 10, '#cccccc');
 
     // Feature 109: Ultra Mode active banner on menu
     if (ultraModeTimer > 0) {
@@ -8213,6 +8290,7 @@ function gameOverToMenu() {
         localStorage.setItem('mushroomHighScore', String(highScore));
     }
     speedRunMode = false; speedRunTotalTime = 0;
+    marathonMode = false; // Feature 127
     allTimeStats.gamesPlayed++;
     mergeRunIntoAllTime();
     stopBGM();
@@ -8811,6 +8889,12 @@ function update() {
                 gameState = 'STATS';
             }
             keys['_tMenuWas'] = keys['KeyT'];
+            // Feature 127: Q key starts Marathon Mode
+            if (keys['KeyQ'] && !keys['_qMenuWas']) {
+                initAudio();
+                startMarathonMode();
+            }
+            keys['_qMenuWas'] = keys['KeyQ'];
             break;
 
         case 'STATS': // Feature 108
@@ -9003,6 +9087,22 @@ function update() {
                 hudScoreDisplay = Math.min(player.score, hudScoreDisplay + Math.max(1, (player.score - hudScoreDisplay) * 0.18));
             }
 
+            // Feature 128: detect when player beats high score mid-game
+            if (!newRecordThisRun && runStartHighScore > 0 && totalScore > runStartHighScore) {
+                newRecordThisRun = true;
+                newRecordFlashTimer = 200; // ~3.3 seconds
+                // Spawn gold star particles from around the player
+                if (player) {
+                    for (let i = 0; i < 10; i++) {
+                        const p = new Particle(player.x + Math.random() * 40 - 20, player.y - 10, '★', '#ffd700');
+                        p.vy = -3 - Math.random() * 2;
+                        p.timer = 60 + Math.floor(Math.random() * 40);
+                        particles.push(p);
+                    }
+                }
+                playSound('star');
+            }
+
             // Mute toggle with M key (only when not paused)
             if (keys['KeyM'] && !keys['_muteWas']) {
                 setMuted(!soundMuted);
@@ -9169,6 +9269,33 @@ function update() {
                 {
                     // Boss level is a mid-campaign milestone — the run continues to the next level
                     currentLevel++;
+
+                    // Feature 127: Marathon Mode — jump to next marathon level instead of sequential
+                    if (marathonMode) {
+                        marathonLevelIdx++;
+                        if (marathonLevelIdx >= MARATHON_LEVELS.length) {
+                            // All marathon levels completed — go to victory
+                            if (totalScore > marathonBestScore) {
+                                marathonBestScore = totalScore;
+                                localStorage.setItem('mushroomMarathonBest', String(marathonBestScore));
+                            }
+                            if (totalScore > highScore) {
+                                highScore = totalScore;
+                                localStorage.setItem('mushroomHighScore', String(highScore));
+                            }
+                            marathonMode = false;
+                            submitScore(totalScore);
+                            stopBGM();
+                            gameState = 'VICTORY';
+                            spawnConfetti();
+                            playSound('victory');
+                        } else {
+                            currentLevel = MARATHON_LEVELS[marathonLevelIdx];
+                            loadLevel(currentLevel);
+                            levelTransitionTimer = 0;
+                            gameState = 'LEVEL_TRANSITION';
+                        }
+                    } else {
                     // Unlock next level (up to LEVELS.length)
                     if (currentLevel < LEVELS.length && currentLevel >= unlockedLevels) {
                         unlockedLevels = currentLevel + 1;
@@ -9211,6 +9338,7 @@ function update() {
                             gameState = 'LEVEL_TRANSITION';
                         }
                     }
+                    } // end !marathonMode
                 }
             }
             break;
@@ -9297,6 +9425,7 @@ function update() {
                     localStorage.setItem('mushroomHighScore', String(highScore));
                 }
                 speedRunMode = false; speedRunTotalTime = 0; // Feature 96: reset speedrun on death
+                marathonMode = false; // Feature 127: reset marathon on death
                 allTimeStats.gamesPlayed++; // Feature 108
                 mergeRunIntoAllTime();      // Feature 108
                 startGame();
