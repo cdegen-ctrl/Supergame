@@ -4764,6 +4764,166 @@ class BlastStompPU {
 }
 let blastStompPUs = [];
 
+// === FEATURE 179: AUTO TURRET POWER-UP — place a targeting turret that fires at enemies ===
+const AUTO_TURRET_DURATION  = 600;  // 10 s at 60 fps
+const AUTO_TURRET_FIRE_RATE = 90;   // 1.5 s between shots
+const AUTO_TURRET_RANGE     = 320;  // detection radius px
+const AUTO_TURRET_BOLT_SPD  = 6;
+
+class AutoTurretPU {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 22; this.h = 22;
+        this.collected = false; this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 3;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.15) * 0.1;
+        ctx.save();
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 18 * pulse);
+        grd.addColorStop(0, 'rgba(0,220,255,0.4)');
+        grd.addColorStop(1, 'rgba(0,100,220,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath(); ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 0.75 * pulse;
+        ctx.strokeStyle = '#00ccff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, cy, 11 * pulse, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.font = `bold ${Math.round(14 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('🔫', cx, cy + 6);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+class TurretBolt {
+    constructor(x, y, vx, vy) {
+        this.x = x; this.y = y; this.w = 8; this.h = 8;
+        this.vx = vx; this.vy = vy;
+        this.alive = true; this.life = 0;
+    }
+    update() {
+        this.x += this.vx; this.y += this.vy; this.life++;
+        if (this.x < -20 || this.x > W + 20 || this.y < -20 || this.y > H + 20 || this.life > 80)
+            this.alive = false;
+        return this.alive;
+    }
+    render() {
+        const fade = Math.min(1, (80 - this.life) / 15);
+        ctx.save();
+        ctx.globalAlpha = fade;
+        ctx.shadowColor = '#00bbff'; ctx.shadowBlur = 8;
+        ctx.fillStyle = '#00eeff';
+        ctx.beginPath(); ctx.arc(this.x + 4, this.y + 4, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 1.5; ctx.globalAlpha = fade * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(this.x + 4, this.y + 4);
+        ctx.lineTo(this.x + 4 - this.vx * 4, this.y + 4 - this.vy * 4);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+class PlacedTurret {
+    constructor(cx, groundY) {
+        this.cx = cx; this.groundY = groundY;
+        this.life = AUTO_TURRET_DURATION; this.fireTimer = 0; this.aimAngle = 0;
+    }
+    update() {
+        this.life--; this.fireTimer--;
+        let nearest = null, minDist = AUTO_TURRET_RANGE;
+        for (const m of marios) {
+            if (!m.isAlive) continue;
+            const d = Math.hypot(m.x + m.w / 2 - this.cx, m.y + m.h / 2 - (this.groundY - 14));
+            if (d < minDist) { minDist = d; nearest = m; }
+        }
+        if (nearest) {
+            this.aimAngle = Math.atan2(
+                nearest.y + nearest.h / 2 - (this.groundY - 14),
+                nearest.x + nearest.w / 2 - this.cx
+            );
+            if (this.fireTimer <= 0) {
+                this.fireTimer = AUTO_TURRET_FIRE_RATE;
+                turretBolts.push(new TurretBolt(
+                    this.cx - 4, this.groundY - 18,
+                    Math.cos(this.aimAngle) * AUTO_TURRET_BOLT_SPD,
+                    Math.sin(this.aimAngle) * AUTO_TURRET_BOLT_SPD
+                ));
+                playSound('spore');
+            }
+        }
+        return this.life > 0;
+    }
+    render() {
+        const fade = this.life < 60 ? this.life / 60 : 1;
+        ctx.save();
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = '#133a5a';
+        ctx.beginPath();
+        ctx.roundRect(this.cx - 13, this.groundY - 14, 26, 14, 3);
+        ctx.fill();
+        ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.translate(this.cx, this.groundY - 12);
+        ctx.rotate(this.aimAngle);
+        ctx.fillStyle = '#00ccff';
+        ctx.fillRect(0, -3, 16, 6);
+        ctx.fillStyle = '#0099cc';
+        ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#00eeff'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.restore();
+        const barW = 30, frac = this.life / AUTO_TURRET_DURATION;
+        ctx.save();
+        ctx.globalAlpha = fade * 0.9;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(this.cx - barW / 2, this.groundY - 27, barW, 4);
+        ctx.fillStyle = `hsl(${195 + frac * 30},100%,55%)`;
+        ctx.fillRect(this.cx - barW / 2, this.groundY - 27, Math.round(barW * frac), 4);
+        ctx.restore();
+    }
+}
+
+let autoTurretPUs = [];
+let placedTurrets  = [];
+let turretBolts    = [];
+
+function checkAutoTurretPUCollisions() {
+    if (!player) return;
+    for (const tp of autoTurretPUs) {
+        if (tp.collected || !aabb(player, tp)) continue;
+        tp.collected = true;
+        placedTurrets.push(new PlacedTurret(player.x + player.w / 2, player.y + player.h));
+        particles.push(new Particle(tp.x - 10, tp.y - 14, '🔫 ТУРЕЛЬ!', '#00ccff'));
+        milestoneBannerText = '🔫 ТУРЕЛЬ УСТАНОВЛЕНА!';
+        milestoneBannerColor = '#00ccff';
+        milestoneBannerTimer = 120;
+        playSound('levelup');
+    }
+    autoTurretPUs = autoTurretPUs.filter(tp => !tp.collected);
+}
+
+function updateTurrets() {
+    placedTurrets = placedTurrets.filter(t => t.update());
+    turretBolts   = turretBolts.filter(b => b.update());
+    for (const bolt of turretBolts) {
+        if (!bolt.alive) continue;
+        for (const m of marios) {
+            if (!m.isAlive || !aabb(bolt, m)) continue;
+            bolt.alive = false;
+            m.stomp();
+            const pts = 80;
+            totalScore += pts;
+            if (player) player.score += pts;
+            particles.push(new Particle(m.x, m.y - 10, '+80', '#00ccff'));
+            break;
+        }
+    }
+    turretBolts = turretBolts.filter(b => b.alive);
+}
+
 function checkBlastStompPUCollisions() {
     if (!player) return;
     for (const bp of blastStompPUs) {
@@ -6292,7 +6452,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк', '🌊 Океан'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк', '🌊 Океан', '🏜 Пустыня'];
 
 const LEVELS = [
     {
@@ -8061,6 +8221,86 @@ const LEVELS = [
         ],
         checkpointSpawns: [{ x: 392, y: 450 }],
     },
+    // === LEVEL 29: ПУСТЫНЯ === Feature 180
+    {
+        name: 'Пустыня',
+        isDesert: true,
+        platforms: [
+            // Sandy ground segments with wide gaps
+            { x: 0,   y: 460, w: 130, h: 40 },
+            { x: 210, y: 460, w: 100, h: 40 },
+            { x: 390, y: 460, w: 120, h: 40 },
+            { x: 590, y: 460, w: 100, h: 40 },
+            { x: 750, y: 460, w:  50, h: 40 },
+            // Low dune ledges
+            { x: 60,  y: 385, w: 110, h: 14 },
+            { x: 250, y: 370, w:  90, h: 14, moveAxis: 'x', moveRange: 45, moveSpeed: 1.3 },
+            { x: 430, y: 380, w: 100, h: 14 },
+            { x: 650, y: 372, w:  90, h: 14 },
+            // Mid platforms (oasis rocks)
+            { x: 130, y: 298, w: 110, h: 14 },
+            { x: 330, y: 290, w: 120, h: 14, ice: true },
+            { x: 560, y: 295, w:  95, h: 14, moveAxis: 'y', moveRange: 30, moveSpeed: 1.0 },
+            // Upper ledges
+            { x: 40,  y: 218, w:  90, h: 14 },
+            { x: 220, y: 208, w: 110, h: 14, crumble: true },
+            { x: 420, y: 212, w: 100, h: 14 },
+            { x: 630, y: 205, w: 120, h: 14, moveAxis: 'x', moveRange: 55, moveSpeed: 1.6 },
+            // Top perches
+            { x: 110, y: 130, w: 110, h: 14 },
+            { x: 330, y: 118, w: 140, h: 14 },
+            { x: 570, y: 124, w: 110, h: 14 },
+            // Floating cactus-rock
+            { x: 690, y: 300, w:  55, h: 14, pulse: true },
+        ],
+        marioSpawns: [
+            { x: 150, y: 440 }, { x: 235, y: 440 }, { x: 420, y: 440 }, { x: 620, y: 440 },
+            { x: 80,  y: 365 }, { x: 275, y: 350 }, { x: 460, y: 360 }, { x: 670, y: 352 },
+            { x: 150, y: 278 }, { x: 450, y: 275 },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'fast', 'armored', 'ghost_mario', 'berserker', 'fast', 'teleporter', 'armored'],
+        shooterMarioSpawns: [{ x: 240, y: 278 }, { x: 580, y: 275 }],
+        flyingMarioSpawns:  [{ x: 360, y: 118 }, { x: 600, y: 104 }],
+        parachuteMarioSpawns: [{ x: 130, y: 80 }, { x: 500, y: 70 }],
+        marioSpeed: 3.3,
+        playerSpawn: { x: 15, y: 432 },
+        coinSpawns: [
+            { x: 90,  y: 365 }, { x: 180, y: 365 }, { x: 275, y: 350 },
+            { x: 460, y: 360 }, { x: 670, y: 352 }, { x: 560, y: 275 },
+        ],
+        doubleCoinSpawns:    [{ x: 365, y: 98  }, { x: 510, y: 104 }],
+        tripleCoinSpawns:    [{ x: 590, y: 104 }],
+        rainbowCoinSpawns:   [{ x: 680, y: 185 }],
+        lightningCoinSpawns: [{ x: 140, y: 110 }],
+        explodingCoinSpawns: [{ x: 220, y: 188 }],
+        warpCoinSpawns:      [{ x: 700, y: 280 }, { x: 265, y: 188 }],
+        vortexCoinSpawns:    [{ x: 365, y: 270 }, { x: 110, y: 198 }],
+        starSpawns:          [{ x: 120, y: 110 }, { x: 580, y: 104 }],
+        shieldSpawns:        [{ x: 10,  y: 444 }, { x: 760, y: 444 }],
+        bombSpawns:          [{ x: 300, y: 168 }, { x: 500, y: 168 }],
+        speedBoostSpawns:    [{ x: 395, y: 98  }],
+        magnetSpawns:        [{ x: 450, y: 98  }],
+        freezeSpawns:        [{ x: 140, y: 278 }, { x: 670, y: 185 }],
+        ghostSpawns:         [{ x: 330, y: 268 }],
+        electroSpawns:       [{ x: 435, y: 98  }],
+        slowMoSpawns:        [{ x: 490, y: 98  }],
+        rocketSpawns:        [{ x: 165, y: 110 }, { x: 605, y: 104 }],
+        scoreBoostSpawns:    [{ x: 350, y: 98  }],
+        jetpackSpawns:       [{ x: 465, y: 98  }],
+        bubbleSpawns:        [{ x: 370, y: 270 }],
+        spikeBootsSpawns:    [{ x: 480, y: 98  }],
+        healSpawns:          [{ x: 115, y: 110 }],
+        blastSpawns:         [{ x: 355, y: 98  }, { x: 585, y: 104 }],
+        mirrorSpawns:        [{ x: 425, y: 98  }],
+        quakeSpawns:         [{ x: 505, y: 98  }],
+        turretSpawns:        [{ x: 340, y: 98  }, { x: 620, y: 104 }],
+        spikeSpawns:         [{ x: 400, y: 444, count: 3 }, { x: 560, y: 444, count: 2 }],
+        barrelSpawns: [
+            { x: 55,  y: 424 }, { x: 305, y: 424 }, { x: 710, y: 424 },
+            { x: 75,  y: 349 }, { x: 655, y: 336 },
+        ],
+        checkpointSpawns: [{ x: 395, y: 450 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -9125,7 +9365,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; blastStompPUs = []; // Feature 161/162/163/165/167/169/171/173/175/177: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; blastStompPUs = []; autoTurretPUs = []; placedTurrets = []; turretBolts = []; // Feature 161/162/163/165/167/169/171/173/175/177/179: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -9303,6 +9543,16 @@ function loadLevel(index) {
         if (cands.length >= 2) {
             const p = cands[Math.floor(cands.length * 0.4)];
             blastStompPUs = [new BlastStompPU(p.x + Math.floor(p.w * 0.45), p.y - 26)];
+        }
+    }
+
+    // Feature 179: Auto Turret PU — load from spawns or auto-place on levels 6+
+    autoTurretPUs = (lvl.turretSpawns || []).map(t => new AutoTurretPU(t.x, t.y));
+    if (!lvl.turretSpawns && index >= 5) {
+        const cands = lvl.platforms.filter(p => p.y < 350 && p.w >= 55 && !p.crumble).sort((a, b) => b.y - a.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.35)];
+            autoTurretPUs = [new AutoTurretPU(p.x + Math.floor(p.w * 0.5), p.y - 26)];
         }
     }
 
@@ -9884,6 +10134,7 @@ function getBackgroundTheme() {
     if (lvl && lvl.isCave) return 'cave'; // Feature 174
     if (lvl && lvl.isCyber) return 'cyber'; // Feature 176
     if (lvl && lvl.isOcean) return 'ocean'; // Feature 178
+    if (lvl && lvl.isDesert) return 'desert'; // Feature 180
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -10093,6 +10344,8 @@ const BG_THEMES = {
     cyber: { sky: ['#080010', '#130030', '#1a0050'], mountain: '#200060', hillLight: '#1a0048', hillDark: '#0d0028', cloudAlpha: 0.0 },
     // Feature 178: Ocean — deep teal blue with caustic light rays
     ocean: { sky: ['#001428', '#002850', '#004878'], mountain: '#003a60', hillLight: '#004060', hillDark: '#001830', cloudAlpha: 0.0 },
+    // Feature 180: Desert — warm amber/orange sky with sand-dune silhouettes
+    desert: { sky: ['#1a0800', '#8c3e00', '#e8800a'], mountain: '#6b3800', hillLight: '#5a3a0a', hillDark: '#3d2208', cloudAlpha: 0.15 },
 };
 const BG_MARGIN = 80; // extra width on each side of parallax layers
 
@@ -10236,6 +10489,35 @@ function buildBackgroundCache(theme) {
             }
             ctx.globalAlpha = 1;
             ctx.restore();
+        }
+        if (theme === 'desert') {
+            // Feature 180: Desert — heat shimmer haze + distant sand dune silhouettes
+            // Heat-haze gradient near ground
+            const hazeGrad = ctx.createLinearGradient(0, H * 0.55, 0, H);
+            hazeGrad.addColorStop(0, 'rgba(255,140,0,0)');
+            hazeGrad.addColorStop(0.6, 'rgba(255,100,0,0.12)');
+            hazeGrad.addColorStop(1, 'rgba(220,80,0,0.28)');
+            ctx.fillStyle = hazeGrad;
+            ctx.fillRect(0, 0, W, H);
+            // Distant dune silhouettes
+            ctx.globalAlpha = 0.22;
+            ctx.fillStyle = '#3d2208';
+            ctx.beginPath();
+            ctx.moveTo(0, H);
+            ctx.bezierCurveTo(60, 310, 150, 260, 240, 300);
+            ctx.bezierCurveTo(310, 335, 360, 280, 430, 290);
+            ctx.bezierCurveTo(500, 300, 560, 250, 640, 270);
+            ctx.bezierCurveTo(700, 285, 760, 310, W, 300);
+            ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+            // Heat shimmer dots
+            for (let i = 0; i < 18; i++) {
+                const hx = (i * 137.5 + 9) % W;
+                const hy = H * 0.45 + (i * 61.7 + 7) % (H * 0.45);
+                ctx.globalAlpha = 0.06 + (i % 3) * 0.05;
+                ctx.fillStyle = '#ffcc44';
+                ctx.beginPath(); ctx.arc(hx, hy, 1.5 + (i % 3), 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.globalAlpha = 1;
         }
         if (theme === 'cave') {
             // Feature 174: Cave — lava glow rising from below + stalactites from ceiling
@@ -12822,6 +13104,9 @@ function update() {
             checkMirrorPUCollisions();                                 // Feature 175
             blastStompPUs = blastStompPUs.filter(bp => bp.update());   // Feature 177
             checkBlastStompPUCollisions();                             // Feature 177
+            autoTurretPUs = autoTurretPUs.filter(tp => tp.update());  // Feature 179
+            checkAutoTurretPUCollisions();                             // Feature 179
+            updateTurrets();                                           // Feature 179
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -13410,6 +13695,9 @@ function render() {
             quakePowerUps.forEach(q => q.render());       // Feature 173
             mirrorPowerUps.forEach(mp => mp.render());    // Feature 175
             blastStompPUs.forEach(bp => bp.render());      // Feature 177
+            autoTurretPUs.forEach(tp => tp.render());    // Feature 179
+            placedTurrets.forEach(t => t.render());      // Feature 179
+            turretBolts.forEach(b => b.render());        // Feature 179
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
