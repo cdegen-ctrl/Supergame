@@ -1175,6 +1175,7 @@ class Player extends Entity {
         deathFlashTimer = 35;
         shakeTimer = 20;
         shakeIntensity = 10;
+        bulletTimeTimer = BULLET_TIME_DURATION; // Feature 139
         if (this.lives <= 0) {
             if (totalScore > highScore) {
                 highScore = totalScore;
@@ -2081,12 +2082,13 @@ function getCoinBitmap(kind, r) {
 }
 
 class Coin {
-    constructor(x, y, bonus = 50) {
+    constructor(x, y, bonus = 50, isRainbow = false) {
         this.x = x;
         this.y = y;
-        this.w = bonus >= 150 ? 24 : bonus > 50 ? 20 : 16; // Feature 92: triple coin bigger
-        this.h = bonus >= 150 ? 24 : bonus > 50 ? 20 : 16;
-        this.bonus = bonus;
+        this.isRainbow = isRainbow; // Feature 138
+        this.w = isRainbow ? 26 : bonus >= 150 ? 24 : bonus > 50 ? 20 : 16; // Feature 92/138
+        this.h = isRainbow ? 26 : bonus >= 150 ? 24 : bonus > 50 ? 20 : 16;
+        this.bonus = isRainbow ? 200 : bonus;
         this.collected = false;
         this.animTimer = Math.random() * 60; // stagger animation
         this.bobOffset = Math.random() * Math.PI * 2;
@@ -2156,6 +2158,21 @@ class Coin {
             ctx.lineWidth = 1.5;
             ctx.stroke();
         }
+        // Feature 138: Rainbow coin — multicolor rotating glow ring
+        if (this.isRainbow) {
+            const hueA = (this.animTimer * 4) % 360;
+            const hueB = (hueA + 180) % 360;
+            const rPulse = 0.5 + Math.abs(Math.sin(this.animTimer * 0.1)) * 0.5;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 10, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${hueA}, 100%, 60%, ${rPulse * 0.45})`;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 6, 0, Math.PI * 2);
+            ctx.strokeStyle = `hsl(${hueB}, 100%, 70%)`;
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+        }
         // Feature 92: Triple coin pulsing purple glow
         if (isTriple) {
             const triPulse = 0.4 + Math.abs(Math.sin(this.animTimer * 0.1)) * 0.6;
@@ -2172,7 +2189,9 @@ class Coin {
         // Outer glow
         ctx.beginPath();
         ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
-        ctx.fillStyle = isTriple
+        ctx.fillStyle = this.isRainbow
+            ? `hsla(${(this.animTimer * 3) % 360}, 100%, 65%, ${glow * 0.5})`
+            : isTriple
             ? `rgba(200, 80, 255, ${glow * 0.45})`
             : isDouble
             ? `rgba(255, 160, 0, ${glow * 0.4})`
@@ -2183,6 +2202,17 @@ class Coin {
         const bmp = getCoinBitmap(kind, r);
         const sz = r * 2 + 4, sx = Math.max(0.08, Math.abs(spin));
         ctx.drawImage(bmp, cx - (sz / 2) * sx, cy - sz / 2, sz * sx, sz);
+        // Feature 138: Rainbow label
+        if (this.isRainbow) {
+            const hue = (this.animTimer * 4) % 360;
+            ctx.font = `bold 8px monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = `hsl(${hue}, 100%, 90%)`;
+            ctx.shadowColor = `hsl(${(hue + 120) % 360}, 100%, 50%)`;
+            ctx.shadowBlur = 5;
+            ctx.fillText('🌈', cx, cy + 3);
+            ctx.shadowBlur = 0;
+        }
         ctx.restore();
     }
 }
@@ -3620,6 +3650,88 @@ function checkFlashlightCollisions() {
         playSound('levelup');
     }
     flashlights = flashlights.filter(fl => !fl.collected);
+}
+
+// === FEATURE 137: HEALING MUSHROOM — green +1 life power-up ===
+class HealingMushroom {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.12) * 0.15;
+
+        ctx.save();
+        // Outer green glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0, 220, 80, ${0.25 + Math.abs(Math.sin(t * 0.07)) * 0.2})`;
+        ctx.fill();
+        // Mushroom cap (green half-circle)
+        ctx.beginPath();
+        ctx.arc(cx, cy - 2, 9 * pulse, Math.PI, 0);
+        ctx.fillStyle = '#22cc55';
+        ctx.fill();
+        ctx.strokeStyle = '#44ee77';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // White dots on cap
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.beginPath(); ctx.arc(cx - 3, cy - 4, 2 * pulse, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx + 4, cy - 5, 1.5 * pulse, 0, Math.PI * 2); ctx.fill();
+        // Stem
+        ctx.fillStyle = '#f0d0a0';
+        ctx.fillRect(cx - 4, cy - 2, 8, 9 * pulse);
+        ctx.strokeStyle = '#c8a870';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cx - 4, cy - 2, 8, 9 * pulse);
+        // "+" symbol
+        ctx.font = `bold ${Math.round(10 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#00aa44';
+        ctx.shadowBlur = 6;
+        ctx.fillText('+', cx, cy + 10);
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+}
+
+let healingMushrooms = [];
+
+function checkHealingMushroomCollisions() {
+    if (!player) return;
+    for (const hm of healingMushrooms) {
+        if (hm.collected) continue;
+        if (!aabb(player, hm)) continue;
+        hm.collected = true;
+        const maxLives = 5;
+        if (player.lives < maxLives) {
+            player.lives++;
+            particles.push(new Particle(hm.x, hm.y - 10, '❤ +1 ЖИЗНЬ!', '#44ff88'));
+        } else {
+            // Already at max — convert to score bonus
+            player.score += 200;
+            totalScore += 200;
+            particles.push(new Particle(hm.x, hm.y - 10, '💚 +200', '#44ff88'));
+        }
+        playSound('star');
+    }
+    healingMushrooms = healingMushrooms.filter(hm => !hm.collected);
 }
 
 function renderFlashlightEffect() {
@@ -5801,6 +5913,8 @@ let shakeTimer = 0;
 let shakeIntensity = 0;
 let deathFlashTimer = 0; // red screen flash on player death
 let levelClearFlash = 0; // Feature 136: white flash on level complete
+let bulletTimeTimer = 0; // Feature 139: frames of slow-motion after player death
+const BULLET_TIME_DURATION = 120; // 2 seconds
 let afterimages = []; // Feature 53: speed boost afterimage trail
 let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
@@ -6059,6 +6173,9 @@ let speedRunNewRecord = false; // flash on completion screen
 // === FEATURE 59: LETTER GRADE ===
 let levelGrades = [];
 try { levelGrades = JSON.parse(localStorage.getItem('mushroomLevelGrades') || '[]'); } catch { levelGrades = []; }
+let levelPerfectClears = []; // Feature 140: which levels have earned Perfect Clear
+try { levelPerfectClears = JSON.parse(localStorage.getItem('mushroomPerfectClears') || '[]'); } catch { levelPerfectClears = []; }
+let lastLevelWasPerfectClear = false; // Feature 140: flag for render
 let levelDeathCount = 0;       // deaths during current level
 let levelCoinsTotal = 0;       // total coins available at level start
 let levelCoinsCollected = 0;   // coins collected this level
@@ -6484,6 +6601,9 @@ function mirrorLevelData(lvl) {
         shooterMarioSpawns:   (lvl.shooterMarioSpawns   || []).map(msp),
         parachuteMarioSpawns: (lvl.parachuteMarioSpawns || []).map(msp),
         teleporterMarioSpawns: (lvl.teleporterMarioSpawns || []).map(msp), // Feature 89
+        tripleCoinSpawns:     (lvl.tripleCoinSpawns     || []).map(s => ({ x: mx(s.x, 14), y: s.y })),
+        rainbowCoinSpawns:    (lvl.rainbowCoinSpawns    || []).map(s => ({ x: mx(s.x, 16), y: s.y })), // Feature 138
+        healSpawns:           (lvl.healSpawns           || []).map(msp), // Feature 137
         portalSpawns: (lvl.portalSpawns || []).map(p => ({
             blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
             orange: { x: mx(p.orange.x, 22), y: p.orange.y },
@@ -6580,11 +6700,27 @@ function loadLevel(index) {
     // Feature 59: reset per-level grade tracking
     levelDeathCount = 0;
     levelCoinsCollected = 0;
-    levelCoinsTotal = (lvl.coinSpawns || []).length + (lvl.doubleCoinSpawns || []).length + (lvl.tripleCoinSpawns || []).length; // Feature 92
+    // Feature 137/138: Auto-generate heal mushroom + rainbow coin positions for levels without explicit spawns
+    if (lvl.healSpawns === undefined && index >= 3) {
+        const candid = lvl.platforms.filter(p => p.y < 400 && p.w >= 80 && !p.crumble && !p.ice)
+            .sort((a, b) => a.y - b.y);
+        if (candid.length > 0) {
+            const p = candid[0];
+            lvl = { ...lvl, healSpawns: [{ x: p.x + Math.floor(p.w * 0.25), y: p.y - 22 }] };
+        }
+    }
+    if (lvl.rainbowCoinSpawns === undefined && index >= 2) {
+        const candid = lvl.platforms.filter(p => p.y < 420 && p.w >= 70 && !p.crumble)
+            .sort((a, b) => a.y - b.y);
+        const src = candid.length >= 2 ? candid[1] : candid[0];
+        if (src) lvl = { ...lvl, rainbowCoinSpawns: [{ x: src.x + Math.floor(src.w * 0.6), y: src.y - 22 }] };
+    }
+    levelCoinsTotal = (lvl.coinSpawns || []).length + (lvl.doubleCoinSpawns || []).length + (lvl.tripleCoinSpawns || []).length + (lvl.rainbowCoinSpawns || []).length; // Features 92, 138
     coins = [
         ...(lvl.coinSpawns || []).map(c => new Coin(c.x, c.y)),
         ...(lvl.doubleCoinSpawns || []).map(c => new Coin(c.x, c.y, 100)),
         ...(lvl.tripleCoinSpawns || []).map(c => new Coin(c.x, c.y, 150)), // Feature 92
+        ...(lvl.rainbowCoinSpawns || []).map(c => new Coin(c.x, c.y, 200, true)), // Feature 138
     ];
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
@@ -6602,6 +6738,7 @@ function loadLevel(index) {
     giantPUs = (lvl.giantSpawns || []).map(g => new GiantPU(g.x, g.y)); // Feature 87
     jetpacks = (lvl.jetpackSpawns || []).map(j => new JetpackPU(j.x, j.y)); // Feature 99
     flashlights = (lvl.flashlightSpawns || []).map(f => new FlashlightPU(f.x, f.y)); // Feature 105
+    healingMushrooms = (lvl.healSpawns || []).map(h => new HealingMushroom(h.x, h.y)); // Feature 137
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -6755,6 +6892,13 @@ function checkCoinCollisions() {
             levelCoinsCollected++;  // Feature 59
             if (totalCoinsCollectedRun >= 10) unlockAchievement('coinCollector');
             if (totalCoinsCollectedRun >= 50) unlockAchievement('bigSpender');
+            // Feature 138: Rainbow coin triggers Coin Frenzy
+            if (coin.isRainbow) {
+                coinFrenzyTimer = 480; // 8 seconds
+                coinFrenzyActivated = true;
+                particles.push(new Particle(coin.x, coin.y - 18, '🌈 РАДУГА!', '#ff88ff'));
+                playSound('levelup');
+            }
             const pColor = coinFrenzyTimer > 0 ? '#ff8800' : (pts > 50 ? '#ff9900' : '#ffcc00');
             const pText = coinFrenzyTimer > 0 ? `x3 +${pts}` : `+${pts}`;
             particles.push(new Particle(coin.x, coin.y - 5, pText, pColor));
@@ -8766,6 +8910,24 @@ function renderLevelComplete() {
         }
     }
 
+    // Feature 140: Perfect Clear banner
+    if (lastLevelWasPerfectClear) {
+        const pcPulse = 0.85 + Math.sin(Date.now() * 0.007) * 0.15;
+        const pcAlpha = 0.85 + pcPulse * 0.15;
+        ctx.save();
+        ctx.globalAlpha = pcAlpha;
+        ctx.textAlign = 'center';
+        ctx.font = `bold ${Math.round(18 * pcPulse)}px monospace`;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText('⭐ ИДЕАЛЬНОЕ ПРОХОЖДЕНИЕ! +1000', W / 2 + 2, 337);
+        ctx.fillStyle = '#ffdd00';
+        ctx.shadowColor = '#ff8800';
+        ctx.shadowBlur = 14;
+        ctx.fillText('⭐ ИДЕАЛЬНОЕ ПРОХОЖДЕНИЕ! +1000', W / 2, 335);
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
     // Feature 59: Letter grade display
     if (currentLevelGrade) {
         const gradeColors = { S: '#ffdd00', A: '#00ff88', B: '#55bbff', C: '#aaaaaa', D: '#ff4444' };
@@ -9061,6 +9223,11 @@ function renderLevelSelect() {
             if (challengeCompleted[chKey]) {
                 ctx.font = '11px monospace';
                 ctx.fillText('🎯', bx + boxW - 10, by + 14);
+            }
+            // Feature 140: Perfect Clear star badge
+            if (levelPerfectClears[i]) {
+                ctx.font = '11px monospace';
+                ctx.fillText('⭐', bx + 10, by + 14);
             }
         }
         ctx.restore();
@@ -9397,6 +9564,8 @@ function update() {
             checkSporeCollisions();                   // Feature 101
             flashlights = flashlights.filter(fl => fl.update()); // Feature 105
             checkFlashlightCollisions();              // Feature 105
+            healingMushrooms = healingMushrooms.filter(hm => hm.update()); // Feature 137
+            checkHealingMushroomCollisions();         // Feature 137
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -9406,6 +9575,7 @@ function update() {
             updateAchievementToasts();
 
             if (shakeTimer > 0) shakeTimer--;
+            if (bulletTimeTimer > 0) bulletTimeTimer--; // Feature 139
             if (comboDisplayTimer > 0) comboDisplayTimer--;
             if (comboCount > levelMaxCombo) levelMaxCombo = comboCount;
             if (coinFrenzyTimer > 0) { coinFrenzyTimer--; if (coinFrenzyTimer === 0) coinFrenzyActivated = false; } // Feature 73
@@ -9581,6 +9751,16 @@ function update() {
                         particles.push(new Particle(W / 2 - 80, H / 2 - 40, '🎯 ЗАДАНИЕ +500!', '#44ffaa'));
                     }
                     challengeBonusAwarded = true;
+                }
+                // Feature 140: Perfect Clear bonus — no deaths AND time < 25s
+                lastLevelWasPerfectClear = false;
+                if (levelDeathCount === 0 && levelCompletionTime < 25 && !isBossLevel && !coinCaveMode) {
+                    lastLevelWasPerfectClear = true;
+                    levelPerfectClears[currentLevel] = true;
+                    localStorage.setItem('mushroomPerfectClears', JSON.stringify(levelPerfectClears));
+                    player.score += 1000;
+                    totalScore += 1000;
+                    particles.push(new Particle(W / 2 - 90, H / 2 - 80, '⭐ ИДЕАЛЬНО! +1000', '#ffdd00'));
                 }
                 // Save best level time
                 if (!isBossLevel) {
@@ -9911,6 +10091,7 @@ function render() {
             renderMagBootsEffect(); // Feature 85: mag boots aura
             jetpacks.forEach(j => j.render()); // Feature 99: jetpack items
             flashlights.forEach(fl => fl.render()); // Feature 105
+            healingMushrooms.forEach(hm => hm.render()); // Feature 137
             spores.forEach(s => s.render());         // Feature 101
             player.render();
             particles.forEach(p => p.render());
@@ -9927,6 +10108,22 @@ function render() {
                 ctx.globalAlpha = 1;
                 ctx.restore();
                 deathFlashTimer--;
+            }
+            // Feature 139: Bullet Time — blue desaturation vignette while slowed
+            if (bulletTimeTimer > 0) {
+                const btAlpha = Math.min(bulletTimeTimer / 20, 1) * 0.35;
+                ctx.save();
+                ctx.globalAlpha = btAlpha;
+                ctx.fillStyle = '#1133aa';
+                ctx.fillRect(0, 0, W, H);
+                // Vignette border
+                const vig = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.8);
+                vig.addColorStop(0, 'rgba(0,0,80,0)');
+                vig.addColorStop(1, 'rgba(0,20,120,0.5)');
+                ctx.globalAlpha = btAlpha * 1.5;
+                ctx.fillStyle = vig;
+                ctx.fillRect(0, 0, W, H);
+                ctx.restore();
             }
             // Feature 136: white flash on level complete
             if (levelClearFlash > 0) {
@@ -10183,7 +10380,9 @@ function gameLoop(timestamp) {
     trackFrameTime(timestamp - lastTime); // Feature 124
     const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
     lastTime = timestamp;
-    accumulator += dt;
+    // Feature 139: Bullet Time — slow physics accumulation after player death
+    const timeMult = bulletTimeTimer > 0 ? 0.25 : 1.0;
+    accumulator += dt * timeMult;
 
     // Feature 126: draw only when the simulation advanced — on 120 Hz displays (MacBook ProMotion)
     // every other frame used to redraw an identical picture
