@@ -1327,6 +1327,29 @@ class Player extends Entity {
             ctx.restore();
         }
 
+        // Feature 155: Kill Aura — pulsing ring when kill streak >= 5
+        if (killStreakCount >= 5) {
+            const t = Date.now() * 0.008;
+            const pulse = 0.6 + Math.abs(Math.sin(t)) * 0.4;
+            const color = killStreakCount >= 8 ? '#ffd700' : '#ff4400';
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = pulse * 0.7;
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2,
+                        this.w * 0.85 + Math.sin(t * 1.7) * 3,
+                        this.h * 0.85 + Math.sin(t * 2.1) * 2, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2,
+                        this.w * 0.6 + Math.sin(t * 2.3) * 2,
+                        this.h * 0.6 + Math.sin(t * 1.9) * 1, 0, 0, Math.PI * 2);
+            ctx.globalAlpha = pulse * 0.3;
+            ctx.fill();
+            ctx.restore();
+        }
+
         // Shield glow
         if (this.shieldActive) {
             const pulse = 0.85 + Math.sin(Date.now() * 0.006) * 0.15;
@@ -9232,6 +9255,23 @@ function drawHUD() {
         grad.addColorStop(1, `rgba(180,0,0,${pulse * 0.22})`);
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+    }
+
+    // Feature 156: Enemy Progress Bar — thin bar at top showing how many enemies remain
+    if (!survivalMode && !coinCaveMode && levelTotalMarios > 0) {
+        const alive = marios.filter(m => m.isAlive).length;
+        const frac = Math.max(0, 1 - alive / levelTotalMarios);
+        const barW = W - 8;
+        const barH = 3;
+        const barX = 4;
+        const barY = 0;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(barX, barY, barW, barH);
+        const col = frac >= 1 ? '#55ff55' : frac > 0.5 ? '#ffcc00' : '#ff6622';
+        ctx.fillStyle = col;
+        ctx.fillRect(barX, barY, barW * frac, barH);
         ctx.restore();
     }
 
