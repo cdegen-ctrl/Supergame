@@ -834,6 +834,7 @@ class Player extends Entity {
         this.spikeBootsChains = 0;  // Feature 163: chains used this stomp
         this.vortexCoinTimer = 0;   // Feature 169: Vortex Coin — all coins pulled in
         this.enemyMirrorTimer = 0;  // Feature 175: Enemy Mirror — enemies move in reverse
+        this.blastStompTimer = 0;   // Feature 177: Blast Stomp — chain explosion on stomp kill
     }
 
     update() {
@@ -1173,6 +1174,7 @@ class Player extends Entity {
         if (this.quakeTimer > 0) this.quakeTimer--;     // Feature 173
         if (this.vortexCoinTimer > 0) this.vortexCoinTimer--; // Feature 169
         if (this.enemyMirrorTimer > 0) this.enemyMirrorTimer--; // Feature 175
+        if (this.blastStompTimer > 0) this.blastStompTimer--;   // Feature 177
         // Feature 149: Magma Floor — damage player when near bottom on volcano levels
         if (this.magmaDmgTimer > 0) this.magmaDmgTimer--;
         if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano && this.y + this.h >= 462
@@ -1347,6 +1349,7 @@ class Player extends Entity {
             this.quakeTimer = 0;   // Feature 173: lose quake stomp on death
             this.vortexCoinTimer = 0; // Feature 169: lose vortex on death
             this.enemyMirrorTimer = 0; // Feature 175: lose mirror on death
+            this.blastStompTimer = 0;  // Feature 177: lose blast stomp on death
             playSound('hurt');
         }
     }
@@ -2975,6 +2978,8 @@ const ELECTRO_DURATION = 360; // Feature 72: 6 seconds at 60fps
 const ELECTRO_RADIUS = 80; // px radius of electric field
 const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
 const ENEMY_MIRROR_DURATION = 300; // Feature 175: Enemy Mirror — 5 seconds at 60fps
+const BLAST_STOMP_DURATION = 300; // Feature 177: Blast Stomp — 5 seconds at 60fps
+const BLAST_STOMP_RADIUS   = 100; // Feature 177: chain-kill radius in px
 const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
 const JUMP_BOOST_DURATION = 480; // Feature 148: 8 seconds at 60fps
 const REFLECT_SHIELD_DURATION = 480; // Feature 171: 8 seconds at 60fps
@@ -4722,6 +4727,77 @@ function checkMirrorPUCollisions() {
     mirrorPowerUps = mirrorPowerUps.filter(mp => !mp.collected);
 }
 
+// === FEATURE 177: BLAST STOMP — chain explosion kills nearby enemies on every stomp kill ===
+class BlastStompPU {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 22; this.h = 22;
+        this.collected = false; this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.13) * 0.1;
+        ctx.save();
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 18 * pulse);
+        grd.addColorStop(0, 'rgba(255,100,0,0.45)');
+        grd.addColorStop(1, 'rgba(255,40,0,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.7 * pulse;
+        ctx.strokeStyle = '#ff6600';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 12 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.font = `bold ${Math.round(15 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('💥', cx, cy + 6);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+let blastStompPUs = [];
+
+function checkBlastStompPUCollisions() {
+    if (!player) return;
+    for (const bp of blastStompPUs) {
+        if (bp.collected || !aabb(player, bp)) continue;
+        bp.collected = true;
+        player.blastStompTimer = BLAST_STOMP_DURATION;
+        particles.push(new Particle(bp.x - 10, bp.y - 14, '💥 ВЗРЫВ-СТОМП!', '#ff6600'));
+        milestoneBannerText = '💥 ВЗРЫВ-СТОМП АКТИВЕН!';
+        milestoneBannerColor = '#ff6600';
+        milestoneBannerTimer = 120;
+        playSound('levelup');
+    }
+    blastStompPUs = blastStompPUs.filter(bp => !bp.collected);
+}
+
+function triggerBlastStomp(cx, cy) {
+    for (const m of marios) {
+        if (!m.isAlive) continue;
+        const dist = Math.hypot(m.x + m.w / 2 - cx, m.y + m.h / 2 - cy);
+        if (dist > BLAST_STOMP_RADIUS) continue;
+        m.stomp();
+        const pts = 100;
+        totalScore += pts;
+        if (player) player.score += pts;
+        particles.push(new Particle(m.x, m.y - 10, '💥 +100', '#ff8800'));
+    }
+    for (let i = 0; i < 8; i++) {
+        const ang = (Math.PI * 2 / 8) * i;
+        particles.push(new DeathParticle(cx, cy, Math.cos(ang) * 3.5, Math.sin(ang) * 3.5, '#ff6600', 5));
+    }
+    shakeTimer = Math.min(shakeTimer + 4, 10);
+    shakeIntensity = Math.min(shakeIntensity + 2, 6);
+}
+
 function triggerQuake(cx, groundY) {
     const QUAKE_RADIUS = 250;
     let killed = 0;
@@ -6216,7 +6292,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк', '🌊 Океан'];
 
 const LEVELS = [
     {
@@ -7907,6 +7983,84 @@ const LEVELS = [
         ],
         checkpointSpawns: [{ x: 412, y: 450 }],
     },
+    // === LEVEL 28: ОКЕАН === Feature 178
+    {
+        name: 'Океан',
+        isOcean: true,
+        platforms: [
+            // Ocean floor segments
+            { x: 0,   y: 460, w: 160, h: 40 },
+            { x: 240, y: 460, w: 140, h: 40 },
+            { x: 460, y: 460, w: 120, h: 40 },
+            { x: 660, y: 460, w: 140, h: 40 },
+            // Low coral shelves
+            { x: 50,  y: 380, w: 100, h: 14 },
+            { x: 280, y: 370, w: 110, h: 14, moveAxis: 'x', moveRange: 50, moveSpeed: 1.2 },
+            { x: 520, y: 375, w: 90,  h: 14 },
+            { x: 680, y: 365, w: 100, h: 14 },
+            // Mid reef platforms
+            { x: 120, y: 295, w: 120, h: 14, ice: true },
+            { x: 340, y: 285, w: 130, h: 14 },
+            { x: 570, y: 290, w: 110, h: 14, moveAxis: 'y', moveRange: 35, moveSpeed: 0.9 },
+            // Upper rock ledges
+            { x: 30,  y: 210, w: 100, h: 14 },
+            { x: 240, y: 200, w: 120, h: 14, crumble: true },
+            { x: 440, y: 205, w: 110, h: 14 },
+            { x: 650, y: 195, w: 130, h: 14, moveAxis: 'x', moveRange: 60, moveSpeed: 1.5 },
+            // Top platforms
+            { x: 100, y: 120, w: 110, h: 14 },
+            { x: 330, y: 110, w: 140, h: 14 },
+            { x: 580, y: 115, w: 110, h: 14 },
+            // Tiny floating stone
+            { x: 700, y: 300, w: 60,  h: 14, pulse: true },
+        ],
+        marioSpawns: [
+            { x: 180, y: 440 }, { x: 310, y: 440 }, { x: 490, y: 440 }, { x: 695, y: 440 },
+            { x: 70,  y: 360 }, { x: 360, y: 350 }, { x: 550, y: 355 },
+            { x: 150, y: 275 }, { x: 460, y: 265 }, { x: 340, y: 185 },
+        ],
+        marioTypes: ['fast', 'armored', 'fast', 'berserker', 'armored', 'ghost_mario', 'fast', 'berserker', 'teleporter', 'armored'],
+        shooterMarioSpawns: [{ x: 250, y: 270 }, { x: 670, y: 175 }],
+        flyingMarioSpawns:  [{ x: 400, y: 120 }, { x: 620, y: 270 }],
+        parachuteMarioSpawns: [{ x: 160, y: 100 }, { x: 480, y: 90 }],
+        marioSpeed: 3.2,
+        playerSpawn: { x: 20, y: 432 },
+        coinSpawns: [
+            { x: 80,  y: 360 }, { x: 160, y: 360 }, { x: 300, y: 350 },
+            { x: 380, y: 350 }, { x: 540, y: 355 }, { x: 610, y: 355 },
+        ],
+        doubleCoinSpawns:    [{ x: 360, y: 90 }, { x: 500, y: 95 }],
+        tripleCoinSpawns:    [{ x: 590, y: 95 }],
+        rainbowCoinSpawns:   [{ x: 660, y: 175 }],
+        lightningCoinSpawns: [{ x: 140, y: 100 }],
+        explodingCoinSpawns: [{ x: 210, y: 180 }],
+        warpCoinSpawns:      [{ x: 690, y: 270 }, { x: 260, y: 180 }],
+        vortexCoinSpawns:    [{ x: 360, y: 265 }, { x: 100, y: 190 }],
+        starSpawns:          [{ x: 120, y: 100 }, { x: 570, y: 95 }],
+        shieldSpawns:        [{ x: 5,   y: 444 }, { x: 750, y: 444 }],
+        bombSpawns:          [{ x: 290, y: 165 }, { x: 490, y: 165 }],
+        speedBoostSpawns:    [{ x: 390, y: 90  }],
+        magnetSpawns:        [{ x: 445, y: 90  }],
+        freezeSpawns:        [{ x: 130, y: 275 }, { x: 660, y: 175 }],
+        ghostSpawns:         [{ x: 320, y: 265 }],
+        electroSpawns:       [{ x: 430, y: 90  }],
+        slowMoSpawns:        [{ x: 490, y: 90  }],
+        rocketSpawns:        [{ x: 170, y: 100 }, { x: 600, y: 95 }],
+        scoreBoostSpawns:    [{ x: 340, y: 90  }],
+        jetpackSpawns:       [{ x: 460, y: 90  }],
+        bubbleSpawns:        [{ x: 360, y: 265 }],
+        spikeBootsSpawns:    [{ x: 475, y: 90  }],
+        healSpawns:          [{ x: 110, y: 100 }],
+        blastSpawns:         [{ x: 345, y: 90  }, { x: 580, y: 95  }],
+        mirrorSpawns:        [{ x: 420, y: 90  }],
+        quakeSpawns:         [{ x: 500, y: 90  }],
+        spikeSpawns:         [{ x: 395, y: 444, count: 3 }, { x: 560, y: 444, count: 2 }],
+        barrelSpawns: [
+            { x: 60,  y: 424 }, { x: 300, y: 424 }, { x: 700, y: 424 },
+            { x: 80,  y: 344 }, { x: 640, y: 330 },
+        ],
+        checkpointSpawns: [{ x: 392, y: 450 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -8971,7 +9125,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; // Feature 161/162/163/165/167/169/171/173/175: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; blastStompPUs = []; // Feature 161/162/163/165/167/169/171/173/175/177: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -9139,6 +9293,16 @@ function loadLevel(index) {
         if (cands.length >= 3) {
             const p = cands[Math.floor(cands.length * 0.5)];
             mirrorPowerUps = [new EnemyMirrorPU(p.x + Math.floor(p.w * 0.55), p.y - 26)];
+        }
+    }
+
+    // Feature 177: Blast Stomp PU — load from spawns or auto-place on levels 5+
+    blastStompPUs = (lvl.blastSpawns || []).map(b => new BlastStompPU(b.x, b.y));
+    if (!lvl.blastSpawns && index >= 4) {
+        const cands = lvl.platforms.filter(p => p.y < 360 && p.w >= 55 && !p.crumble).sort((a, b) => b.y - a.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.4)];
+            blastStompPUs = [new BlastStompPU(p.x + Math.floor(p.w * 0.45), p.y - 26)];
         }
     }
 
@@ -9431,6 +9595,10 @@ function checkPlayerMarioCollisions() {
                 particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
                 shakeTimer = Math.min(6 + comboCount, 12);
                 shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+                // Feature 177: Blast Stomp — chain explosion kills enemies within radius
+                if (player.blastStompTimer > 0) {
+                    triggerBlastStomp(mario.x + mario.w / 2, mario.y + mario.h / 2);
+                }
                 // Feature 163: Spike Boots — auto-redirect to nearest enemy (chain stomp)
                 if (player.spikeBootsTimer > 0 && player.spikeBootsChains < SPIKE_BOOTS_MAX_CHAIN) {
                     const killedCx = mario.x + mario.w / 2;
@@ -9715,6 +9883,7 @@ function getBackgroundTheme() {
     if (lvl && lvl.isDawn) return 'dawn'; // Feature 172
     if (lvl && lvl.isCave) return 'cave'; // Feature 174
     if (lvl && lvl.isCyber) return 'cyber'; // Feature 176
+    if (lvl && lvl.isOcean) return 'ocean'; // Feature 178
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -9922,6 +10091,8 @@ const BG_THEMES = {
     cave:  { sky: ['#050205', '#100808', '#1c0e0a'], mountain: '#1a0a06', hillLight: '#2a1008', hillDark: '#18080a', cloudAlpha: 0.0 },
     // Feature 176: Cyber — deep purple with neon grid lines
     cyber: { sky: ['#080010', '#130030', '#1a0050'], mountain: '#200060', hillLight: '#1a0048', hillDark: '#0d0028', cloudAlpha: 0.0 },
+    // Feature 178: Ocean — deep teal blue with caustic light rays
+    ocean: { sky: ['#001428', '#002850', '#004878'], mountain: '#003a60', hillLight: '#004060', hillDark: '#001830', cloudAlpha: 0.0 },
 };
 const BG_MARGIN = 80; // extra width on each side of parallax layers
 
@@ -10018,6 +10189,50 @@ function buildBackgroundCache(theme) {
                 ctx.beginPath();
                 ctx.arc(sx, sy, 0.8 + (i % 3) * 0.5, 0, Math.PI * 2);
                 ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        }
+        if (theme === 'ocean') {
+            // Feature 178: Ocean — light rays through water + rising bubbles + caustic shimmer
+            ctx.save();
+            // 5 diagonal light shafts from surface
+            for (let i = 0; i < 5; i++) {
+                const sx = (i * 160 + 40) % W;
+                const rayGrad = ctx.createLinearGradient(sx, 0, sx + 30, H);
+                rayGrad.addColorStop(0, 'rgba(80,200,255,0.18)');
+                rayGrad.addColorStop(0.5, 'rgba(40,160,220,0.06)');
+                rayGrad.addColorStop(1, 'rgba(0,100,160,0)');
+                ctx.fillStyle = rayGrad;
+                ctx.beginPath();
+                ctx.moveTo(sx,     0);
+                ctx.lineTo(sx + 28, 0);
+                ctx.lineTo(sx + 60, H);
+                ctx.lineTo(sx + 32, H);
+                ctx.closePath();
+                ctx.fill();
+            }
+            // Scattered caustic dots (light blobs)
+            for (let i = 0; i < 22; i++) {
+                const cx2 = (i * 97.3 + 55) % W;
+                const cy2 = (i * 61.7 + 25) % (H * 0.7);
+                ctx.globalAlpha = 0.1 + (i % 4) * 0.07;
+                ctx.fillStyle = '#55ccff';
+                ctx.beginPath();
+                ctx.arc(cx2, cy2, 1 + (i % 3), 0, Math.PI * 2);
+                ctx.fill();
+            }
+            // Rising bubble outlines
+            ctx.globalAlpha = 0.25;
+            ctx.strokeStyle = '#88ddff';
+            ctx.lineWidth = 0.8;
+            for (let i = 0; i < 16; i++) {
+                const bx = (i * 53.7 + 15) % W;
+                const by = (i * 79.1 + 10) % H;
+                const br = 1 + (i % 3);
+                ctx.beginPath();
+                ctx.arc(bx, by, br, 0, Math.PI * 2);
+                ctx.stroke();
             }
             ctx.globalAlpha = 1;
             ctx.restore();
@@ -10934,6 +11149,46 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ff88ff';
         ctx.fillText('🔄 ЗЕРКАЛО ВРАГОВ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 177: Blast Stomp timer bar
+    if (player && player.blastStompTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0)
+            + (player.droneTimer > 0 ? 18 : 0)
+            + (player.spikeBootsTimer > 0 ? 18 : 0)
+            + (player.vortexCoinTimer > 0 ? 18 : 0)
+            + (player.reflectTimer > 0 ? 18 : 0)
+            + (player.quakeTimer > 0 ? 18 : 0)
+            + (player.enemyMirrorTimer > 0 ? 18 : 0);
+        const frac = player.blastStompTimer / BLAST_STOMP_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.018) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255, 100, 0, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffcc88';
+        ctx.fillText('💥 ВЗРЫВ-СТОМП', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -12565,6 +12820,8 @@ function update() {
             checkQuakePUCollisions();                                  // Feature 173
             mirrorPowerUps = mirrorPowerUps.filter(mp => mp.update()); // Feature 175
             checkMirrorPUCollisions();                                 // Feature 175
+            blastStompPUs = blastStompPUs.filter(bp => bp.update());   // Feature 177
+            checkBlastStompPUCollisions();                             // Feature 177
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -13152,6 +13409,7 @@ function render() {
             reflectShields.forEach(rs => rs.render());   // Feature 171
             quakePowerUps.forEach(q => q.render());       // Feature 173
             mirrorPowerUps.forEach(mp => mp.render());    // Feature 175
+            blastStompPUs.forEach(bp => bp.render());      // Feature 177
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
