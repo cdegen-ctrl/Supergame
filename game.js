@@ -778,6 +778,10 @@ class Player extends Entity {
         this.parachuting = false;
         // Feature 105: Flashlight power-up timer
         this.flashlightTimer = 0;
+        // Feature 144: Roll Dodge
+        this.rollTimer = 0;       // active roll frames (0 = not rolling)
+        this.rollCooldown = 0;    // cooldown frames until next roll is allowed
+        this.rollDir = 1;         // direction of roll
     }
 
     update() {
@@ -845,6 +849,30 @@ class Player extends Entity {
                 this.vx += this.conveyorPush;
                 this.vx = Math.max(-currentSpeed * 1.8, Math.min(currentSpeed * 1.8, this.vx));
             }
+        }
+
+        // Feature 144: Roll Dodge — press DOWN + direction while grounded
+        if (this.rollCooldown > 0) this.rollCooldown--;
+        if (this.rollTimer > 0) {
+            this.rollTimer--;
+            // During roll: override vx and give brief invincibility
+            this.vx = this.rollDir * PLAYER_SPEED * 2.2;
+            this.invincibleTimer = Math.max(this.invincibleTimer, 1); // stay invincible during roll
+            this.scaleX = 1.6; this.scaleY = 0.55; // squished roll shape
+        } else {
+            // Check for roll trigger: grounded, moving, press DOWN key (not already dashing/jumping/gound-pounding)
+            const downNowRoll = !!(keys['ArrowDown'] || keys['KeyS'] || gamepadKeys.down);
+            if (this.isGrounded && downNowRoll && !this._downWasForRoll && this.rollCooldown <= 0
+                    && this.dashTimer <= 0 && !this.groundPounding && (leftDown || rightDown)) {
+                this.rollTimer = 16;  // 0.27s roll
+                this.rollDir = rightDown ? 1 : -1;
+                this.rollCooldown = 180; // 3s cooldown
+                this.invincibleTimer = Math.max(this.invincibleTimer, 16);
+                spawnJumpSmoke(this.x + this.w / 2, this.y + this.h, false);
+                particles.push(new Particle(this.x + this.w / 2, this.y - 8, '💨 КУВЫРОК!', '#88ddff'));
+                playSound('dash');
+            }
+            this._downWasForRoll = downNowRoll;
         }
 
         // Feature 141: Wind force — push player horizontally (stronger in air)
@@ -3383,6 +3411,74 @@ class GiantPU {
 }
 
 let giantPUs = [];
+
+// === FEATURE 143: GIFT CHEST ===
+// A golden mystery chest that gives a random power-up when opened.
+const GIFT_CHEST_BUFFS = [
+    { id: 'speed',   label: '⚡ УСКОРЕНИЕ!', color: '#00ff88', apply: () => { player.speedBoostTimer = 300; } },
+    { id: 'star',    label: '⭐ ЗВЕЗДА!',     color: '#ffff00', apply: () => { player.starTimer = 600; } },
+    { id: 'shield',  label: '🛡 ЩИТ!',        color: '#4488ff', apply: () => { player.shield = true; } },
+    { id: 'freeze',  label: '❄ ЗАМОРОЗКА!',  color: '#88ddff', apply: () => { marios.forEach(m => { if (m.isAlive) m.freezeTimer = 240; }); } },
+    { id: 'slowmo',  label: '⏱ ЗАМЕДЛЕНИЕ!', color: '#55ddff', apply: () => { player.slowMoTimer = 360; } },
+    { id: 'magnet',  label: '🧲 МАГНИТ!',     color: '#ff88cc', apply: () => { player.magnetTimer = 420; } },
+];
+
+class GiftChest {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 20; this.h = 18;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+        this.bobOffset = Math.random() * Math.PI * 2;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        if (this.collected) return;
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07 + this.bobOffset) * 3;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.88 + Math.sin(t * 0.11) * 0.12;
+        ctx.save();
+        // Gold glow
+        ctx.beginPath(); ctx.arc(cx, cy, 15 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,200,0,${0.22 * pulse})`; ctx.fill();
+        // Chest body
+        ctx.fillStyle = '#cc8800';
+        ctx.fillRect(cx - 9, cy - 6, 18, 13);
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect(cx - 9, cy - 9, 18, 7);
+        // Lid outline
+        ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 1.5;
+        ctx.strokeRect(cx - 9, cy - 9, 18, 7);
+        ctx.strokeRect(cx - 9, cy - 6, 18, 13);
+        // Lock
+        ctx.fillStyle = '#ffdd44';
+        ctx.fillRect(cx - 2.5, cy - 3.5, 5, 5);
+        // "?" label
+        ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('?', cx, cy - 4);
+        ctx.restore();
+    }
+}
+let giftChests = [];
+
+function checkGiftChestCollisions() {
+    for (const gc of giftChests) {
+        if (gc.collected || !aabb(player, gc)) continue;
+        gc.collected = true;
+        const buff = GIFT_CHEST_BUFFS[Math.floor(Math.random() * GIFT_CHEST_BUFFS.length)];
+        buff.apply();
+        particles.push(new Particle(gc.x - 20, gc.y - 16, buff.label, buff.color));
+        for (let i = 0; i < 12; i++) {
+            const a = (Math.PI * 2 * i) / 12;
+            const spd = 2 + Math.random() * 3;
+            particles.push(new DeathParticle(gc.x + gc.w/2, gc.y + gc.h/2, Math.cos(a)*spd, Math.sin(a)*spd, '#ffd700', 5));
+        }
+        playSound('star');
+    }
+    giftChests = giftChests.filter(gc => !gc.collected);
+}
 
 function checkGiantPUCollisions() {
     for (const g of giantPUs) {
@@ -6232,7 +6328,7 @@ function startSurvivalMode() {
     stars = (lvl.starSpawns || []).map(s => new Star(s.x, s.y));
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
-    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = []; giantPUs = [];
+    springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = []; giantPUs = []; giftChests = [];
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -6891,6 +6987,15 @@ function loadLevel(index) {
     jetpacks = (lvl.jetpackSpawns || []).map(j => new JetpackPU(j.x, j.y)); // Feature 99
     flashlights = (lvl.flashlightSpawns || []).map(f => new FlashlightPU(f.x, f.y)); // Feature 105
     healingMushrooms = (lvl.healSpawns || []).map(h => new HealingMushroom(h.x, h.y)); // Feature 137
+    giftChests = (lvl.giftChestSpawns || []).map(g => new GiftChest(g.x, g.y)); // Feature 143
+    // Auto-place 1 gift chest on levels 5+ if none specified
+    if (!lvl.giftChestSpawns && index >= 4) {
+        const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
+        if (cands.length >= 3) {
+            const p = cands[Math.floor(cands.length * 0.4)];
+            giftChests = [new GiftChest(p.x + Math.floor(p.w * 0.7), p.y - 20)];
+        }
+    }
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
     portalPairs = (lvl.portalSpawns || []).map(p => {
         const pA = new Portal(p.blue.x, p.blue.y, 'blue');
@@ -8479,6 +8584,32 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 144: Roll Dodge cooldown indicator
+    if (player) {
+        const rollReady = player.rollCooldown <= 0;
+        const rollX = 200; const rollY = H - 30;
+        ctx.save();
+        ctx.globalAlpha = rollReady ? 0.9 : 0.45;
+        ctx.fillStyle = rollReady ? '#88ddff' : '#112233';
+        ctx.beginPath();
+        ctx.roundRect(rollX, rollY, 52, 18, 4);
+        ctx.fill();
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = rollReady ? '#ffffff' : '#556677';
+        ctx.fillText('💨 ROLL', rollX + 26, rollY + 13);
+        if (!rollReady) {
+            const cdFrac = 1 - player.rollCooldown / 180;
+            ctx.strokeStyle = '#88ddff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(rollX + 40, rollY + 9, 7, -Math.PI / 2, -Math.PI / 2 + cdFrac * Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Mute icon (bottom-right, clickable area)
     uiButtons.push({ x: W - 50, y: H - 36, w: 50, h: 36, action: () => setMuted(!soundMuted) });
     ctx.save();
@@ -9733,6 +9864,8 @@ function update() {
             checkFlashlightCollisions();              // Feature 105
             healingMushrooms = healingMushrooms.filter(hm => hm.update()); // Feature 137
             checkHealingMushroomCollisions();         // Feature 137
+            giftChests = giftChests.filter(gc => gc.update()); // Feature 143
+            checkGiftChestCollisions();               // Feature 143
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -10261,6 +10394,7 @@ function render() {
             jetpacks.forEach(j => j.render()); // Feature 99: jetpack items
             flashlights.forEach(fl => fl.render()); // Feature 105
             healingMushrooms.forEach(hm => hm.render()); // Feature 137
+            giftChests.forEach(gc => gc.render());    // Feature 143
             spores.forEach(s => s.render());         // Feature 101
             player.render();
             particles.forEach(p => p.render());
