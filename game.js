@@ -441,7 +441,7 @@ class Entity {
 }
 
 class Platform extends Entity {
-    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumble, ice, conveyor) {
+    constructor(x, y, w, h, moveAxis, moveRange, moveSpeed, crumble, ice, conveyor, pulse) {
         super(x, y, w, h);
         // Moving platform support
         this.moveAxis = moveAxis || null;   // 'x' | 'y' | null
@@ -461,6 +461,8 @@ class Platform extends Entity {
         this.ice = !!ice;
         // Feature 102: Conveyor belt direction (-1=left, 0=none, 1=right)
         this.conveyor = conveyor || 0;
+        // Feature 159: Pulsing platform
+        this.pulse = !!pulse;
     }
 
     update() {
@@ -546,6 +548,21 @@ class Platform extends Entity {
         const snap = v => Math.round(v * renderScale) / renderScale;
         ctx.drawImage(this._bmp, snap(this.x - padL), snap(this.y - padT), bw, bh);
 
+        // Feature 159: Pulsing platform glow overlay (live, on top of cached bitmap)
+        if (this.pulse) {
+            const glow = 0.35 + Math.sin(Date.now() * 0.003) * 0.25;
+            ctx.save();
+            ctx.globalAlpha = glow;
+            ctx.strokeStyle = '#dd88ff';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+            ctx.globalAlpha = glow * 0.45;
+            ctx.strokeStyle = '#ff44ff';
+            ctx.lineWidth = 7;
+            ctx.strokeRect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+            ctx.restore();
+        }
+
         // Feature 66: Draw cracks on crumbling platforms when shaking
         if (this.crumble && this.crumbleState === 'shaking') {
             ctx.strokeStyle = 'rgba(0,0,0,0.5)';
@@ -596,12 +613,12 @@ class Platform extends Entity {
     renderStatic() {
         const d = DEPTH_3D;
         // Choose colors based on platform type
-        const mainColor  = this.ice ? '#88ccee' : this.crumble ? '#8c7060' : C.brick;
-        const frontColor = this.ice ? '#5599bb' : this.crumble ? '#5c4030' : '#1a5c24';
-        const rightColor = this.ice ? '#6699cc' : this.crumble ? '#6b4838' : '#1e6b2b';
-        const topColor   = this.ice ? '#aaddff' : this.crumble ? '#a08070' : '#3aad4e';
-        const lineColor  = this.ice ? '#4488aa' : this.crumble ? '#4a3028' : C.brickLine;
-        const edgeColor  = this.ice ? '#cceeff' : this.crumble ? '#c0a090' : '#5cd670';
+        const mainColor  = this.pulse ? '#7030a0' : this.ice ? '#88ccee' : this.crumble ? '#8c7060' : C.brick;
+        const frontColor = this.pulse ? '#4a1a80' : this.ice ? '#5599bb' : this.crumble ? '#5c4030' : '#1a5c24';
+        const rightColor = this.pulse ? '#5525a0' : this.ice ? '#6699cc' : this.crumble ? '#6b4838' : '#1e6b2b';
+        const topColor   = this.pulse ? '#9040c0' : this.ice ? '#aaddff' : this.crumble ? '#a08070' : '#3aad4e';
+        const lineColor  = this.pulse ? '#4a1080' : this.ice ? '#4488aa' : this.crumble ? '#4a3028' : C.brickLine;
+        const edgeColor  = this.pulse ? '#cc77ff' : this.ice ? '#cceeff' : this.crumble ? '#c0a090' : '#5cd670';
 
         // 3D front face (bottom side)
         ctx.fillStyle = frontColor;
@@ -690,6 +707,14 @@ class Platform extends Entity {
             ctx.textAlign = 'center';
             ctx.fillStyle = 'rgba(200,240,255,0.8)';
             ctx.fillText('❄', this.x + this.w / 2, this.y + this.h / 2 + 4);
+        }
+
+        // Feature 159: Pulse platform indicator
+        if (this.pulse) {
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(220,180,255,0.85)';
+            ctx.fillText('✦', this.x + this.w / 2, this.y + this.h / 2 + 4);
         }
 
         // Moving platform indicator (glowing arrows)
@@ -5009,6 +5034,63 @@ function addScorePopup(x, y, pts) {
     scorePopups.push(new ScorePopup(x + 16, y - 8, pts));
 }
 
+// === FEATURE 160: KILL FEED — FPS-style panel showing recent kills ===
+let killFeed = [];
+const KILL_FEED_MAX = 4;
+const KILL_FEED_LIFE = 180; // 3 seconds at 60fps
+
+const MARIO_TYPE_LABELS = {
+    normal:     { icon: '🍄', name: 'Марио'    },
+    fast:       { icon: '💨', name: 'Быстрый'  },
+    jumpy:      { icon: '🦘', name: 'Прыгун'   },
+    armored:    { icon: '🛡', name: 'Броня'    },
+    flying:     { icon: '✈', name: 'Летун'     },
+    shooter:    { icon: '🎯', name: 'Снайпер'  },
+    berserker:  { icon: '💀', name: 'Берсерк'  },
+    ghost_mario:{ icon: '👻', name: 'Призрак'  },
+    teleporter: { icon: '⚡', name: 'Телепорт' },
+    parachute:  { icon: '🪂', name: 'Парашют'  },
+};
+
+function addKillFeedEntry(marioType, pts) {
+    const info = MARIO_TYPE_LABELS[marioType] || { icon: '❌', name: marioType };
+    killFeed.unshift({ icon: info.icon, name: info.name, pts, timer: KILL_FEED_LIFE });
+    if (killFeed.length > KILL_FEED_MAX) killFeed.length = KILL_FEED_MAX;
+}
+
+function updateKillFeed() {
+    killFeed = killFeed.filter(e => { e.timer--; return e.timer > 0; });
+}
+
+function renderKillFeed() {
+    if (killFeed.length === 0) return;
+    if (coinCaveMode) return; // not relevant in coin cave
+    ctx.save();
+    const entryH = 20;
+    const panelW = 138;
+    const panelX = W - panelW - 8;
+    const panelY = 44; // below HUD top strip
+    killFeed.forEach((entry, i) => {
+        const fadeAlpha = Math.min(1, entry.timer / 30);
+        const y = panelY + i * (entryH + 3);
+        ctx.globalAlpha = fadeAlpha * 0.85;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        ctx.roundRect(panelX, y, panelW, entryH, 4);
+        ctx.fill();
+        ctx.globalAlpha = fadeAlpha;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#ddaaff';
+        ctx.fillText(`${entry.icon} ${entry.name}`, panelX + 5, y + 13);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#ffdd44';
+        ctx.fillText(`+${entry.pts}`, panelX + panelW - 4, y + 13);
+    });
+    ctx.textAlign = 'left';
+    ctx.restore();
+}
+
 // === RUN STATISTICS ===
 let runStats = { enemiesKilled: 0, coinsCollected: 0, maxCombo: 0, levelsCleared: 0, deaths: 0 }; // Feature 63: deaths counter
 function resetRunStats() {
@@ -5591,7 +5673,7 @@ const LEVELS = [
             { x: 100, y: 210, w: 100, h: 20, moveAxis: 'x', moveRange: 95, moveSpeed: 2.6 },
             { x: 360, y: 190, w: 100, h: 20, moveAxis: 'y', moveRange: 55, moveSpeed: 2.2 },
             { x: 600, y: 205, w: 100, h: 20, moveAxis: 'x', moveRange: 80, moveSpeed: 3.0 },
-            { x: 260, y: 100, w: 280, h: 20 },
+            { x: 260, y: 100, w: 280, h: 20, pulse: true },
         ],
         marioSpawns: [
             { x: 10,  y: 430 },
@@ -5735,7 +5817,7 @@ const LEVELS = [
             { x: 490, y: 225, w: 90,  h: 18, moveAxis: 'x', moveRange:  90, moveSpeed: 3.0 },
             { x: 670, y: 210, w: 90,  h: 18, moveAxis: 'y', moveRange:  45, moveSpeed: 2.3 },
             // Summit platform — safe zone at top
-            { x: 290, y: 110, w: 220, h: 20 },
+            { x: 290, y: 110, w: 220, h: 20, pulse: true },
         ],
         marioSpawns: [
             { x: 100, y: 390 },
@@ -5873,7 +5955,7 @@ const LEVELS = [
             { x: 590, y: 200, w: 90,  h: 18, ice: true },
             // Top platforms
             { x: 100, y: 130, w: 100, h: 18, moveAxis: 'x', moveRange: 70, moveSpeed: 1.6 },
-            { x: 330, y: 115, w: 140, h: 18 },
+            { x: 330, y: 115, w: 140, h: 18, pulse: true },
             { x: 580, y: 125, w: 90,  h: 18, crumble: true },
         ],
         marioSpawns: [
@@ -6758,7 +6840,7 @@ function startSurvivalMode() {
     survivalWave = 0;
     survivalWaveTimer = SURVIVAL_WAVE_INTERVAL;
     const lvl = SURVIVAL_ARENA;
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, null, 0, 0, p.crumble, p.ice, p.conveyor));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, null, 0, 0, p.crumble, p.ice, p.conveyor, p.pulse));
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     marios = lvl.marioSpawns.map((s, i) => new Mario(s.x, s.y, lvl.marioSpeed * diffMult, 'normal'));
     fireballs = [];
@@ -7338,7 +7420,7 @@ function loadLevel(index) {
     coinCaveMode = !!lvl.isBonusLevel;
     coinCaveCountdown = coinCaveMode ? COIN_CAVE_DURATION : 0;
 
-    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice, p.conveyor));
+    platforms = lvl.platforms.map(p => new Platform(p.x, p.y, p.w, p.h, p.moveAxis, p.moveRange, p.moveSpeed, p.crumble, p.ice, p.conveyor, p.pulse));
 
     const diffMult = difficulty === 'easy' ? 0.7 : difficulty === 'hard' ? 1.3 : difficulty === 'hardcore' ? 1.6 : 1;
     const dailySpeedMult = (dailyChallengeMode && dailyChallengeModifiers.includes('fast_enemies')) ? 1.6 : 1;
@@ -7392,6 +7474,7 @@ function loadLevel(index) {
 
     particles = [];
     scorePopups = []; // Feature 88
+    killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
@@ -7668,6 +7751,7 @@ function checkPlayerMarioCollisions() {
             player.score += points;
             totalScore += points;
             comboDisplayTimer = 100;
+            addKillFeedEntry(mario.type, points); // Feature 160
             const comboColors = ['#ffff00', '#ffaa00', '#ff6600', '#ff2200', '#ff00ff'];
             const pColor = comboColors[Math.min(comboCount - 1, 4)];
             const pText = comboCount > 1 ? `x${comboCount}  +${points}` : `+${points}`;
@@ -7688,6 +7772,7 @@ function checkPlayerMarioCollisions() {
             player.score += points;
             totalScore += points;
             comboDisplayTimer = 100;
+            addKillFeedEntry(mario.type, points); // Feature 160
             const pText = `🔴 +${points}`;
             particles.push(new Particle(mario.x, mario.y - 10, pText, '#ff6600'));
             shakeTimer = Math.min(6 + comboCount, 12);
@@ -7706,6 +7791,7 @@ function checkPlayerMarioCollisions() {
             player.score += points;
             totalScore += points;
             comboDisplayTimer = 100;
+            addKillFeedEntry(mario.type, points); // Feature 160
             const pColor = '#ff8800';
             const pText = `🚀 +${points}`;
             particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
@@ -7730,6 +7816,8 @@ function checkPlayerMarioCollisions() {
                 runStats.enemiesKilled++;
                 onEnemyKilledStreak(mario.x, mario.y); // Feature 83
                 unlockAchievement('firstStomp');
+                const _kfPts = 100 * Math.max(1, comboCount + 1);
+                addKillFeedEntry(mario.type, player.scoreBoostTimer > 0 ? _kfPts * 2 : _kfPts); // Feature 160
                 comboCount++;
                 if (comboCount > runStats.maxCombo) runStats.maxCombo = comboCount;
                 if (comboCount >= 5) unlockAchievement('comboMaster');
@@ -9303,6 +9391,9 @@ function drawHUD() {
         ctx.textAlign = 'left';
         ctx.restore();
     }
+
+    // Feature 160: Kill Feed panel (upper-right corner)
+    renderKillFeed();
 }
 
 // === SCREEN RENDERS ===
@@ -10467,6 +10558,7 @@ function update() {
             const particleCap = lowQuality ? 80 : 180; // Feature 124/126: bursts can pile up hundreds
             if (particles.length > particleCap) particles.splice(0, particles.length - particleCap);
             scorePopups = scorePopups.filter(p => p.update()); // Feature 88
+            updateKillFeed(); // Feature 160
             coins = coins.filter(c => c.update());
             stars = stars.filter(s => s.update());
             shields = shields.filter(s => s.update());
