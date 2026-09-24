@@ -782,6 +782,8 @@ class Player extends Entity {
         this.bubbleTimer = 0;
         // Feature 148: Jump Boost power-up timer
         this.jumpBoostTimer = 0;
+        // Feature 149: Magma Floor damage cooldown
+        this.magmaDmgTimer = 0;
         // Feature 144: Roll Dodge
         this.rollTimer = 0;       // active roll frames (0 = not rolling)
         this.rollCooldown = 0;    // cooldown frames until next roll is allowed
@@ -1115,6 +1117,18 @@ class Player extends Entity {
         if (this.bubbleTimer > 0) this.bubbleTimer--;
         // Feature 148: Jump Boost timer
         if (this.jumpBoostTimer > 0) this.jumpBoostTimer--;
+        // Feature 149: Magma Floor — damage player when near bottom on volcano levels
+        if (this.magmaDmgTimer > 0) this.magmaDmgTimer--;
+        if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano && this.y + this.h >= 462
+                && this.invincibleTimer <= 0 && this.starTimer <= 0) {
+            if (this.magmaDmgTimer <= 0) {
+                this.magmaDmgTimer = 90; // 1.5s cooldown
+                this.die();
+                particles.push(new Particle(this.x, this.y - 10, '🔥 МАГМА!', '#ff6600'));
+                shakeTimer = 10;
+                shakeIntensity = 6;
+            }
+        }
 
         // Wall slide dust particles
         if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 0.5) {
@@ -1140,6 +1154,17 @@ class Player extends Entity {
         if (this.doubleJumpFlash > 0) this.doubleJumpFlash--;
         // Feature 131: Triple jump flash timer
         if (this.tripleJumpFlash > 0) this.tripleJumpFlash--;
+        // Feature 150: Coin Trail — golden sparkles when moving fast
+        const speedMag = Math.abs(this.vx);
+        if (speedMag > 4 && Math.random() < (speedMag - 4) * 0.06) {
+            const hue = 40 + Math.random() * 20;
+            particles.push(new DeathParticle(
+                this.x + this.w * 0.5 + (Math.random() - 0.5) * 8,
+                this.y + this.h * 0.7 + (Math.random() - 0.5) * 6,
+                (Math.random() - 0.5) * 0.6, -Math.random() * 0.8 - 0.2,
+                `hsl(${hue}, 100%, 65%)`, 2
+            ));
+        }
     }
 
     resolveCollisionsX() {
@@ -10911,6 +10936,39 @@ function render() {
             bubbleShields.forEach(b => b.render());   // Feature 145
             jumpBoosts.forEach(jb => jb.render());    // Feature 148
             lightningCoins.forEach(lc => lc.render()); // Feature 147
+            // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
+            if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
+                const lavaY = 462;
+                const lavaH = H - lavaY;
+                const t = Date.now() * 0.002;
+                const grad = ctx.createLinearGradient(0, lavaY, 0, H);
+                grad.addColorStop(0, `rgba(255, 80, 0, ${0.55 + Math.sin(t) * 0.1})`);
+                grad.addColorStop(0.5, `rgba(255, 30, 0, ${0.75 + Math.sin(t * 1.3) * 0.1})`);
+                grad.addColorStop(1, `rgba(200, 0, 0, 0.9)`);
+                ctx.save();
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, lavaY, W, lavaH);
+                // Lava surface waves
+                ctx.beginPath();
+                ctx.moveTo(0, lavaY);
+                for (let wx = 0; wx <= W; wx += 20) {
+                    ctx.lineTo(wx, lavaY + Math.sin(wx * 0.04 + t * 3) * 4);
+                }
+                ctx.lineTo(W, lavaY);
+                ctx.closePath();
+                ctx.fillStyle = `rgba(255, 200, 50, 0.6)`;
+                ctx.fill();
+                // Ember dots
+                for (let ei = 0; ei < 6; ei++) {
+                    const ex = (((ei * 137 + t * 40) % W) + W) % W;
+                    const ey = lavaY - 10 - ((t * 30 * (ei + 1)) % 60);
+                    ctx.beginPath();
+                    ctx.arc(ex, ey, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 220, 100, ${0.7 - (lavaY - 10 - ey) / 60})`;
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
             spores.forEach(s => s.render());         // Feature 101
             player.render();
             particles.forEach(p => p.render());
