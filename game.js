@@ -778,6 +778,8 @@ class Player extends Entity {
         this.parachuting = false;
         // Feature 105: Flashlight power-up timer
         this.flashlightTimer = 0;
+        // Feature 145: Bubble Shield power-up timer
+        this.bubbleTimer = 0;
         // Feature 144: Roll Dodge
         this.rollTimer = 0;       // active roll frames (0 = not rolling)
         this.rollCooldown = 0;    // cooldown frames until next roll is allowed
@@ -987,7 +989,9 @@ class Player extends Entity {
         }
 
         // gravity (Feature 100: space level uses reduced gravity)
-        this.vy += GRAVITY * levelGravityMult;
+        // Feature 145: Bubble Shield — slight upward float (reduced gravity while active)
+        const gravMult = (this.bubbleTimer > 0 && !this.isGrounded) ? 0.65 : 1.0;
+        this.vy += GRAVITY * levelGravityMult * gravMult;
         // Feature 132: ground pound overrides MAX_FALL cap — falls much faster
         const effectiveMaxFall = this.groundPounding ? 22 : MAX_FALL * levelGravityMult;
         if (this.vy > effectiveMaxFall) this.vy = effectiveMaxFall;
@@ -1105,6 +1109,8 @@ class Player extends Entity {
         if (this.freezeTimer > 0) this.freezeTimer--;
         // shield break animation timer
         if (this.shieldBreakTimer > 0) this.shieldBreakTimer--;
+        // Feature 145: Bubble Shield timer
+        if (this.bubbleTimer > 0) this.bubbleTimer--;
 
         // Wall slide dust particles
         if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 0.5) {
@@ -1241,6 +1247,7 @@ class Player extends Entity {
             comboCount = 0;
             comboDisplayTimer = 0;
             coinFrenzyActivated = false; // Feature 73
+            this.bubbleTimer = 0; // Feature 145: lose bubble on death
             playSound('hurt');
         }
     }
@@ -1415,6 +1422,34 @@ class Player extends Entity {
             ctx.beginPath();
             ctx.ellipse(this.x + this.w / 2, this.y + this.h / 2, this.w * 0.75, this.h * 0.75, 0, 0, Math.PI * 2);
             ctx.stroke();
+            ctx.restore();
+        }
+
+        // Feature 145: Bubble Shield — translucent bubble around player
+        if (this.bubbleTimer > 0) {
+            const frac = this.bubbleTimer / BUBBLE_DURATION;
+            const pulse = 0.9 + Math.sin(this.bubbleTimer * 0.12) * 0.1;
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            const rad = 20 * pulse;
+            ctx.save();
+            ctx.globalAlpha = Math.min(0.55 * frac + 0.15, 0.55);
+            ctx.fillStyle = 'rgba(150, 220, 255, 0.45)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.7 * pulse;
+            ctx.strokeStyle = '#aaeeff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+            ctx.stroke();
+            // Shine highlight
+            ctx.globalAlpha = 0.5 * pulse;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(cx - 6 * pulse, cy - 6 * pulse, 4 * pulse, 0, Math.PI * 2);
+            ctx.fill();
             ctx.restore();
         }
 
@@ -2265,6 +2300,7 @@ const SCORE_BOOST_DURATION = 480; // Feature 61: 8 seconds at 60fps
 const ELECTRO_DURATION = 360; // Feature 72: 6 seconds at 60fps
 const ELECTRO_RADIUS = 80; // px radius of electric field
 const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
+const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
 const SLOW_MO_FACTOR = 0.4;   // enemies move at 40% speed
 
 class Star {
@@ -3755,6 +3791,72 @@ function checkFlashlightCollisions() {
     flashlights = flashlights.filter(fl => !fl.collected);
 }
 
+// === FEATURE 145: BUBBLE SHIELD — translucent protective bubble ===
+class BubbleShieldPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.12) * 0.1;
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 17 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(150, 230, 255, ${0.2 * pulse})`;
+        ctx.fill();
+        // Bubble surface
+        ctx.beginPath();
+        ctx.arc(cx, cy, 11 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(180, 240, 255, 0.45)';
+        ctx.fill();
+        ctx.strokeStyle = '#aaeeff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Shine highlight
+        ctx.beginPath();
+        ctx.arc(cx - 3 * pulse, cy - 3 * pulse, 3.5 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.fill();
+        // Symbol
+        ctx.font = `bold ${Math.round(11 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,100,140,0.9)';
+        ctx.fillText('🫧', cx, cy + 5);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let bubbleShields = [];
+
+function checkBubbleShieldCollisions() {
+    if (!player) return;
+    for (const b of bubbleShields) {
+        if (b.collected) continue;
+        if (!aabb(player, b)) continue;
+        b.collected = true;
+        player.bubbleTimer = BUBBLE_DURATION;
+        particles.push(new Particle(b.x - 10, b.y - 18, '🫧 ПУЗЫРЬ!', '#aaeeff'));
+        playSound('shield');
+    }
+    bubbleShields = bubbleShields.filter(b => !b.collected);
+}
+
 // === FEATURE 137: HEALING MUSHROOM — green +1 life power-up ===
 class HealingMushroom {
     constructor(x, y) {
@@ -4824,7 +4926,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно'];
 
 const LEVELS = [
     {
@@ -5886,6 +5988,77 @@ const LEVELS = [
         teleporterMarioSpawns: [{ x: 120, y: 430 }, { x: 610, y: 430 }],
         parachuteMarioSpawns:  [{ x: 80,  y: -60 }, { x: 380, y: -80 }, { x: 660, y: -60 }],
         spikeSpawns: [{ x: 142, y: 444, count: 2 }, { x: 498, y: 444, count: 2 }],
+    },
+    // === FEATURE 146: LEVEL 20 — ИНФЕРНО ===
+    {
+        name: 'Инферно',
+        isVolcano: true,
+        platforms: [
+            // Lava-separated floor sections
+            { x: 0,   y: 460, w: 100, h: 40 },
+            { x: 160, y: 460, w: 100, h: 40 },
+            { x: 320, y: 460, w: 100, h: 40 },
+            { x: 480, y: 460, w: 100, h: 40 },
+            { x: 650, y: 460, w: 150, h: 40 },
+            // Mid-low — mix of crumble and ice
+            { x: 40,  y: 375, w: 100, h: 18, crumble: true },
+            { x: 210, y: 360, w: 110, h: 18 },
+            { x: 385, y: 375, w: 100, h: 18, crumble: true },
+            { x: 560, y: 360, w: 110, h: 18 },
+            { x: 700, y: 375, w: 80,  h: 18 },
+            // Mid
+            { x: 10,  y: 275, w: 90,  h: 18 },
+            { x: 185, y: 265, w: 100, h: 18, ice: true },
+            { x: 355, y: 278, w: 100, h: 18 },
+            { x: 525, y: 265, w: 100, h: 18, ice: true },
+            { x: 700, y: 278, w: 80,  h: 18, crumble: true },
+            // Upper
+            { x: 60,  y: 180, w: 110, h: 18 },
+            { x: 270, y: 165, w: 120, h: 18 },
+            { x: 470, y: 175, w: 110, h: 18 },
+            { x: 670, y: 180, w: 90,  h: 18, crumble: true },
+            // Top
+            { x: 150, y: 75,  w: 130, h: 18 },
+            { x: 430, y: 65,  w: 135, h: 18 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 }, { x: 170, y: 430 }, { x: 495, y: 430 }, { x: 665, y: 430 },
+            { x: 220, y: 340 }, { x: 575, y: 340 },
+            { x: 90,  y: 255 }, { x: 540, y: 245 },
+            { x: 285, y: 143 }, { x: 490, y: 40  },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'fast', 'ghost_mario', 'teleporter', 'armored', 'berserker', 'shooter', 'flying'],
+        marioSpeed: 3.4,
+        playerSpawn: { x: 20, y: 430 },
+        coinSpawns: [
+            { x: 30,  y: 435 }, { x: 190, y: 435 }, { x: 345, y: 435 }, { x: 505, y: 435 }, { x: 685, y: 435 },
+            { x: 70,  y: 350 }, { x: 250, y: 335 }, { x: 420, y: 350 }, { x: 600, y: 335 },
+            { x: 25,  y: 250 }, { x: 215, y: 240 }, { x: 385, y: 253 }, { x: 555, y: 240 }, { x: 720, y: 253 },
+            { x: 100, y: 155 }, { x: 310, y: 140 }, { x: 500, y: 150 }, { x: 695, y: 155 },
+            { x: 185, y: 50  }, { x: 310, y: 40  }, { x: 445, y: 40  }, { x: 540, y: 40  },
+        ],
+        doubleCoinSpawns: [{ x: 280, y: 140 }, { x: 510, y: 40 }],
+        tripleCoinSpawns: [{ x: 465, y: 40 }],
+        starSpawns:       [{ x: 175, y: 50  }, { x: 545, y: 40 }],
+        shieldSpawns:     [{ x: 0,   y: 445 }, { x: 755, y: 445 }],
+        bombSpawns:       [{ x: 200, y: 240 }, { x: 550, y: 245 }],
+        springSpawns:     [{ x: 45, y: 446 }, { x: 655, y: 446 }],
+        speedBoostSpawns: [{ x: 340, y: 40 }],
+        magnetSpawns:     [{ x: 450, y: 40 }],
+        freezeSpawns:     [{ x: 100, y: 155 }, { x: 660, y: 155 }],
+        ghostSpawns:      [{ x: 265, y: 140 }],
+        electroSpawns:    [{ x: 420, y: 40  }],
+        slowMoSpawns:     [{ x: 510, y: 40  }],
+        rocketSpawns:     [{ x: 185, y: 40  }, { x: 540, y: 40  }],
+        scoreBoostSpawns: [{ x: 475, y: 40  }],
+        jetpackSpawns:    [{ x: 310, y: 40  }],
+        bubbleSpawns:     [{ x: 460, y: 40  }],
+        checkpointSpawns: [{ x: 380, y: 450 }],
+        flyingMarioSpawns:     [{ x: 120, y: 125 }, { x: 420, y: 110 }, { x: 680, y: 125 }],
+        shooterMarioSpawns:    [{ x: 290, y: 140 }, { x: 490, y: 148 }],
+        teleporterMarioSpawns: [{ x: 110, y: 430 }, { x: 590, y: 430 }],
+        parachuteMarioSpawns:  [{ x: 90,  y: -60 }, { x: 390, y: -80 }, { x: 670, y: -60 }],
+        spikeSpawns: [{ x: 103, y: 444, count: 2 }, { x: 422, y: 444, count: 2 }],
     }
 ];
 
@@ -6847,6 +7020,7 @@ function mirrorLevelData(lvl) {
         tripleCoinSpawns:     (lvl.tripleCoinSpawns     || []).map(s => ({ x: mx(s.x, 14), y: s.y })),
         rainbowCoinSpawns:    (lvl.rainbowCoinSpawns    || []).map(s => ({ x: mx(s.x, 16), y: s.y })), // Feature 138
         healSpawns:           (lvl.healSpawns           || []).map(msp), // Feature 137
+        bubbleSpawns:         (lvl.bubbleSpawns         || []).map(msp), // Feature 145
         portalSpawns: (lvl.portalSpawns || []).map(p => ({
             blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
             orange: { x: mx(p.orange.x, 22), y: p.orange.y },
@@ -6988,6 +7162,15 @@ function loadLevel(index) {
     flashlights = (lvl.flashlightSpawns || []).map(f => new FlashlightPU(f.x, f.y)); // Feature 105
     healingMushrooms = (lvl.healSpawns || []).map(h => new HealingMushroom(h.x, h.y)); // Feature 137
     giftChests = (lvl.giftChestSpawns || []).map(g => new GiftChest(g.x, g.y)); // Feature 143
+    bubbleShields = (lvl.bubbleSpawns || []).map(b => new BubbleShieldPU(b.x, b.y)); // Feature 145
+    // Auto-place 1 bubble shield on levels 6+ if none specified
+    if (!lvl.bubbleSpawns && index >= 5) {
+        const cands = lvl.platforms.filter(p => p.y < 350 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => b.y - a.y);
+        if (cands.length >= 2) {
+            const p = cands[1];
+            bubbleShields = [new BubbleShieldPU(p.x + Math.floor(p.w * 0.5), p.y - 24)];
+        }
+    }
     // Auto-place 1 gift chest on levels 5+ if none specified
     if (!lvl.giftChestSpawns && index >= 4) {
         const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
@@ -7280,6 +7463,28 @@ function checkPlayerMarioCollisions() {
         } else {
             // Side hit — skip if ghost mode active (Feature 54)
             if (player.ghostTimer > 0) continue;
+            // Feature 145: Bubble Shield — absorbs one side hit, kills the enemy
+            if (player.bubbleTimer > 0) {
+                mario.stomp();
+                runStats.enemiesKilled++;
+                onEnemyKilledStreak(mario.x, mario.y);
+                let pts = 100;
+                if (player.scoreBoostTimer > 0) pts *= 2;
+                player.score += pts;
+                totalScore += pts;
+                player.bubbleTimer = 0;
+                player.invincibleTimer = 45;
+                // Bubble pop particles
+                for (let i = 0; i < 8; i++) {
+                    const ang = (Math.PI * 2 / 8) * i;
+                    const bpx = player.x + player.w / 2 + Math.cos(ang) * 18;
+                    const bpy = player.y + player.h / 2 + Math.sin(ang) * 18;
+                    particles.push(new DeathParticle(bpx, bpy, Math.cos(ang) * 2.5, Math.sin(ang) * 2.5, '#aaeeff', 3));
+                }
+                particles.push(new Particle(player.x, player.y - 14, '🫧 ПОП! +' + pts, '#88ddff'));
+                playSound('shield');
+                continue;
+            }
             if (player.shieldActive) {
                 player.shieldActive = false;
                 player.shieldBreakTimer = 20;
@@ -7504,6 +7709,7 @@ function getBackgroundTheme() {
     if (lvl && lvl.lowGravity) return 'space';
     if (lvl && lvl.isMatrix) return 'matrix'; // Feature 133
     if (lvl && lvl.isStorm) return 'night'; // Feature 142: storm level uses dark sky
+    if (lvl && lvl.isVolcano) return 'volcano'; // Feature 146
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -7627,6 +7833,47 @@ function paintSolidBackground(theme) {
         groundGrad.addColorStop(1, '#180e04');
         ctx.fillStyle = groundGrad;
         ctx.fillRect(0, 440, W, H - 440);
+    } else if (theme === 'volcano') {
+        // Feature 146: Volcano / Inferno level — fiery dark red/orange sky
+        const volGrad = ctx.createLinearGradient(0, 0, 0, H);
+        volGrad.addColorStop(0, '#1a0000');
+        volGrad.addColorStop(0.35, '#3d0800');
+        volGrad.addColorStop(0.7, '#6b1500');
+        volGrad.addColorStop(1, '#8f2200');
+        ctx.fillStyle = volGrad;
+        ctx.fillRect(0, 0, W, H);
+        // Ember / lava-glow dots
+        for (let i = 0; i < 50; i++) {
+            const ex = (i * 157.3 + 19) % W;
+            const ey = (i * 89.7 + 37) % (H * 0.75);
+            const bright = 0.25 + (i % 5) * 0.1;
+            ctx.globalAlpha = bright;
+            ctx.fillStyle = i % 4 === 0 ? '#ff8800' : i % 4 === 1 ? '#ff4400' : i % 4 === 2 ? '#ffcc00' : '#ff2200';
+            ctx.fillRect(ex, ey, i % 3 === 0 ? 2 : 1, i % 3 === 0 ? 2 : 1);
+        }
+        // Distant volcano silhouette
+        ctx.globalAlpha = 0.28;
+        ctx.fillStyle = '#220000';
+        ctx.beginPath();
+        ctx.moveTo(0, H);
+        ctx.lineTo(60, 240); ctx.lineTo(150, 320);
+        ctx.lineTo(250, 200); ctx.lineTo(340, 310);
+        ctx.lineTo(400, H); ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(400, H);
+        ctx.lineTo(480, 220); ctx.lineTo(570, 300);
+        ctx.lineTo(660, 185); ctx.lineTo(750, 280);
+        ctx.lineTo(W, H); ctx.closePath();
+        ctx.fill();
+        // Glowing lava crack near bottom
+        const lavaCrackGrad = ctx.createLinearGradient(0, H - 50, 0, H);
+        lavaCrackGrad.addColorStop(0, 'rgba(255,80,0,0.0)');
+        lavaCrackGrad.addColorStop(1, 'rgba(255,80,0,0.35)');
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = lavaCrackGrad;
+        ctx.fillRect(0, H - 50, W, 50);
+        ctx.globalAlpha = 1;
     } else if (theme === 'coincave') {
         const caveGrad = ctx.createLinearGradient(0, 0, 0, H);
         caveGrad.addColorStop(0, '#0a0010');
@@ -8295,6 +8542,39 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffcc88';
         ctx.fillText(player.jetpackThrust ? '🛸 ДЖЕТПАК ▲' : '🛸 ДЖЕТПАК', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 145: Bubble Shield timer bar
+    if (player && player.bubbleTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0);
+        const frac = player.bubbleTimer / BUBBLE_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.01) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(100, 210, 255, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ccf0ff';
+        ctx.fillText('🫧 ПУЗЫРЬ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -9866,6 +10146,8 @@ function update() {
             checkHealingMushroomCollisions();         // Feature 137
             giftChests = giftChests.filter(gc => gc.update()); // Feature 143
             checkGiftChestCollisions();               // Feature 143
+            bubbleShields = bubbleShields.filter(b => b.update()); // Feature 145
+            checkBubbleShieldCollisions();            // Feature 145
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -10395,6 +10677,7 @@ function render() {
             flashlights.forEach(fl => fl.render()); // Feature 105
             healingMushrooms.forEach(hm => hm.render()); // Feature 137
             giftChests.forEach(gc => gc.render());    // Feature 143
+            bubbleShields.forEach(b => b.render());   // Feature 145
             spores.forEach(s => s.render());         // Feature 101
             player.render();
             particles.forEach(p => p.render());
