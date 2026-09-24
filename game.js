@@ -821,6 +821,8 @@ class Player extends Entity {
         this.reflectTimer = 0;
         // Feature 173: Earthquake Stomp timer
         this.quakeTimer = 0;
+        // Feature 181: Poison Cloud timer
+        this.poisonTimer = 0;
         // Feature 149: Magma Floor damage cooldown
         this.magmaDmgTimer = 0;
         // Feature 144: Roll Dodge
@@ -1111,6 +1113,9 @@ class Player extends Entity {
         this.y += this.vy;
         this.resolveCollisionsY();
         if (this.quakeTimer > 0 && !_prevGrounded && this.isGrounded) triggerQuake(this.x + this.w / 2, this.y + this.h); // Feature 173
+        if (this.poisonTimer > 0 && _prevGrounded && !this.isGrounded && activePoisonClouds.length < 6) { // Feature 181: leave cloud on jump
+            activePoisonClouds.push(new PoisonCloud(this.x + this.w / 2, this.y + this.h + 4));
+        }
 
         // clamp to canvas
         if (this.x < 0) this.x = 0;
@@ -1172,6 +1177,7 @@ class Player extends Entity {
         if (this.spikeBootsTimer > 0) this.spikeBootsTimer--; // Feature 163
         if (this.reflectTimer > 0) this.reflectTimer--; // Feature 171
         if (this.quakeTimer > 0) this.quakeTimer--;     // Feature 173
+        if (this.poisonTimer > 0) this.poisonTimer--;   // Feature 181
         if (this.vortexCoinTimer > 0) this.vortexCoinTimer--; // Feature 169
         if (this.enemyMirrorTimer > 0) this.enemyMirrorTimer--; // Feature 175
         if (this.blastStompTimer > 0) this.blastStompTimer--;   // Feature 177
@@ -1347,6 +1353,7 @@ class Player extends Entity {
             this.spikeBootsTimer = 0; // Feature 163: lose spike boots on death
             this.reflectTimer = 0; // Feature 171: lose reflect shield on death
             this.quakeTimer = 0;   // Feature 173: lose quake stomp on death
+            this.poisonTimer = 0;  // Feature 181: lose poison cloud on death
             this.vortexCoinTimer = 0; // Feature 169: lose vortex on death
             this.enemyMirrorTimer = 0; // Feature 175: lose mirror on death
             this.blastStompTimer = 0;  // Feature 177: lose blast stomp on death
@@ -1622,6 +1629,24 @@ class Player extends Entity {
             ctx.stroke();
             ctx.globalAlpha = 0.18 * frac * pulse;
             ctx.fillStyle = '#ffcc44';
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // Feature 181: Poison Cloud — green misty aura on feet
+        if (this.poisonTimer > 0) {
+            const pulse = 0.6 + Math.sin(this.poisonTimer * 0.14) * 0.3;
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h;
+            ctx.save();
+            ctx.globalAlpha = 0.5 * pulse;
+            ctx.strokeStyle = '#44ff44';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, 22 * pulse, 8 * pulse, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = 0.22 * pulse;
+            ctx.fillStyle = '#00cc44';
             ctx.fill();
             ctx.restore();
         }
@@ -2984,6 +3009,8 @@ const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
 const JUMP_BOOST_DURATION = 480; // Feature 148: 8 seconds at 60fps
 const REFLECT_SHIELD_DURATION = 480; // Feature 171: 8 seconds at 60fps
 const QUAKE_DURATION = 360; // Feature 173: Earthquake Stomp — 6 seconds at 60fps
+const POISON_DURATION = 480; // Feature 181: Poison Cloud — 8 seconds at 60fps
+const POISON_CLOUD_LIFE = 240; // Feature 181: each cloud lasts 4 seconds
 const SPIKE_BOOTS_DURATION = 600; // Feature 163: 10 seconds at 60fps
 const SPIKE_BOOTS_RADIUS = 220;   // Feature 163: chain stomp search radius px
 const SPIKE_BOOTS_MAX_CHAIN = 3;  // Feature 163: max chain bounces per stomp
@@ -4924,6 +4951,95 @@ function updateTurrets() {
     turretBolts = turretBolts.filter(b => b.alive);
 }
 
+// === FEATURE 181: POISON CLOUD — player leaves toxic gas clouds when jumping, kills enemies ===
+class PoisonCloudPU {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.w = 22; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.11) * 0.1;
+        ctx.save();
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 18 * pulse);
+        grd.addColorStop(0, 'rgba(40,255,80,0.45)');
+        grd.addColorStop(1, 'rgba(0,200,30,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath(); ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2); ctx.fill();
+        ctx.font = `bold ${Math.round(14 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('☠', cx, cy + 5);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+class PoisonCloud {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.radius = 42;
+        this.life = POISON_CLOUD_LIFE; this.maxLife = POISON_CLOUD_LIFE;
+        this.animTimer = 0;
+        this.hitEnemies = new Set();
+    }
+    update() {
+        this.life--;
+        this.animTimer++;
+        for (const m of marios) {
+            if (!m.isAlive || this.hitEnemies.has(m)) continue;
+            const dx = (m.x + m.w / 2) - this.x;
+            const dy = (m.y + m.h / 2) - this.y;
+            if (Math.sqrt(dx * dx + dy * dy) < this.radius) {
+                this.hitEnemies.add(m);
+                m.stomp();
+                const pts = 80;
+                totalScore += pts;
+                if (player) player.score += pts;
+                addScorePopup(m.x + m.w / 2, m.y, '☠ +' + pts);
+            }
+        }
+        return this.life > 0;
+    }
+    render() {
+        const frac = this.life / this.maxLife;
+        const t = this.animTimer;
+        const pulse = 0.65 + Math.sin(t * 0.13) * 0.2;
+        ctx.save();
+        for (let i = 0; i < 3; i++) {
+            const r = this.radius * (0.55 + i * 0.22) * pulse;
+            ctx.globalAlpha = frac * 0.28 * (1 - i * 0.09) * pulse;
+            ctx.fillStyle = i === 0 ? '#44ff88' : i === 1 ? '#22cc44' : '#00aa22';
+            ctx.beginPath(); ctx.arc(this.x, this.y, r, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = frac * 0.7;
+        ctx.font = `bold ${Math.round(11 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('☠', this.x, this.y + 4);
+        ctx.textAlign = 'left';
+        ctx.globalAlpha = 1;
+        ctx.restore();
+    }
+}
+
+let poisonCloudItems = [];
+let activePoisonClouds = [];
+
+function checkPoisonCloudPUCollisions() {
+    if (!player) return;
+    for (const pc of poisonCloudItems) {
+        if (pc.collected || !aabb(player, pc)) continue;
+        pc.collected = true;
+        player.poisonTimer = POISON_DURATION;
+        particles.push(new Particle(pc.x, pc.y - 10, '☠ ГАЗ!', '#44ff88'));
+        playSound('levelup');
+    }
+    poisonCloudItems = poisonCloudItems.filter(pc => !pc.collected);
+}
+
 function checkBlastStompPUCollisions() {
     if (!player) return;
     for (const bp of blastStompPUs) {
@@ -6452,7 +6568,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк', '🌊 Океан', '🏜 Пустыня'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк', '🌊 Океан', '🏜 Пустыня', '🏟 Арена'];
 
 const LEVELS = [
     {
@@ -8301,6 +8417,87 @@ const LEVELS = [
         ],
         checkpointSpawns: [{ x: 395, y: 450 }],
     },
+    // === LEVEL 30: АРЕНА === Feature 182
+    {
+        name: 'Арена',
+        isArena: true,
+        platforms: [
+            // Stadium floor — two halves with a central pit
+            { x: 0,   y: 460, w: 310, h: 40 },
+            { x: 490, y: 460, w: 310, h: 40 },
+            // Central pedestal spanning the gap
+            { x: 355, y: 440, w: 90,  h: 20 },
+            // First ring ledges
+            { x: 30,  y: 385, w: 110, h: 14 },
+            { x: 190, y: 375, w: 100, h: 14, moveAxis: 'x', moveRange: 50, moveSpeed: 1.5 },
+            { x: 350, y: 370, w: 100, h: 14 },
+            { x: 510, y: 375, w: 100, h: 14, moveAxis: 'x', moveRange: 50, moveSpeed: 1.5 },
+            { x: 660, y: 385, w: 110, h: 14 },
+            // Second ring ledges
+            { x: 80,  y: 300, w:  90, h: 14 },
+            { x: 250, y: 290, w: 100, h: 14, crumble: true },
+            { x: 400, y: 285, w:  95, h: 14, ice: true },
+            { x: 550, y: 290, w: 100, h: 14, crumble: true },
+            { x: 640, y: 300, w:  90, h: 14 },
+            // Upper ring
+            { x: 40,  y: 215, w: 100, h: 14, moveAxis: 'y', moveRange: 25, moveSpeed: 1.2 },
+            { x: 200, y: 205, w: 130, h: 14 },
+            { x: 470, y: 205, w: 130, h: 14 },
+            { x: 660, y: 215, w: 100, h: 14, moveAxis: 'y', moveRange: 25, moveSpeed: 1.2 },
+            // Top balcony
+            { x: 120, y: 130, w: 130, h: 14 },
+            { x: 310, y: 115, w: 180, h: 14, pulse: true },
+            { x: 550, y: 130, w: 130, h: 14 },
+        ],
+        marioSpawns: [
+            { x: 60,  y: 440 }, { x: 180, y: 440 }, { x: 520, y: 440 }, { x: 650, y: 440 },
+            { x: 50,  y: 365 }, { x: 200, y: 355 }, { x: 380, y: 350 }, { x: 530, y: 355 }, { x: 670, y: 365 },
+            { x: 100, y: 280 }, { x: 420, y: 265 }, { x: 660, y: 280 },
+        ],
+        marioTypes: ['fast', 'berserker', 'armored', 'fast', 'berserker', 'armored', 'ghost_mario', 'berserker', 'fast', 'teleporter', 'armored', 'berserker'],
+        shooterMarioSpawns: [{ x: 270, y: 270 }, { x: 570, y: 270 }],
+        flyingMarioSpawns:  [{ x: 320, y: 95 }, { x: 660, y: 110 }],
+        parachuteMarioSpawns: [{ x: 150, y: 60 }, { x: 540, y: 60 }],
+        marioSpeed: 3.5,
+        playerSpawn: { x: 20, y: 432 },
+        coinSpawns: [
+            { x: 70,  y: 365 }, { x: 200, y: 355 }, { x: 390, y: 350 },
+            { x: 530, y: 355 }, { x: 670, y: 365 }, { x: 420, y: 265 },
+        ],
+        doubleCoinSpawns:    [{ x: 350, y: 95  }, { x: 510, y: 110 }],
+        tripleCoinSpawns:    [{ x: 640, y: 110 }],
+        rainbowCoinSpawns:   [{ x: 400, y: 95  }],
+        lightningCoinSpawns: [{ x: 145, y: 110 }],
+        explodingCoinSpawns: [{ x: 240, y: 185 }],
+        warpCoinSpawns:      [{ x: 660, y: 200 }, { x: 270, y: 185 }],
+        vortexCoinSpawns:    [{ x: 355, y: 265 }, { x: 110, y: 215 }],
+        starSpawns:          [{ x: 130, y: 110 }, { x: 570, y: 110 }],
+        shieldSpawns:        [{ x: 10,  y: 444 }, { x: 780, y: 444 }],
+        bombSpawns:          [{ x: 295, y: 185 }, { x: 510, y: 185 }],
+        speedBoostSpawns:    [{ x: 390, y: 95  }],
+        magnetSpawns:        [{ x: 445, y: 95  }],
+        freezeSpawns:        [{ x: 150, y: 280 }, { x: 670, y: 200 }],
+        ghostSpawns:         [{ x: 330, y: 265 }],
+        electroSpawns:       [{ x: 430, y: 95  }],
+        slowMoSpawns:        [{ x: 485, y: 95  }],
+        rocketSpawns:        [{ x: 175, y: 110 }, { x: 610, y: 110 }],
+        scoreBoostSpawns:    [{ x: 340, y: 95  }],
+        jetpackSpawns:       [{ x: 460, y: 95  }],
+        bubbleSpawns:        [{ x: 365, y: 265 }],
+        spikeBootsSpawns:    [{ x: 475, y: 95  }],
+        healSpawns:          [{ x: 120, y: 110 }],
+        blastSpawns:         [{ x: 350, y: 95  }, { x: 590, y: 110 }],
+        mirrorSpawns:        [{ x: 420, y: 95  }],
+        quakeSpawns:         [{ x: 500, y: 95  }],
+        turretSpawns:        [{ x: 335, y: 95  }, { x: 625, y: 110 }],
+        poisonSpawns:        [{ x: 405, y: 95  }, { x: 490, y: 95  }],
+        spikeSpawns:         [{ x: 330, y: 444, count: 2 }],
+        barrelSpawns: [
+            { x: 50,  y: 424 }, { x: 280, y: 424 }, { x: 680, y: 424 },
+            { x: 70,  y: 355 }, { x: 650, y: 355 },
+        ],
+        checkpointSpawns: [{ x: 395, y: 430 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -9365,7 +9562,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; blastStompPUs = []; autoTurretPUs = []; placedTurrets = []; turretBolts = []; // Feature 161/162/163/165/167/169/171/173/175/177/179: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; blastStompPUs = []; autoTurretPUs = []; placedTurrets = []; turretBolts = []; poisonCloudItems = []; activePoisonClouds = []; // Feature 161/162/163/165/167/169/171/173/175/177/179/181: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -9555,6 +9752,17 @@ function loadLevel(index) {
             autoTurretPUs = [new AutoTurretPU(p.x + Math.floor(p.w * 0.5), p.y - 26)];
         }
     }
+
+    // Feature 181: Poison Cloud PU — load from spawns or auto-place on levels 5+
+    poisonCloudItems = (lvl.poisonSpawns || []).map(p => new PoisonCloudPU(p.x, p.y));
+    if (!lvl.poisonSpawns && index >= 4) {
+        const cands = lvl.platforms.filter(p => p.y < 360 && p.w >= 50 && !p.crumble).sort((a, b) => a.y - b.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.6)];
+            poisonCloudItems = [new PoisonCloudPU(p.x + Math.floor(p.w * 0.45), p.y - 26)];
+        }
+    }
+    activePoisonClouds = [];
 
     // Feature 163: Auto-place 1 spike boots power-up on levels 5+
     spikeBoots = (lvl.spikeBootsSpawns || []).map(s => new SpikeBootsPU(s.x, s.y));
@@ -10135,6 +10343,7 @@ function getBackgroundTheme() {
     if (lvl && lvl.isCyber) return 'cyber'; // Feature 176
     if (lvl && lvl.isOcean) return 'ocean'; // Feature 178
     if (lvl && lvl.isDesert) return 'desert'; // Feature 180
+    if (lvl && lvl.isArena)  return 'arena';  // Feature 182
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -10346,6 +10555,8 @@ const BG_THEMES = {
     ocean: { sky: ['#001428', '#002850', '#004878'], mountain: '#003a60', hillLight: '#004060', hillDark: '#001830', cloudAlpha: 0.0 },
     // Feature 180: Desert — warm amber/orange sky with sand-dune silhouettes
     desert: { sky: ['#1a0800', '#8c3e00', '#e8800a'], mountain: '#6b3800', hillLight: '#5a3a0a', hillDark: '#3d2208', cloudAlpha: 0.15 },
+    // Feature 182: Arena — dark stadium night sky with purple/gold atmosphere
+    arena: { sky: ['#0a0010', '#15002a', '#200040'], mountain: '#1a0030', hillLight: '#2a0050', hillDark: '#0f0020', cloudAlpha: 0.0 },
 };
 const BG_MARGIN = 80; // extra width on each side of parallax layers
 
@@ -10516,6 +10727,49 @@ function buildBackgroundCache(theme) {
                 ctx.globalAlpha = 0.06 + (i % 3) * 0.05;
                 ctx.fillStyle = '#ffcc44';
                 ctx.beginPath(); ctx.arc(hx, hy, 1.5 + (i % 3), 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+        if (theme === 'arena') {
+            // Feature 182: Arena — stadium spotlights from ceiling + crowd silhouettes
+            // Ground glow (arena sand/floor)
+            const floorGlow = ctx.createLinearGradient(0, H * 0.7, 0, H);
+            floorGlow.addColorStop(0, 'rgba(180,120,0,0)');
+            floorGlow.addColorStop(0.5, 'rgba(200,140,0,0.1)');
+            floorGlow.addColorStop(1, 'rgba(220,160,0,0.2)');
+            ctx.fillStyle = floorGlow;
+            ctx.fillRect(0, 0, W, H);
+            // Spotlight beams from ceiling
+            const spotColors = ['rgba(255,220,80,0.08)', 'rgba(200,100,255,0.08)', 'rgba(80,180,255,0.07)'];
+            const spotPositions = [0.18, 0.5, 0.82];
+            for (let s = 0; s < 3; s++) {
+                const sx = W * spotPositions[s];
+                ctx.save();
+                ctx.globalAlpha = 1;
+                const beamGrad = ctx.createRadialGradient(sx, 0, 5, sx, H * 0.6, W * 0.22);
+                beamGrad.addColorStop(0, spotColors[s].replace('0.0', '0.2'));
+                beamGrad.addColorStop(0.6, spotColors[s]);
+                beamGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = beamGrad;
+                ctx.beginPath();
+                ctx.moveTo(sx - 6, 0);
+                ctx.lineTo(sx + 6, 0);
+                ctx.lineTo(sx + W * 0.22, H * 0.65);
+                ctx.lineTo(sx - W * 0.22, H * 0.65);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+            // Crowd silhouettes along top
+            ctx.globalAlpha = 0.35;
+            ctx.fillStyle = '#1a0035';
+            for (let i = 0; i < 32; i++) {
+                const hx = i * (W / 32) + 5;
+                const hy = 16 + (i % 3) * 5;
+                ctx.beginPath();
+                ctx.arc(hx, hy, 5, Math.PI, 0);
+                ctx.fillRect(hx - 4, hy, 8, 10);
+                ctx.fill();
             }
             ctx.globalAlpha = 1;
         }
@@ -11471,6 +11725,47 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffcc88';
         ctx.fillText('💥 ВЗРЫВ-СТОМП', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 181: Poison Cloud timer bar
+    if (player && player.poisonTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0)
+            + (player.droneTimer > 0 ? 18 : 0)
+            + (player.spikeBootsTimer > 0 ? 18 : 0)
+            + (player.vortexCoinTimer > 0 ? 18 : 0)
+            + (player.reflectTimer > 0 ? 18 : 0)
+            + (player.quakeTimer > 0 ? 18 : 0)
+            + (player.enemyMirrorTimer > 0 ? 18 : 0)
+            + (player.blastStompTimer > 0 ? 18 : 0);
+        const frac = player.poisonTimer / POISON_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.017) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(50, 220, 80, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#88ffaa';
+        ctx.fillText('☠ ГАЗ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -13107,6 +13402,9 @@ function update() {
             autoTurretPUs = autoTurretPUs.filter(tp => tp.update());  // Feature 179
             checkAutoTurretPUCollisions();                             // Feature 179
             updateTurrets();                                           // Feature 179
+            poisonCloudItems = poisonCloudItems.filter(p => p.update());   // Feature 181
+            activePoisonClouds = activePoisonClouds.filter(c => c.update()); // Feature 181
+            checkPoisonCloudPUCollisions();                            // Feature 181
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -13698,6 +13996,8 @@ function render() {
             autoTurretPUs.forEach(tp => tp.render());    // Feature 179
             placedTurrets.forEach(t => t.render());      // Feature 179
             turretBolts.forEach(b => b.render());        // Feature 179
+            poisonCloudItems.forEach(p => p.render());   // Feature 181
+            activePoisonClouds.forEach(c => c.render()); // Feature 181
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
