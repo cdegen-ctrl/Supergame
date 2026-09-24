@@ -817,6 +817,8 @@ class Player extends Entity {
         this.bubbleTimer = 0;
         // Feature 148: Jump Boost power-up timer
         this.jumpBoostTimer = 0;
+        // Feature 171: Reflect Shield timer
+        this.reflectTimer = 0;
         // Feature 149: Magma Floor damage cooldown
         this.magmaDmgTimer = 0;
         // Feature 144: Roll Dodge
@@ -1162,6 +1164,7 @@ class Player extends Entity {
         // Feature 148: Jump Boost timer
         if (this.jumpBoostTimer > 0) this.jumpBoostTimer--;
         if (this.spikeBootsTimer > 0) this.spikeBootsTimer--; // Feature 163
+        if (this.reflectTimer > 0) this.reflectTimer--; // Feature 171
         if (this.vortexCoinTimer > 0) this.vortexCoinTimer--; // Feature 169
         // Feature 149: Magma Floor — damage player when near bottom on volcano levels
         if (this.magmaDmgTimer > 0) this.magmaDmgTimer--;
@@ -1333,6 +1336,7 @@ class Player extends Entity {
             this.jumpBoostTimer = 0; // Feature 148: lose jump boost on death
             this.droneTimer = 0; // Feature 161: lose drone on death
             this.spikeBootsTimer = 0; // Feature 163: lose spike boots on death
+            this.reflectTimer = 0; // Feature 171: lose reflect shield on death
             this.vortexCoinTimer = 0; // Feature 169: lose vortex on death
             playSound('hurt');
         }
@@ -1577,6 +1581,35 @@ class Player extends Entity {
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
             ctx.arc(cx - 6 * pulse, cy - 6 * pulse, 4 * pulse, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // Feature 171: Reflect Shield — orange-gold hexagonal aura
+        if (this.reflectTimer > 0) {
+            const frac = this.reflectTimer / REFLECT_SHIELD_DURATION;
+            const t = this.reflectTimer;
+            const pulse = 0.88 + Math.sin(t * 0.13) * 0.12;
+            const cx = this.x + this.w / 2;
+            const cy = this.y + this.h / 2;
+            ctx.save();
+            // Rotating hexagonal outline
+            ctx.translate(cx, cy);
+            ctx.rotate(t * 0.04);
+            ctx.globalAlpha = Math.min(0.5 * frac + 0.2, 0.7);
+            ctx.strokeStyle = '#ffaa22';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (i / 6) * Math.PI * 2;
+                const r = 22 * pulse;
+                if (i === 0) ctx.moveTo(Math.cos(angle) * r, Math.sin(angle) * r);
+                else ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.globalAlpha = 0.18 * frac * pulse;
+            ctx.fillStyle = '#ffcc44';
             ctx.fill();
             ctx.restore();
         }
@@ -2893,6 +2926,7 @@ const ELECTRO_RADIUS = 80; // px radius of electric field
 const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
 const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
 const JUMP_BOOST_DURATION = 480; // Feature 148: 8 seconds at 60fps
+const REFLECT_SHIELD_DURATION = 480; // Feature 171: 8 seconds at 60fps
 const SPIKE_BOOTS_DURATION = 600; // Feature 163: 10 seconds at 60fps
 const SPIKE_BOOTS_RADIUS = 220;   // Feature 163: chain stomp search radius px
 const SPIKE_BOOTS_MAX_CHAIN = 3;  // Feature 163: max chain bounces per stomp
@@ -4450,6 +4484,76 @@ class BubbleShieldPU {
 
 let bubbleShields = [];
 
+// === FEATURE 171: REFLECT SHIELD — fireballs bounce back and kill shooters ===
+class ReflectShieldPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.12) * 0.1;
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 180, 40, ${0.25 * pulse})`;
+        ctx.fill();
+        // Hexagonal body (rotating)
+        ctx.translate(cx, cy);
+        ctx.rotate(t * 0.035);
+        ctx.strokeStyle = '#ffaa22';
+        ctx.lineWidth = 2.5;
+        ctx.fillStyle = `rgba(255, 200, 60, ${0.35 * pulse})`;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (i / 6) * Math.PI * 2;
+            const r = 10 * pulse;
+            if (i === 0) ctx.moveTo(Math.cos(angle) * r, Math.sin(angle) * r);
+            else ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // Icon
+        ctx.font = `bold ${Math.round(10 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.rotate(-(t * 0.035)); // un-rotate text
+        ctx.fillText('🪃', 0, 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let reflectShields = [];
+
+function checkReflectShieldCollisions() {
+    if (!player) return;
+    for (const rs of reflectShields) {
+        if (rs.collected) continue;
+        if (!aabb(player, rs)) continue;
+        rs.collected = true;
+        player.reflectTimer = REFLECT_SHIELD_DURATION;
+        particles.push(new Particle(rs.x, rs.y - 10, '🪃 ОТРАЖЕНИЕ!', '#ffcc44'));
+        playSound('levelup');
+    }
+    reflectShields = reflectShields.filter(rs => !rs.collected);
+}
+
 function checkBubbleShieldCollisions() {
     if (!player) return;
     for (const b of bubbleShields) {
@@ -4835,6 +4939,15 @@ function checkFireballCollisions() {
     for (const fb of fireballs) {
         if (!fb.alive) continue;
         if (!aabb(player, fb)) continue;
+        // Feature 171: Reflect Shield — bounce fireball back
+        if (player.reflectTimer > 0 && !fb.reflected) {
+            fb.vx = -fb.vx * 1.3;
+            fb.vy = -Math.abs(fb.vy) - 1;
+            fb.reflected = true;
+            particles.push(new Particle(fb.x, fb.y, '↩ ОТРАЖЕНО!', '#ffcc44'));
+            playSound('hurt');
+            continue;
+        }
         fb.alive = false;
         if (player.invincibleTimer > 0 || player.starTimer > 0) continue;
         if (player.shieldActive) {
@@ -4845,6 +4958,24 @@ function checkFireballCollisions() {
             playSound('hurt');
         } else {
             player.die();
+        }
+    }
+    fireballs = fireballs.filter(fb => fb.alive);
+    // Feature 171: reflected fireballs can kill shooters
+    for (const fb of fireballs) {
+        if (!fb.alive || !fb.reflected) continue;
+        for (const m of marios) {
+            if (!m.isAlive || m.type !== 'shooter') continue;
+            if (aabb(fb, m)) {
+                fb.alive = false;
+                m.stomp();
+                const pts = 200;
+                if (player) { player.score += pts; }
+                totalScore += pts;
+                addScorePopup(m.x, m.y, pts);
+                particles.push(new Particle(m.x, m.y - 15, '🎯 +200', '#ffcc44'));
+                break;
+            }
         }
     }
     fireballs = fireballs.filter(fb => fb.alive);
@@ -5878,7 +6009,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет'];
 
 const LEVELS = [
     {
@@ -7324,6 +7455,87 @@ const LEVELS = [
         ],
         checkpointSpawns: [{ x: 400, y: 450 }],
     },
+    // === LEVEL 25: РАССВЕТ (Feature 172) — dawn sky arena, all enemies/platforms, reflect shields ===
+    {
+        name: 'Рассвет',
+        isDawn: true,
+        platforms: [
+            // Ground sections with gaps
+            { x: 0,   y: 460, w: 160, h: 40 },
+            { x: 240, y: 460, w: 110, h: 40 },
+            { x: 440, y: 460, w: 110, h: 40 },
+            { x: 640, y: 460, w: 160, h: 40 },
+            // Low tier
+            { x: 70,  y: 375, w: 120, h: 16 },
+            { x: 285, y: 362, w: 95,  h: 16, moveAxis: 'x', moveRange: 80, moveSpeed: 1.2 },
+            { x: 470, y: 370, w: 95,  h: 16, crumble: true },
+            { x: 640, y: 365, w: 105, h: 16, ice: true },
+            // Mid tier
+            { x: 15,  y: 275, w: 125, h: 16, pulse: true },
+            { x: 225, y: 262, w: 95,  h: 16, moveAxis: 'y', moveRange: 55, moveSpeed: 1.1 },
+            { x: 415, y: 270, w: 95,  h: 16, crumble: true },
+            { x: 605, y: 265, w: 115, h: 16 },
+            // Upper tier
+            { x: 55,  y: 178, w: 115, h: 16, ice: true },
+            { x: 260, y: 165, w: 105, h: 16, moveAxis: 'x', moveRange: 95, moveSpeed: 1.4 },
+            { x: 460, y: 175, w: 105, h: 16, pulse: true },
+            { x: 655, y: 180, w: 95,  h: 16, crumble: true },
+            // Top tier
+            { x: 100, y: 80,  w: 150, h: 16 },
+            { x: 330, y: 66,  w: 140, h: 16 },
+            { x: 565, y: 80,  w: 115, h: 16 },
+        ],
+        marioSpawns: [
+            { x: 15,  y: 432 }, { x: 250, y: 432 },
+            { x: 450, y: 432 }, { x: 655, y: 432 },
+            { x: 300, y: 340 }, { x: 650, y: 343 },
+            { x: 25,  y: 253 }, { x: 615, y: 243 },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'fast', 'ghost_mario', 'teleporter', 'berserker', 'armored'],
+        shooterMarioSpawns: [{ x: 110, y: 158 }, { x: 480, y: 155 }],
+        flyingMarioSpawns:  [{ x: 180, y: 98  }, { x: 540, y: 88  }],
+        parachuteMarioSpawns: [{ x: 260, y: -55 }, { x: 610, y: -70 }],
+        marioSpeed: 3.3,
+        playerSpawn: { x: 15, y: 432 },
+        reflectSpawns:       [{ x: 370, y: 44 }, { x: 130, y: 62 }],
+        coinSpawns: [
+            { x: 25,  y: 442 }, { x: 255, y: 442 }, { x: 455, y: 442 }, { x: 660, y: 442 },
+            { x: 90,  y: 353 }, { x: 315, y: 340 }, { x: 510, y: 348 }, { x: 670, y: 343 },
+            { x: 35,  y: 253 }, { x: 250, y: 240 }, { x: 445, y: 248 }, { x: 630, y: 243 },
+            { x: 85,  y: 156 }, { x: 295, y: 143 }, { x: 495, y: 153 }, { x: 685, y: 158 },
+            { x: 140, y: 58  }, { x: 380, y: 44  }, { x: 620, y: 58  },
+        ],
+        doubleCoinSpawns:    [{ x: 360, y: 44  }, { x: 525, y: 58  }],
+        tripleCoinSpawns:    [{ x: 580, y: 58  }],
+        rainbowCoinSpawns:   [{ x: 645, y: 58  }],
+        lightningCoinSpawns: [{ x: 160, y: 58  }],
+        explodingCoinSpawns: [{ x: 210, y: 58  }],
+        warpCoinSpawns:      [{ x: 700, y: 58  }, { x: 250, y: 58  }],
+        vortexCoinSpawns:    [{ x: 370, y: 44  }, { x: 130, y: 62  }],
+        starSpawns:          [{ x: 150, y: 58  }, { x: 600, y: 58  }],
+        shieldSpawns:        [{ x: 5,   y: 444 }, { x: 745, y: 444 }],
+        bombSpawns:          [{ x: 280, y: 143 }, { x: 500, y: 153 }],
+        springSpawns:        [{ x: 5,   y: 444 }, { x: 745, y: 444 }],
+        speedBoostSpawns:    [{ x: 390, y: 44  }],
+        magnetSpawns:        [{ x: 450, y: 44  }],
+        freezeSpawns:        [{ x: 120, y: 158 }, { x: 680, y: 156 }],
+        ghostSpawns:         [{ x: 305, y: 143 }],
+        electroSpawns:       [{ x: 430, y: 44  }],
+        slowMoSpawns:        [{ x: 510, y: 44  }],
+        rocketSpawns:        [{ x: 185, y: 44  }, { x: 580, y: 58  }],
+        scoreBoostSpawns:    [{ x: 340, y: 44  }],
+        jetpackSpawns:       [{ x: 465, y: 44  }],
+        bubbleSpawns:        [{ x: 355, y: 66  }],
+        spikeBootsSpawns:    [{ x: 475, y: 44  }],
+        healSpawns:          [{ x: 120, y: 62  }],
+        spikeSpawns:         [{ x: 330, y: 444, count: 2 }, { x: 530, y: 444, count: 3 }],
+        barrelSpawns: [
+            { x: 60,  y: 424 }, { x: 470, y: 424 }, { x: 670, y: 424 },
+            { x: 90,  y: 340 }, { x: 660, y: 340 },
+            { x: 130, y: 142 }, { x: 485, y: 138 },
+        ],
+        checkpointSpawns: [{ x: 410, y: 450 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -8388,7 +8600,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; // Feature 161/162/163/165/167/169: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; // Feature 161/162/163/165/167/169/171: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -8526,6 +8738,16 @@ function loadLevel(index) {
         if (cands.length >= 2) {
             const p = cands[Math.floor(cands.length * 0.45)];
             vortexCoins = [new VortexCoin(p.x + Math.floor(p.w * 0.5), p.y - 26)];
+        }
+    }
+
+    // Feature 171: Reflect Shield — load from spawns or auto-place on levels 6+
+    reflectShields = (lvl.reflectSpawns || []).map(r => new ReflectShieldPU(r.x, r.y));
+    if (!lvl.reflectSpawns && index >= 5) {
+        const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 50 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.65)];
+            reflectShields = [new ReflectShieldPU(p.x + Math.floor(p.w * 0.4), p.y - 24)];
         }
     }
 
@@ -9099,6 +9321,7 @@ function getBackgroundTheme() {
     if (lvl && lvl.isMatrix) return 'matrix'; // Feature 133
     if (lvl && lvl.isStorm) return 'night'; // Feature 142: storm level uses dark sky
     if (lvl && lvl.isVolcano) return 'volcano'; // Feature 146
+    if (lvl && lvl.isDawn) return 'dawn'; // Feature 172
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -9300,6 +9523,8 @@ const BG_THEMES = {
     night: { sky: ['#05051a', '#0d0d2e', '#161630'], mountain: '#1a1a3a', hillLight: '#0f2010', hillDark: '#0a150b', cloudAlpha: 0.15 },
     dusk:  { sky: ['#1a0530', '#3d1060', '#7a2060'], mountain: '#3a2060', hillLight: '#2a1a40', hillDark: '#1e1030', cloudAlpha: 0.25 },
     day:   { sky: ['#3060c0', '#5c94fc', '#88bbff'], mountain: '#4a6fa0', hillLight: '#3a7c2f', hillDark: '#2d6025', cloudAlpha: 0.85 },
+    // Feature 172: Dawn — warm pink-orange gradient with golden horizon
+    dawn:  { sky: ['#1a0a2a', '#a02060', '#ff8844'], mountain: '#4a2a50', hillLight: '#3a4030', hillDark: '#2a3022', cloudAlpha: 0.55 },
 };
 const BG_MARGIN = 80; // extra width on each side of parallax layers
 
@@ -9326,6 +9551,35 @@ function buildBackgroundCache(theme) {
                 ctx.arc((i * 137.508 + 42) % W, (i * 97.31 + 21) % (H * 0.65), 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
                 ctx.fill();
             }
+            ctx.globalAlpha = 1;
+        }
+        if (theme === 'dawn') {
+            // Feature 172: Dawn — few remaining stars + golden sun on horizon
+            for (let i = 0; i < 18; i++) {
+                ctx.globalAlpha = 0.28 + (i % 3) * 0.12;
+                ctx.fillStyle = i % 3 === 0 ? '#ffd8aa' : '#fff0e0';
+                ctx.beginPath();
+                ctx.arc((i * 137.508 + 9) % W, (i * 97.31 + 7) % (H * 0.35), 0.5 + (i % 2) * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+            // Rising sun glow on horizon
+            const sunGrad = ctx.createRadialGradient(W * 0.55, H * 0.72, 0, W * 0.55, H * 0.72, 120);
+            sunGrad.addColorStop(0, 'rgba(255, 240, 80, 0.55)');
+            sunGrad.addColorStop(0.3, 'rgba(255, 140, 20, 0.35)');
+            sunGrad.addColorStop(1, 'rgba(255, 80, 0, 0)');
+            ctx.fillStyle = sunGrad;
+            ctx.fillRect(0, 0, W, H);
+            // Sun disc peeking above horizon
+            ctx.globalAlpha = 0.70;
+            ctx.beginPath();
+            ctx.arc(W * 0.55, H * 0.82, 34, 0, Math.PI * 2);
+            const discGrad = ctx.createRadialGradient(W * 0.55, H * 0.82, 0, W * 0.55, H * 0.82, 34);
+            discGrad.addColorStop(0, '#ffffc0');
+            discGrad.addColorStop(0.5, '#ffcc40');
+            discGrad.addColorStop(1, '#ff8800');
+            ctx.fillStyle = discGrad;
+            ctx.fill();
             ctx.globalAlpha = 1;
         }
     });
@@ -10103,6 +10357,43 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#88ffff';
         ctx.fillText('🌀 ВИХРЬ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 171: Reflect Shield timer bar
+    if (player && player.reflectTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0)
+            + (player.droneTimer > 0 ? 18 : 0)
+            + (player.spikeBootsTimer > 0 ? 18 : 0)
+            + (player.vortexCoinTimer > 0 ? 18 : 0);
+        const frac = player.reflectTimer / REFLECT_SHIELD_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.015) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255, 180, 40, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffeeaa';
+        ctx.fillText('🪃 ОТРАЖЕНИЕ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -11728,6 +12019,8 @@ function update() {
             checkBarrelCollisions();                           // Feature 167
             vortexCoins = vortexCoins.filter(vc => vc.update()); // Feature 169
             checkVortexCoinCollisions();                           // Feature 169
+            reflectShields = reflectShields.filter(rs => rs.update()); // Feature 171
+            checkReflectShieldCollisions();                            // Feature 171
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -12312,6 +12605,7 @@ function render() {
             warpCoins.forEach(wc => wc.render());        // Feature 165
             explosiveBarrels.forEach(b => b.render());   // Feature 167
             vortexCoins.forEach(vc => vc.render());      // Feature 169
+            reflectShields.forEach(rs => rs.render());   // Feature 171
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
