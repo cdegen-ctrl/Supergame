@@ -828,6 +828,7 @@ class Player extends Entity {
         this.droneShootCooldown = 0;
         this.spikeBootsTimer = 0;   // Feature 163: spike boots chain stomp
         this.spikeBootsChains = 0;  // Feature 163: chains used this stomp
+        this.vortexCoinTimer = 0;   // Feature 169: Vortex Coin — all coins pulled in
     }
 
     update() {
@@ -1161,6 +1162,7 @@ class Player extends Entity {
         // Feature 148: Jump Boost timer
         if (this.jumpBoostTimer > 0) this.jumpBoostTimer--;
         if (this.spikeBootsTimer > 0) this.spikeBootsTimer--; // Feature 163
+        if (this.vortexCoinTimer > 0) this.vortexCoinTimer--; // Feature 169
         // Feature 149: Magma Floor — damage player when near bottom on volcano levels
         if (this.magmaDmgTimer > 0) this.magmaDmgTimer--;
         if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano && this.y + this.h >= 462
@@ -1331,6 +1333,7 @@ class Player extends Entity {
             this.jumpBoostTimer = 0; // Feature 148: lose jump boost on death
             this.droneTimer = 0; // Feature 161: lose drone on death
             this.spikeBootsTimer = 0; // Feature 163: lose spike boots on death
+            this.vortexCoinTimer = 0; // Feature 169: lose vortex on death
             playSound('hurt');
         }
     }
@@ -1397,6 +1400,25 @@ class Player extends Entity {
                         this.h * 0.6 + Math.sin(t * 1.9) * 1, 0, 0, Math.PI * 2);
             ctx.globalAlpha = pulse * 0.3;
             ctx.fill();
+            ctx.restore();
+        }
+
+        // Feature 169: Vortex aura — cyan spiral ring when vortex coin is active
+        if (this.vortexCoinTimer > 0) {
+            const t = Date.now() * 0.010;
+            const frac = this.vortexCoinTimer / VORTEX_COIN_DURATION;
+            const pulse = 0.5 + Math.abs(Math.sin(t)) * 0.5;
+            ctx.save();
+            for (let i = 0; i < 4; i++) {
+                const a = t + (Math.PI * 2 / 4) * i;
+                ctx.beginPath();
+                ctx.arc(this.x + this.w / 2, this.y + this.h / 2,
+                    (this.w * 0.75 + Math.sin(t * 1.5 + i) * 4),
+                    a, a + Math.PI * 0.55);
+                ctx.strokeStyle = `rgba(0, 230, 255, ${pulse * frac})`;
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+            }
             ctx.restore();
         }
 
@@ -2276,7 +2298,8 @@ class Coin {
     update() {
         this.animTimer++;
         // Magnet attraction: pull coin toward player when magnet is active
-        if (player && player.magnetTimer > 0 && !this.isDropped) {
+        // Feature 169: Vortex Coin — pulls ALL coins with no radius limit and faster speed
+        if (player && (player.magnetTimer > 0 || player.vortexCoinTimer > 0) && !this.isDropped) {
             const cx = this.x + this.w / 2;
             const cy = this.y + this.h / 2;
             const px = player.x + player.w / 2;
@@ -2284,8 +2307,11 @@ class Coin {
             const dx = px - cx;
             const dy = py - cy;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < MAGNET_RADIUS && dist > 1) {
-                const spd = Math.min(10, (MAGNET_RADIUS - dist) / 18 + 2);
+            const isVortex = player.vortexCoinTimer > 0;
+            if ((isVortex || dist < MAGNET_RADIUS) && dist > 1) {
+                const spd = isVortex
+                    ? Math.min(14, dist * 0.15 + 4)
+                    : Math.min(10, (MAGNET_RADIUS - dist) / 18 + 2);
                 this.x += (dx / dist) * spd;
                 this.y += (dy / dist) * spd;
             }
@@ -2680,6 +2706,80 @@ function checkWarpCoinCollisions() {
         playSound('coin');
     }
     warpCoins = warpCoins.filter(wc => !wc.collected);
+}
+
+// === FEATURE 169: VORTEX COIN — pulls ALL coins on level toward player for 8 seconds, no distance limit ===
+const VORTEX_COIN_DURATION = 480; // 8 seconds at 60fps
+class VortexCoin {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 22; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 3;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const spin = t * 0.07;
+        const pulse = 0.85 + Math.sin(t * 0.15) * 0.15;
+        ctx.save();
+        // Outer glow ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, 17 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0, 220, 255, ${0.2 * pulse})`;
+        ctx.fill();
+        // Inner body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(cx - 2, cy - 2, 1, cx, cy, 9 * pulse);
+        grad.addColorStop(0, '#88ffff');
+        grad.addColorStop(1, '#0088bb');
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.strokeStyle = '#00ddff';
+        ctx.lineWidth = 2; ctx.stroke();
+        // Swirl arcs
+        for (let i = 0; i < 4; i++) {
+            const a = spin + (Math.PI * 2 / 4) * i;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6 * pulse, a, a + Math.PI * 0.6);
+            ctx.strokeStyle = `rgba(200, 255, 255, ${0.7 * pulse})`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+        // Icon
+        ctx.font = `bold 10px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('🌀', cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let vortexCoins = [];
+
+function checkVortexCoinCollisions() {
+    if (!player) return;
+    for (const vc of vortexCoins) {
+        if (vc.collected) continue;
+        if (!aabb(player, vc)) continue;
+        vc.collected = true;
+        const pts = player.scoreBoostTimer > 0 ? 300 : 150;
+        player.score += pts; totalScore += pts;
+        player.vortexCoinTimer = VORTEX_COIN_DURATION;
+        scorePopups.push({ x: vc.x, y: vc.y - 20, text: `+${pts}`, color: '#00ddff', timer: 90 });
+        for (let i = 0; i < 12; i++) {
+            const ang = (Math.PI * 2 * i) / 12;
+            particles.push(new DeathParticle(vc.x + vc.w / 2, vc.y + vc.h / 2,
+                Math.cos(ang) * 3, Math.sin(ang) * 3, '#00eeee', 6));
+        }
+        particles.push(new Particle(vc.x - 20, vc.y - 24, '🌀 ВИХРЬ!', '#00ddff'));
+        playSound('powerup');
+    }
+    vortexCoins = vortexCoins.filter(vc => !vc.collected);
 }
 
 // === FEATURE 167: EXPLOSIVE BARREL — stomping or spore-hitting detonates it, kills enemies in radius 150px ===
@@ -7144,6 +7244,86 @@ const LEVELS = [
         spikeSpawns:       [{ x: 310, y: 444, count: 3 }, { x: 510, y: 444, count: 2 }],
         checkpointSpawns:  [{ x: 395, y: 450 }],
     },
+
+    // === LEVEL 24: УТОПИЯ (Feature 170) — bright sky arena with vortex coins, all enemy types ===
+    {
+        name: 'Утопия',
+        platforms: [
+            // Ground sections (gaps in the middle for challenge)
+            { x: 0,   y: 460, w: 140, h: 40 },
+            { x: 220, y: 460, w: 100, h: 40 },
+            { x: 420, y: 460, w: 100, h: 40 },
+            { x: 620, y: 460, w: 180, h: 40 },
+            // Low platforms
+            { x: 60,  y: 372, w: 110, h: 16 },
+            { x: 260, y: 360, w: 90,  h: 16, moveAxis: 'x', moveRange: 70, moveSpeed: 1.1 },
+            { x: 460, y: 368, w: 90,  h: 16, crumble: true },
+            { x: 630, y: 362, w: 100, h: 16, ice: true },
+            // Mid platforms
+            { x: 10,  y: 272, w: 120, h: 16, pulse: true },
+            { x: 220, y: 260, w: 90,  h: 16, moveAxis: 'y', moveRange: 50, moveSpeed: 1.0 },
+            { x: 410, y: 268, w: 90,  h: 16, crumble: true },
+            { x: 600, y: 262, w: 110, h: 16 },
+            // Upper platforms
+            { x: 50,  y: 175, w: 110, h: 16, ice: true },
+            { x: 255, y: 162, w: 100, h: 16, moveAxis: 'x', moveRange: 90, moveSpeed: 1.3 },
+            { x: 455, y: 172, w: 100, h: 16, pulse: true },
+            { x: 650, y: 176, w: 90,  h: 16, crumble: true },
+            // Top platforms
+            { x: 90,  y: 78,  w: 150, h: 16 },
+            { x: 330, y: 64,  w: 130, h: 16 },
+            { x: 560, y: 78,  w: 110, h: 16 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 }, { x: 225, y: 430 },
+            { x: 425, y: 430 }, { x: 640, y: 430 },
+            { x: 280, y: 338 }, { x: 640, y: 340 },
+            { x: 20,  y: 250 }, { x: 610, y: 240 },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'fast', 'ghost_mario', 'teleporter', 'berserker', 'armored'],
+        shooterMarioSpawns: [{ x: 100, y: 155 }, { x: 470, y: 152 }],
+        flyingMarioSpawns:  [{ x: 160, y: 95  }, { x: 520, y: 82  }],
+        parachuteMarioSpawns: [{ x: 250, y: -50 }, { x: 600, y: -65 }],
+        marioSpeed: 3.2,
+        playerSpawn: { x: 10, y: 430 },
+        vortexCoinSpawns: [{ x: 360, y: 42 }, { x: 120, y: 58 }],
+        coinSpawns: [
+            { x: 20,  y: 440 }, { x: 230, y: 440 }, { x: 430, y: 440 }, { x: 650, y: 440 },
+            { x: 80,  y: 350 }, { x: 300, y: 338 }, { x: 500, y: 346 }, { x: 660, y: 340 },
+            { x: 30,  y: 250 }, { x: 240, y: 238 }, { x: 440, y: 246 }, { x: 625, y: 240 },
+            { x: 80,  y: 153 }, { x: 295, y: 140 }, { x: 495, y: 150 }, { x: 680, y: 154 },
+            { x: 130, y: 56  }, { x: 375, y: 42  }, { x: 610, y: 56  },
+        ],
+        doubleCoinSpawns:    [{ x: 350, y: 42  }, { x: 510, y: 56  }],
+        tripleCoinSpawns:    [{ x: 570, y: 56  }],
+        rainbowCoinSpawns:   [{ x: 630, y: 56  }],
+        lightningCoinSpawns: [{ x: 150, y: 56  }],
+        explodingCoinSpawns: [{ x: 200, y: 56  }],
+        warpCoinSpawns:      [{ x: 690, y: 56  }, { x: 240, y: 56  }],
+        starSpawns:          [{ x: 140, y: 56  }, { x: 590, y: 56  }],
+        shieldSpawns:        [{ x: 0,   y: 444 }, { x: 730, y: 444 }],
+        bombSpawns:          [{ x: 270, y: 140 }, { x: 490, y: 150 }],
+        springSpawns:        [{ x: 0,   y: 444 }, { x: 730, y: 444 }],
+        speedBoostSpawns:    [{ x: 380, y: 42  }],
+        magnetSpawns:        [{ x: 440, y: 42  }],
+        freezeSpawns:        [{ x: 110, y: 155 }, { x: 670, y: 154 }],
+        ghostSpawns:         [{ x: 295, y: 140 }],
+        electroSpawns:       [{ x: 420, y: 42  }],
+        slowMoSpawns:        [{ x: 500, y: 42  }],
+        rocketSpawns:        [{ x: 175, y: 42  }, { x: 570, y: 56  }],
+        scoreBoostSpawns:    [{ x: 330, y: 42  }],
+        jetpackSpawns:       [{ x: 455, y: 42  }],
+        bubbleSpawns:        [{ x: 345, y: 64  }],
+        spikeBootsSpawns:    [{ x: 465, y: 42  }],
+        healSpawns:          [{ x: 110, y: 58  }],
+        spikeSpawns:         [{ x: 320, y: 444, count: 2 }, { x: 520, y: 444, count: 3 }],
+        barrelSpawns: [
+            { x: 55,  y: 424 }, { x: 465, y: 424 }, { x: 665, y: 424 },
+            { x: 80,  y: 340 }, { x: 650, y: 340 },
+            { x: 120, y: 139 }, { x: 475, y: 136 },
+        ],
+        checkpointSpawns: [{ x: 400, y: 450 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -8208,7 +8388,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; // Feature 161/162/163/165/167: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; // Feature 161/162/163/165/167/169: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -8336,6 +8516,16 @@ function loadLevel(index) {
                 if (Math.abs(p2.x - p1.x) > 100)
                     explosiveBarrels.push(new ExplosiveBarrel(p2.x + Math.floor(p2.w * 0.4), p2.y - 36));
             }
+        }
+    }
+
+    // Feature 169: Vortex Coin — load from spawns or auto-place on levels 4+
+    vortexCoins = (lvl.vortexCoinSpawns || []).map(vc => new VortexCoin(vc.x, vc.y));
+    if (!lvl.vortexCoinSpawns && index >= 3) {
+        const cands = lvl.platforms.filter(p => p.y < 350 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.45)];
+            vortexCoins = [new VortexCoin(p.x + Math.floor(p.w * 0.5), p.y - 26)];
         }
     }
 
@@ -9877,6 +10067,42 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ff9966';
         ctx.fillText('🥾 ЦЕПНОЙ СТОМП', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 169: Vortex Coin timer bar
+    if (player && player.vortexCoinTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0)
+            + (player.droneTimer > 0 ? 18 : 0)
+            + (player.spikeBootsTimer > 0 ? 18 : 0);
+        const frac = player.vortexCoinTimer / VORTEX_COIN_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.014) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(0, 210, 255, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#88ffff';
+        ctx.fillText('🌀 ВИХРЬ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -11500,6 +11726,8 @@ function update() {
             checkWarpCoinCollisions();                         // Feature 165
             explosiveBarrels = explosiveBarrels.filter(b => b.update()); // Feature 167
             checkBarrelCollisions();                           // Feature 167
+            vortexCoins = vortexCoins.filter(vc => vc.update()); // Feature 169
+            checkVortexCoinCollisions();                           // Feature 169
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -12083,6 +12311,7 @@ function render() {
             dronePowerUps.forEach(dp => dp.render());   // Feature 161
             warpCoins.forEach(wc => wc.render());        // Feature 165
             explosiveBarrels.forEach(b => b.render());   // Feature 167
+            vortexCoins.forEach(vc => vc.render());      // Feature 169
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
