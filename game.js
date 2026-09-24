@@ -6595,6 +6595,7 @@ let leftWasPressed = false;
 let rightWasPressed = false;
 let totalScore = 0;
 let highScore = parseInt(localStorage.getItem('mushroomHighScore') || '0');
+let scoreMilestoneReached = 0; // Feature 153: last milestone crossed
 let hudScoreDisplay = 0; // animated score counter
 let unlockedLevels = parseInt(localStorage.getItem('mushroomUnlockedLevels') || '1');
 let selectedLevelIdx = 0;
@@ -10969,6 +10970,19 @@ function render() {
             renderWeather();
             renderWindEffect(); // Feature 141
             platforms.forEach(p => p.render());
+            // Feature 154: Jump Boost platform glow — yellow outline on platforms when boost is active
+            if (player && player.jumpBoostTimer > 0) {
+                const glowAlpha = Math.min(0.5, (player.jumpBoostTimer / JUMP_BOOST_DURATION) * 0.6)
+                                  * (0.75 + Math.sin(Date.now() * 0.012) * 0.25);
+                ctx.save();
+                ctx.strokeStyle = `rgba(255, 220, 40, ${glowAlpha})`;
+                ctx.lineWidth = 2.5;
+                for (const p of platforms) {
+                    if (p.crumble && p.crumbleState !== 'normal') continue;
+                    ctx.strokeRect(p.x - 1, p.y - 1, p.w + 2, p.h + 2);
+                }
+                ctx.restore();
+            }
             spikes.forEach(s => s.render()); // Feature 91
             coins.forEach(c => c.render());
             stars.forEach(s => s.render());
@@ -11107,6 +11121,51 @@ function render() {
                 ctx.textAlign = 'left';
                 ctx.restore();
             }
+            // Feature 153: Ghost Enemy Off-Screen Indicator — arrows pointing to off-screen ghost_marios
+            if (player) {
+                const margin = 14;
+                for (const m of marios) {
+                    if (!m.isAlive || m.type !== 'ghost_mario') continue;
+                    const mx = m.x + m.w / 2;
+                    const my = m.y + m.h / 2;
+                    if (mx >= 0 && mx <= W && my >= 0 && my <= H) continue; // on-screen
+                    // Compute angle from screen center to enemy
+                    const ang = Math.atan2(my - H / 2, mx - W / 2);
+                    // Clamp to screen edge
+                    const cos = Math.cos(ang), sin = Math.sin(ang);
+                    let ex = W / 2 + cos * (W / 2 - margin);
+                    let ey = H / 2 + sin * (H / 2 - margin);
+                    // Clamp to actual screen bounds
+                    if (Math.abs(cos) > Math.abs(sin) * (W / H)) {
+                        const side = cos > 0 ? 1 : -1;
+                        ex = side > 0 ? W - margin : margin;
+                        ey = H / 2 + Math.tan(ang) * side * (W / 2 - margin);
+                    } else {
+                        const side = sin > 0 ? 1 : -1;
+                        ey = side > 0 ? H - margin : margin;
+                        ex = W / 2 + (Math.tan(Math.PI / 2 - ang) * side * (H / 2 - margin)) * (sin > 0 ? 1 : -1);
+                    }
+                    ex = Math.max(margin, Math.min(W - margin, ex));
+                    ey = Math.max(margin, Math.min(H - margin, ey));
+                    const pulse = 0.7 + Math.sin(Date.now() * 0.008 + m.x * 0.01) * 0.3;
+                    ctx.save();
+                    ctx.globalAlpha = pulse;
+                    ctx.translate(ex, ey);
+                    ctx.rotate(ang);
+                    ctx.fillStyle = '#cc88ff';
+                    ctx.strokeStyle = '#440066';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(10, 0);
+                    ctx.lineTo(-6, -6);
+                    ctx.lineTo(-6, 6);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+
             // Feature 114: Gamepad connected banner
             if (gamepadConnectedTimer > 0) {
                 gamepadConnectedTimer--;
