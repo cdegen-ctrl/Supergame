@@ -833,6 +833,7 @@ class Player extends Entity {
         this.spikeBootsTimer = 0;   // Feature 163: spike boots chain stomp
         this.spikeBootsChains = 0;  // Feature 163: chains used this stomp
         this.vortexCoinTimer = 0;   // Feature 169: Vortex Coin — all coins pulled in
+        this.enemyMirrorTimer = 0;  // Feature 175: Enemy Mirror — enemies move in reverse
     }
 
     update() {
@@ -1171,6 +1172,7 @@ class Player extends Entity {
         if (this.reflectTimer > 0) this.reflectTimer--; // Feature 171
         if (this.quakeTimer > 0) this.quakeTimer--;     // Feature 173
         if (this.vortexCoinTimer > 0) this.vortexCoinTimer--; // Feature 169
+        if (this.enemyMirrorTimer > 0) this.enemyMirrorTimer--; // Feature 175
         // Feature 149: Magma Floor — damage player when near bottom on volcano levels
         if (this.magmaDmgTimer > 0) this.magmaDmgTimer--;
         if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano && this.y + this.h >= 462
@@ -1344,6 +1346,7 @@ class Player extends Entity {
             this.reflectTimer = 0; // Feature 171: lose reflect shield on death
             this.quakeTimer = 0;   // Feature 173: lose quake stomp on death
             this.vortexCoinTimer = 0; // Feature 169: lose vortex on death
+            this.enemyMirrorTimer = 0; // Feature 175: lose mirror on death
             playSound('hurt');
         }
     }
@@ -1866,7 +1869,8 @@ class Mario extends Entity {
         if (this.type === 'flying') {
             this.wingFlap += 0.18;
             const flySlowMult = (player && player.slowMoTimer > 0) ? SLOW_MO_FACTOR : 1;
-            this.vx = this.speed * this.direction * flySlowMult;
+            const flyMirrorMult = (player && player.enemyMirrorTimer > 0) ? -1 : 1; // Feature 175
+            this.vx = this.speed * this.direction * flySlowMult * flyMirrorMult;
             this.x += this.vx;
             // Sinusoidal vertical oscillation: ±38px around base altitude
             this.y = this.flyingY + Math.sin(this.wingFlap * 0.55) * 38;
@@ -1892,7 +1896,9 @@ class Mario extends Entity {
 
         // Feature 75: Slow-Mo — reduce enemy movement speed
         const slowMoMult = (player && player.slowMoTimer > 0) ? SLOW_MO_FACTOR : 1;
-        this.vx = this.speed * this.direction * slowMoMult;
+        // Feature 175: Enemy Mirror — reverse enemy movement direction
+        const mirrorMult = (player && player.enemyMirrorTimer > 0) ? -1 : 1;
+        this.vx = this.speed * this.direction * slowMoMult * mirrorMult;
 
         // gravity
         this.vy += GRAVITY * levelGravityMult;
@@ -2248,6 +2254,25 @@ class Mario extends Entity {
             ctx.rect(this.x - 2, this.y - 2, this.w + 4, this.h + 4);
             ctx.stroke();
             ctx.globalAlpha = 1;
+            ctx.restore();
+        }
+
+        // Feature 175: Enemy Mirror — magenta glow + reversed arrow above enemy
+        if (this.isAlive && player && player.enemyMirrorTimer > 0 && this.frozenTimer <= 0) {
+            const pulse = 0.3 + Math.abs(Math.sin(Date.now() * 0.008)) * 0.35;
+            ctx.save();
+            ctx.globalAlpha = pulse;
+            ctx.strokeStyle = '#ff44ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.rect(this.x - 2, this.y - 2, this.w + 4, this.h + 4);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ff88ff';
+            ctx.fillText('↔', this.x + this.w / 2, this.y - 2);
+            ctx.textAlign = 'left';
             ctx.restore();
         }
 
@@ -2949,6 +2974,7 @@ const SCORE_BOOST_DURATION = 480; // Feature 61: 8 seconds at 60fps
 const ELECTRO_DURATION = 360; // Feature 72: 6 seconds at 60fps
 const ELECTRO_RADIUS = 80; // px radius of electric field
 const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
+const ENEMY_MIRROR_DURATION = 300; // Feature 175: Enemy Mirror — 5 seconds at 60fps
 const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
 const JUMP_BOOST_DURATION = 480; // Feature 148: 8 seconds at 60fps
 const REFLECT_SHIELD_DURATION = 480; // Feature 171: 8 seconds at 60fps
@@ -4630,6 +4656,72 @@ class EarthquakePU {
 
 let quakePowerUps = [];
 
+// === FEATURE 175: ENEMY MIRROR POWER-UP — reverses all enemy movement for 5 seconds ===
+class EnemyMirrorPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.11) * 0.1;
+        ctx.save();
+        // Outer glow — magenta/pink
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 18 * pulse);
+        grd.addColorStop(0, 'rgba(255, 60, 255, 0.45)');
+        grd.addColorStop(1, 'rgba(180, 0, 200, 0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        // Rotating arrows ring
+        ctx.globalAlpha = 0.7 * pulse;
+        ctx.strokeStyle = '#ff88ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        // Icon
+        ctx.font = `bold ${Math.round(14 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('🔄', cx, cy + 5);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let mirrorPowerUps = [];
+
+function checkMirrorPUCollisions() {
+    if (!player) return;
+    for (const mp of mirrorPowerUps) {
+        if (mp.collected) continue;
+        if (!aabb(player, mp)) continue;
+        mp.collected = true;
+        player.enemyMirrorTimer = ENEMY_MIRROR_DURATION;
+        particles.push(new Particle(mp.x - 10, mp.y - 14, '🔄 ЗЕРКАЛО!', '#ff44ff'));
+        milestoneBannerText = '↔ ВРАГИ ЗЕРКАЛЯТСЯ!';
+        milestoneBannerColor = '#ff44ff';
+        milestoneBannerTimer = 120;
+        playSound('levelup');
+    }
+    mirrorPowerUps = mirrorPowerUps.filter(mp => !mp.collected);
+}
+
 function triggerQuake(cx, groundY) {
     const QUAKE_RADIUS = 250;
     let killed = 0;
@@ -6124,7 +6216,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка', '🌀 Утопия', '🌅 Рассвет', '🕳 Пещера', '💻 Киберпанк'];
 
 const LEVELS = [
     {
@@ -7734,6 +7826,87 @@ const LEVELS = [
         ],
         checkpointSpawns: [{ x: 415, y: 450 }],
     },
+    // === LEVEL 27: КИБЕРПАНК (Feature 176) — neon cyber city, mirror power-up, all enemy types ===
+    {
+        name: 'Киберпанк',
+        isCyber: true,
+        platforms: [
+            // Ground (segmented neon floor with gaps)
+            { x: 0,   y: 460, w: 130, h: 40 },
+            { x: 210, y: 460, w: 100, h: 40 },
+            { x: 410, y: 460, w: 120, h: 40 },
+            { x: 640, y: 460, w: 160, h: 40 },
+            // Low tier — data platforms
+            { x: 50,  y: 375, w: 110, h: 16, moveAxis: 'x', moveRange: 60, moveSpeed: 1.4 },
+            { x: 260, y: 365, w: 95,  h: 16, crumble: true },
+            { x: 445, y: 372, w: 100, h: 16, ice: true },
+            { x: 640, y: 368, w: 100, h: 16 },
+            // Mid tier
+            { x: 10,  y: 275, w: 120, h: 16, pulse: true },
+            { x: 240, y: 265, w: 95,  h: 16, crumble: true },
+            { x: 430, y: 272, w: 90,  h: 16, moveAxis: 'y', moveRange: 40, moveSpeed: 1.2 },
+            { x: 625, y: 268, w: 110, h: 16, ice: true },
+            // Upper tier
+            { x: 55,  y: 180, w: 115, h: 16 },
+            { x: 265, y: 170, w: 100, h: 16, pulse: true },
+            { x: 455, y: 178, w: 90,  h: 16, crumble: true },
+            { x: 648, y: 175, w: 100, h: 16, moveAxis: 'x', moveRange: 50, moveSpeed: 1.0 },
+            // Top tier
+            { x: 100, y: 88,  w: 140, h: 16 },
+            { x: 330, y: 74,  w: 140, h: 16 },
+            { x: 565, y: 86,  w: 110, h: 16 },
+        ],
+        marioSpawns: [
+            { x: 15,  y: 432 }, { x: 220, y: 432 },
+            { x: 420, y: 432 }, { x: 650, y: 432 },
+            { x: 270, y: 342 }, { x: 650, y: 346 },
+            { x: 20,  y: 252 }, { x: 635, y: 246 },
+            { x: 275, y: 148 }, { x: 460, y: 156 },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'ghost_mario', 'teleporter', 'fast', 'berserker', 'armored', 'ghost_mario', 'fast'],
+        shooterMarioSpawns: [{ x: 110, y: 162 }, { x: 465, y: 158 }, { x: 660, y: 153 }],
+        flyingMarioSpawns:  [{ x: 210, y: 95 }, { x: 490, y: 90 }],
+        parachuteMarioSpawns: [{ x: 150, y: -55 }, { x: 390, y: -65 }, { x: 620, y: -50 }],
+        marioSpeed: 3.5,
+        playerSpawn: { x: 20, y: 432 },
+        mirrorSpawns: [{ x: 345, y: 52 }, { x: 120, y: 66 }],
+        coinSpawns: [
+            { x: 25,  y: 442 }, { x: 225, y: 442 }, { x: 430, y: 442 }, { x: 660, y: 442 },
+            { x: 60,  y: 355 }, { x: 280, y: 345 }, { x: 460, y: 352 }, { x: 660, y: 348 },
+            { x: 25,  y: 255 }, { x: 250, y: 245 }, { x: 445, y: 252 }, { x: 640, y: 248 },
+            { x: 70,  y: 160 }, { x: 280, y: 150 }, { x: 465, y: 158 }, { x: 660, y: 155 },
+            { x: 115, y: 68  }, { x: 345, y: 54  }, { x: 578, y: 66  },
+        ],
+        doubleCoinSpawns:    [{ x: 370, y: 52  }, { x: 530, y: 66  }],
+        tripleCoinSpawns:    [{ x: 585, y: 66  }],
+        rainbowCoinSpawns:   [{ x: 648, y: 66  }],
+        lightningCoinSpawns: [{ x: 165, y: 66  }],
+        explodingCoinSpawns: [{ x: 215, y: 66  }],
+        warpCoinSpawns:      [{ x: 700, y: 66  }, { x: 255, y: 54  }],
+        vortexCoinSpawns:    [{ x: 375, y: 52  }, { x: 135, y: 70  }],
+        starSpawns:          [{ x: 155, y: 66  }, { x: 605, y: 66  }],
+        shieldSpawns:        [{ x: 5,   y: 444 }, { x: 745, y: 444 }],
+        bombSpawns:          [{ x: 285, y: 145 }, { x: 505, y: 155 }],
+        speedBoostSpawns:    [{ x: 395, y: 52  }],
+        magnetSpawns:        [{ x: 455, y: 52  }],
+        freezeSpawns:        [{ x: 125, y: 166 }, { x: 685, y: 162 }],
+        ghostSpawns:         [{ x: 310, y: 145 }],
+        electroSpawns:       [{ x: 435, y: 52  }],
+        slowMoSpawns:        [{ x: 515, y: 52  }],
+        rocketSpawns:        [{ x: 190, y: 52  }, { x: 585, y: 66  }],
+        scoreBoostSpawns:    [{ x: 345, y: 52  }],
+        jetpackSpawns:       [{ x: 470, y: 52  }],
+        bubbleSpawns:        [{ x: 360, y: 74  }],
+        spikeBootsSpawns:    [{ x: 480, y: 52  }],
+        healSpawns:          [{ x: 125, y: 70  }],
+        spikeSpawns:         [{ x: 335, y: 444, count: 2 }, { x: 535, y: 444, count: 3 }],
+        barrelSpawns: [
+            { x: 65,  y: 424 }, { x: 475, y: 424 }, { x: 675, y: 424 },
+            { x: 95,  y: 344 }, { x: 665, y: 344 },
+            { x: 135, y: 148 }, { x: 490, y: 142 },
+        ],
+        checkpointSpawns: [{ x: 412, y: 450 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -8798,7 +8971,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; // Feature 161/162/163/165/167/169/171/173: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; vortexCoins = []; reflectShields = []; quakePowerUps = []; mirrorPowerUps = []; // Feature 161/162/163/165/167/169/171/173/175: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -8956,6 +9129,16 @@ function loadLevel(index) {
         if (cands.length >= 2) {
             const p = cands[Math.floor(cands.length * 0.55)];
             quakePowerUps = [new EarthquakePU(p.x + Math.floor(p.w * 0.3), p.y - 26)];
+        }
+    }
+
+    // Feature 175: Enemy Mirror PU — load from spawns or auto-place on levels 4+
+    mirrorPowerUps = (lvl.mirrorSpawns || []).map(m => new EnemyMirrorPU(m.x, m.y));
+    if (!lvl.mirrorSpawns && index >= 3) {
+        const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 50 && !p.crumble).sort((a, b) => a.y - b.y);
+        if (cands.length >= 3) {
+            const p = cands[Math.floor(cands.length * 0.5)];
+            mirrorPowerUps = [new EnemyMirrorPU(p.x + Math.floor(p.w * 0.55), p.y - 26)];
         }
     }
 
@@ -9531,6 +9714,7 @@ function getBackgroundTheme() {
     if (lvl && lvl.isVolcano) return 'volcano'; // Feature 146
     if (lvl && lvl.isDawn) return 'dawn'; // Feature 172
     if (lvl && lvl.isCave) return 'cave'; // Feature 174
+    if (lvl && lvl.isCyber) return 'cyber'; // Feature 176
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -9736,6 +9920,8 @@ const BG_THEMES = {
     dawn:  { sky: ['#1a0a2a', '#a02060', '#ff8844'], mountain: '#4a2a50', hillLight: '#3a4030', hillDark: '#2a3022', cloudAlpha: 0.55 },
     // Feature 174: Cave — near-black underground with dark stone silhouettes
     cave:  { sky: ['#050205', '#100808', '#1c0e0a'], mountain: '#1a0a06', hillLight: '#2a1008', hillDark: '#18080a', cloudAlpha: 0.0 },
+    // Feature 176: Cyber — deep purple with neon grid lines
+    cyber: { sky: ['#080010', '#130030', '#1a0050'], mountain: '#200060', hillLight: '#1a0048', hillDark: '#0d0028', cloudAlpha: 0.0 },
 };
 const BG_MARGIN = 80; // extra width on each side of parallax layers
 
@@ -9792,6 +9978,49 @@ function buildBackgroundCache(theme) {
             ctx.fillStyle = discGrad;
             ctx.fill();
             ctx.globalAlpha = 1;
+        }
+        if (theme === 'cyber') {
+            // Feature 176: Cyber — neon grid + scanlines + neon glow horizon
+            // Neon purple/pink grid lines
+            ctx.save();
+            ctx.globalAlpha = 0.22;
+            ctx.strokeStyle = '#aa00ff';
+            ctx.lineWidth = 0.8;
+            for (let gx = 0; gx <= W; gx += 40) {
+                ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+            }
+            for (let gy = 0; gy <= H; gy += 40) {
+                ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+            // Neon horizon glow
+            const horizGlow = ctx.createLinearGradient(0, H * 0.55, 0, H);
+            horizGlow.addColorStop(0, 'rgba(0, 255, 200, 0)');
+            horizGlow.addColorStop(0.5, 'rgba(0, 200, 255, 0.15)');
+            horizGlow.addColorStop(1, 'rgba(0, 255, 180, 0.3)');
+            ctx.fillStyle = horizGlow;
+            ctx.fillRect(0, 0, W, H);
+            // Scanlines
+            ctx.globalAlpha = 0.07;
+            ctx.fillStyle = '#000000';
+            for (let sy = 0; sy < H; sy += 4) {
+                ctx.fillRect(0, sy, W, 2);
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
+            // Scattered neon star dots
+            ctx.save();
+            for (let i = 0; i < 30; i++) {
+                const sx = (i * 97.3 + 31) % W;
+                const sy = (i * 61.7 + 13) % (H * 0.6);
+                ctx.globalAlpha = 0.3 + (i % 4) * 0.15;
+                ctx.fillStyle = i % 2 === 0 ? '#00ffcc' : '#cc00ff';
+                ctx.beginPath();
+                ctx.arc(sx, sy, 0.8 + (i % 3) * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
         }
         if (theme === 'cave') {
             // Feature 174: Cave — lava glow rising from below + stalactites from ceiling
@@ -10666,6 +10895,45 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffcc88';
         ctx.fillText('🌋 ЗЕМЛЕТРЯС', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 175: Enemy Mirror timer bar
+    if (player && player.enemyMirrorTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0)
+            + (player.droneTimer > 0 ? 18 : 0)
+            + (player.spikeBootsTimer > 0 ? 18 : 0)
+            + (player.vortexCoinTimer > 0 ? 18 : 0)
+            + (player.reflectTimer > 0 ? 18 : 0)
+            + (player.quakeTimer > 0 ? 18 : 0);
+        const frac = player.enemyMirrorTimer / ENEMY_MIRROR_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.017) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255, 60, 255, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff88ff';
+        ctx.fillText('🔄 ЗЕРКАЛО ВРАГОВ', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -12295,6 +12563,8 @@ function update() {
             checkReflectShieldCollisions();                            // Feature 171
             quakePowerUps = quakePowerUps.filter(q => q.update());    // Feature 173
             checkQuakePUCollisions();                                  // Feature 173
+            mirrorPowerUps = mirrorPowerUps.filter(mp => mp.update()); // Feature 175
+            checkMirrorPUCollisions();                                 // Feature 175
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -12881,6 +13151,7 @@ function render() {
             vortexCoins.forEach(vc => vc.render());      // Feature 169
             reflectShields.forEach(rs => rs.render());   // Feature 171
             quakePowerUps.forEach(q => q.render());       // Feature 173
+            mirrorPowerUps.forEach(mp => mp.render());    // Feature 175
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
