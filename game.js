@@ -2577,6 +2577,111 @@ function checkExplodingCoinCollisions() {
     explodingCoins = explodingCoins.filter(ec => !ec.collected);
 }
 
+// === FEATURE 165: WARP COIN ===
+class WarpCoin {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 22; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.07) * 3;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const spin = t * 0.05;
+        const pulse = 0.85 + Math.sin(t * 0.13) * 0.15;
+        ctx.save();
+        // Outer portal ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(160, 0, 255, ${0.25 * pulse})`;
+        ctx.fill();
+        // Inner body
+        ctx.beginPath();
+        ctx.arc(cx, cy, 9 * pulse, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(cx - 2, cy - 2, 1, cx, cy, 9 * pulse);
+        grad.addColorStop(0, '#ee88ff');
+        grad.addColorStop(1, '#7700cc');
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.strokeStyle = '#cc44ff';
+        ctx.lineWidth = 2; ctx.stroke();
+        // Spiral arcs to indicate portal / teleport
+        for (let i = 0; i < 3; i++) {
+            const a = spin + (Math.PI * 2 / 3) * i;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 5 * pulse, a, a + Math.PI * 0.8);
+            ctx.strokeStyle = `rgba(255, 200, 255, ${0.65 * pulse})`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+        // Icon
+        ctx.font = `bold 10px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('↔', cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let warpCoins = [];
+
+function checkWarpCoinCollisions() {
+    if (!player) return;
+    for (const wc of warpCoins) {
+        if (wc.collected) continue;
+        if (!aabb(player, wc)) continue;
+        wc.collected = true;
+        let pts = 90;
+        if (player.scoreBoostTimer > 0) pts *= 2;
+        if (coinFrenzyTimer > 0) pts = Math.floor(pts * 3);
+        player.score += pts; totalScore += pts;
+        levelCoinsCollected++;
+        runStats.coinsCollected++;
+        // Teleport up to 2 nearest alive enemies to random platform positions
+        const alive = marios.filter(m => m.isAlive && m.type !== 'flying' && m.type !== 'parachute');
+        const cx = wc.x + wc.w / 2, cy = wc.y + wc.h / 2;
+        alive.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
+        const targets = alive.slice(0, 2);
+        const solidFloors = platforms.filter(p => !p.crumble && !p.ice && p.w >= 60 && p.y < 450);
+        for (const m of targets) {
+            if (solidFloors.length === 0) continue;
+            const dest = solidFloors[Math.floor(Math.random() * solidFloors.length)];
+            const newX = dest.x + Math.random() * Math.max(1, dest.w - m.w);
+            const newY = dest.y - m.h;
+            // Warp particles at origin
+            for (let i = 0; i < 8; i++) {
+                const ang = (Math.PI * 2 * i) / 8;
+                particles.push(new DeathParticle(m.x + m.w / 2, m.y + m.h / 2,
+                    Math.cos(ang) * 2.5, Math.sin(ang) * 2.5, '#cc44ff', 5));
+            }
+            m.x = newX; m.y = newY;
+            m.vx = 0; m.vy = 0;
+            // Warp particles at destination
+            for (let i = 0; i < 8; i++) {
+                const ang = (Math.PI * 2 * i) / 8;
+                particles.push(new DeathParticle(m.x + m.w / 2, m.y + m.h / 2,
+                    Math.cos(ang) * 2.5, Math.sin(ang) * 2.5, '#ee88ff', 5));
+            }
+        }
+        // Visual burst at coin
+        for (let i = 0; i < 14; i++) {
+            const ang = (Math.PI * 2 * i) / 14;
+            const spd = 2 + Math.random() * 3;
+            particles.push(new DeathParticle(cx, cy,
+                Math.cos(ang) * spd, Math.sin(ang) * spd, i % 2 === 0 ? '#cc44ff' : '#ffffff', 6));
+        }
+        particles.push(new Particle(wc.x - 10, wc.y - 20, '↔ +' + pts + '!', '#dd44ff'));
+        if (targets.length > 0)
+            particles.push(new Particle(cx - 30, cy - 32, '✦ ВАРП!', '#cc44ff'));
+        playSound('coin');
+    }
+    warpCoins = warpCoins.filter(wc => !wc.collected);
+}
+
 // === STAR POWER-UP ===
 const STAR_DURATION = 600; // 10 seconds at 60fps
 const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
@@ -5564,7 +5669,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита'];
 
 const LEVELS = [
     {
@@ -6779,6 +6884,78 @@ const LEVELS = [
             { x: 313, y: 444, count: 2 },
             { x: 563, y: 444, count: 2 },
         ],
+    },
+    // === LEVEL 22: ОРБИТА (Feature 166) — low gravity, floating arenas ===
+    {
+        name: 'Орбита',
+        lowGravity: true,
+        platforms: [
+            // Ground sections with big gaps
+            { x: 0,   y: 460, w: 80,  h: 40 },
+            { x: 160, y: 460, w: 80,  h: 40 },
+            { x: 380, y: 460, w: 80,  h: 40 },
+            { x: 600, y: 460, w: 80,  h: 40 },
+            // Low floating platforms
+            { x: 60,  y: 370, w: 100, h: 16, moveAxis: 'x', moveRange: 60, moveSpeed: 0.9 },
+            { x: 260, y: 355, w: 80,  h: 16, pulse: true },
+            { x: 430, y: 368, w: 90,  h: 16, ice: true },
+            { x: 620, y: 355, w: 80,  h: 16, moveAxis: 'y', moveRange: 35, moveSpeed: 0.7 },
+            // Mid platforms
+            { x: 20,  y: 270, w: 110, h: 16, pulse: true },
+            { x: 210, y: 258, w: 90,  h: 16, moveAxis: 'x', moveRange: 70, moveSpeed: 1.1 },
+            { x: 390, y: 270, w: 80,  h: 16, crumble: true },
+            { x: 560, y: 258, w: 100, h: 16, pulse: true },
+            // Upper
+            { x: 50,  y: 175, w: 110, h: 16, ice: true },
+            { x: 250, y: 162, w: 100, h: 16, moveAxis: 'x', moveRange: 80, moveSpeed: 1.3 },
+            { x: 450, y: 170, w: 100, h: 16, moveAxis: 'y', moveRange: 50, moveSpeed: 1.0 },
+            { x: 650, y: 175, w: 80,  h: 16, crumble: true },
+            // Top
+            { x: 100, y: 80,  w: 140, h: 16, pulse: true },
+            { x: 340, y: 65,  w: 120, h: 16 },
+            { x: 570, y: 80,  w: 100, h: 16, ice: true },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 }, { x: 170, y: 430 }, { x: 610, y: 430 },
+            { x: 270, y: 330 }, { x: 640, y: 330 },
+            { x: 105, y: 248 }, { x: 570, y: 238 },
+            { x: 260, y: 138 }, { x: 460, y: 42  },
+        ],
+        marioTypes: ['fast', 'ghost_mario', 'teleporter', 'berserker', 'ghost_mario', 'fast', 'teleporter', 'berserker', 'armored'],
+        marioSpeed: 2.8,
+        playerSpawn: { x: 15, y: 430 },
+        coinSpawns: [
+            { x: 15,  y: 435 }, { x: 175, y: 435 }, { x: 395, y: 435 }, { x: 615, y: 435 },
+            { x: 85,  y: 348 }, { x: 290, y: 333 }, { x: 460, y: 343 }, { x: 650, y: 333 },
+            { x: 50,  y: 248 }, { x: 240, y: 233 }, { x: 420, y: 245 }, { x: 600, y: 233 },
+            { x: 90,  y: 153 }, { x: 285, y: 138 }, { x: 490, y: 145 }, { x: 670, y: 152 },
+            { x: 150, y: 55  }, { x: 380, y: 40  }, { x: 610, y: 55  },
+        ],
+        doubleCoinSpawns:   [{ x: 265, y: 138 }, { x: 470, y: 40 }],
+        tripleCoinSpawns:   [{ x: 360, y: 40 }],
+        rainbowCoinSpawns:  [{ x: 550, y: 55 }],
+        lightningCoinSpawns:[{ x: 110, y: 55 }],
+        warpCoinSpawns:     [{ x: 640, y: 55 }, { x: 200, y: 55 }],
+        starSpawns:         [{ x: 120, y: 55 }, { x: 590, y: 55 }],
+        shieldSpawns:       [{ x: 0, y: 445 }, { x: 720, y: 445 }],
+        bombSpawns:         [{ x: 250, y: 138 }, { x: 475, y: 145 }],
+        springSpawns:       [{ x: 55, y: 446 }, { x: 615, y: 446 }],
+        speedBoostSpawns:   [{ x: 380, y: 40 }],
+        magnetSpawns:       [{ x: 450, y: 40 }],
+        freezeSpawns:       [{ x: 90,  y: 152 }, { x: 660, y: 152 }],
+        ghostSpawns:        [{ x: 300, y: 138 }],
+        electroSpawns:      [{ x: 410, y: 40 }],
+        slowMoSpawns:       [{ x: 510, y: 40 }],
+        rocketSpawns:       [{ x: 175, y: 40 }, { x: 575, y: 55 }],
+        scoreBoostSpawns:   [{ x: 330, y: 40 }],
+        jetpackSpawns:      [{ x: 440, y: 40 }],
+        bubbleSpawns:       [{ x: 355, y: 65 }],
+        spikeBootsSpawns:   [{ x: 465, y: 40 }],
+        healSpawns:         [{ x: 110, y: 55 }],
+        checkpointSpawns:   [{ x: 385, y: 450 }],
+        flyingMarioSpawns:      [{ x: 130, y: 108 }, { x: 430, y: 95 }, { x: 700, y: 108 }],
+        teleporterMarioSpawns:  [{ x: 80,  y: 420 }, { x: 540, y: 420 }],
+        parachuteMarioSpawns:   [{ x: 120, y: -60 }, { x: 380, y: -80 }, { x: 660, y: -60 }],
     }
 ];
 
@@ -7225,6 +7402,7 @@ function startSurvivalMode() {
     springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = []; giantPUs = []; giftChests = [];
     explodingCoins = []; dronePowerUps = []; // Feature 161/162
     spikeBoots = []; // Feature 163
+    warpCoins = []; // Feature 165
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -7843,7 +8021,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; // Feature 161/162/163: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; // Feature 161/162/163/165: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -7939,6 +8117,15 @@ function loadLevel(index) {
         if (cands.length >= 2) {
             const p = cands[Math.floor(cands.length * 0.35)];
             explodingCoins = [new ExplodingCoin(p.x + Math.floor(p.w * 0.5), p.y - 24)];
+        }
+    }
+    // Feature 165: Warp Coin — auto-place on levels 5+ if not explicitly set
+    warpCoins = (lvl.warpCoinSpawns || []).map(wc => new WarpCoin(wc.x, wc.y));
+    if (!lvl.warpCoinSpawns && index >= 4) {
+        const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.55)];
+            warpCoins = [new WarpCoin(p.x + Math.floor(p.w * 0.5), p.y - 26)];
         }
     }
     // Feature 161: Auto-place 1 companion drone power-up on levels 4+
@@ -11107,6 +11294,8 @@ function update() {
             checkLightningCoinCollisions();           // Feature 147
             explodingCoins = explodingCoins.filter(ec => ec.update()); // Feature 162
             checkExplodingCoinCollisions();           // Feature 162
+            warpCoins = warpCoins.filter(wc => wc.update()); // Feature 165
+            checkWarpCoinCollisions();                         // Feature 165
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -11688,6 +11877,7 @@ function render() {
             lightningCoins.forEach(lc => lc.render()); // Feature 147
             explodingCoins.forEach(ec => ec.render());  // Feature 162
             dronePowerUps.forEach(dp => dp.render());   // Feature 161
+            warpCoins.forEach(wc => wc.render());        // Feature 165
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
