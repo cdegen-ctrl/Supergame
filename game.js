@@ -506,8 +506,14 @@ class Platform extends Entity {
     }
 
     render() {
-        // Feature 66: Don't render while respawning
-        if (this.crumble && this.crumbleState === 'respawning') return;
+        // Feature 66: Don't render while respawning (except Feature 157: blink preview near end)
+        if (this.crumble && this.crumbleState === 'respawning') {
+            // Feature 157: blink preview during last 40 frames of respawn cooldown
+            if (this.crumbleTimer > 40) return;
+            const blinkOn = Math.floor(this.crumbleTimer / 6) % 2 === 0;
+            if (!blinkOn) return;
+            // Fall through to render at low alpha
+        }
 
         // Feature 66: Shake crumbling platform visually
         let shakeX = 0;
@@ -520,6 +526,10 @@ class Platform extends Entity {
         // Feature 66: fade out when falling
         if (this.crumble && this.crumbleState === 'falling') {
             ctx.globalAlpha = Math.max(0, this.crumbleTimer / 50);
+        }
+        // Feature 157: blink preview — show at 40% alpha
+        if (this.crumble && this.crumbleState === 'respawning') {
+            ctx.globalAlpha = 0.4;
         }
 
         // Feature 125: the static 3D body (faces + bricks + labels) is baked once into a bitmap
@@ -1201,6 +1211,12 @@ class Player extends Entity {
                     if (this.vy > 4) {
                         this.scaleX = 1.3;
                         this.scaleY = 0.7;
+                        // Feature 158: screen shake on very hard landing
+                        if (this.vy > 8) {
+                            const impactStr = Math.min((this.vy - 8) * 0.6, 5);
+                            shakeTimer = Math.max(shakeTimer, Math.round(impactStr * 2));
+                            shakeIntensity = Math.max(shakeIntensity, impactStr);
+                        }
                     }
                     this.vy = 0;
                     this.isGrounded = true;
