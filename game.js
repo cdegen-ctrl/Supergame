@@ -1210,6 +1210,30 @@ class Player extends Entity {
     }
 
     render() {
+        // Feature 135: Drop shadow — project an ellipse onto the surface below the player
+        if (!this.isGrounded) {
+            let shadowY = H; // default to bottom of screen
+            const cx = this.x + this.w / 2;
+            for (const p of platforms) {
+                if (cx >= p.x && cx <= p.x + p.w && p.y > this.y + this.h && p.y < shadowY) {
+                    shadowY = p.y;
+                }
+            }
+            const dist = shadowY - (this.y + this.h);
+            if (dist < 260) {
+                const opacity = Math.max(0, 0.35 * (1 - dist / 260));
+                const rx = Math.max(4, (this.w * 0.45) * (1 - dist / 500));
+                const ry = Math.max(2, rx * 0.35);
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.ellipse(cx, shadowY - 1, rx, ry, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
         // blink when invincible
         if (this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0) return;
 
@@ -5776,6 +5800,7 @@ let particles = [];
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let deathFlashTimer = 0; // red screen flash on player death
+let levelClearFlash = 0; // Feature 136: white flash on level complete
 let afterimages = []; // Feature 53: speed boost afterimage trail
 let levelTotalMarios = 0; // total enemies spawned at level start
 let comboCount = 0;
@@ -6546,6 +6571,7 @@ function loadLevel(index) {
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
     killStreakCount = 0; // Feature 83: reset streak on new level
+    levelClearFlash = 0; // Feature 136
     coinRainTimer = 0; coinRainBannerTimer = 0; coinRainEventInterval = COIN_RAIN_CHECK_INTERVAL; // Feature 111
     killStreakTimer = 0;
     levelTimer = 0;
@@ -9497,6 +9523,7 @@ function update() {
                     // coinCaveMode stays true until loadLevel resets it — prevents normal completion check below from also firing
                     gameState = 'LEVEL_COMPLETE';
                     levelCompleteTimer = 60;
+                    levelClearFlash = 28; // Feature 136
                     playSound('levelup');
                 }
             }
@@ -9515,6 +9542,7 @@ function update() {
                 }
                 gameState = 'LEVEL_COMPLETE';
                 levelCompleteTimer = 60; // brief pause before transition
+                levelClearFlash = 28; // Feature 136: white screen flash
                 playSound('levelup');
                 haptic([25, 40, 25, 40, 50]); // Feature 124
                 // Feature 86: Save daily challenge best score
@@ -9899,6 +9927,25 @@ function render() {
                 ctx.globalAlpha = 1;
                 ctx.restore();
                 deathFlashTimer--;
+            }
+            // Feature 136: white flash on level complete
+            if (levelClearFlash > 0) {
+                const t = levelClearFlash;
+                const alpha = t > 20 ? (28 - t) / 8 : t / 20;
+                ctx.save();
+                ctx.globalAlpha = Math.min(0.72, alpha);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, W, H);
+                if (t > 8 && t < 22) {
+                    ctx.globalAlpha = Math.min(1, (22 - t) / 7 + (t - 8) / 7);
+                    ctx.font = 'bold 38px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#004400';
+                    ctx.fillText('УРОВЕНЬ ПРОЙДЕН!', W / 2, H / 2);
+                }
+                ctx.globalAlpha = 1;
+                ctx.restore();
+                levelClearFlash--;
             }
             drawHUD();
             renderAchievementToasts();
