@@ -2682,6 +2682,104 @@ function checkWarpCoinCollisions() {
     warpCoins = warpCoins.filter(wc => !wc.collected);
 }
 
+// === FEATURE 167: EXPLOSIVE BARREL — stomping or spore-hitting detonates it, kills enemies in radius 150px ===
+class ExplosiveBarrel {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 30; this.h = 36;
+        this.exploded = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.exploded; }
+    explode(cx, cy) {
+        if (this.exploded) return;
+        this.exploded = true;
+        const RADIUS = 150;
+        let killCount = 0;
+        for (const m of marios) {
+            if (!m.isAlive) continue;
+            if (Math.hypot(m.x + m.w / 2 - cx, m.y + m.h / 2 - cy) > RADIUS) continue;
+            m.stomp();
+            killCount++;
+            let pts = 150;
+            if (player) { if (player.scoreBoostTimer > 0) pts *= 2; player.score += pts; totalScore += pts; }
+            onEnemyKilledStreak(m.x, m.y);
+            runStats.enemiesKilled++;
+            comboCount++; comboDisplayTimer = 100;
+            scorePopups.push({ x: m.x, y: m.y - 16, text: '+' + pts, color: '#ff6600', timer: 90 });
+        }
+        for (let i = 0; i < 22; i++) {
+            const ang = (Math.PI * 2 * i) / 22;
+            const spd = 2.5 + Math.random() * 5;
+            const col = [' #ff4400', '#ffaa00', '#ffffff', '#ff8800'][i % 4].trim();
+            particles.push(new DeathParticle(cx, cy, Math.cos(ang) * spd, Math.sin(ang) * spd, col, 9));
+        }
+        shakeTimer = 22; shakeIntensity = 8;
+        particles.push(new Particle(cx - 36, cy - 36, '💥 ВЗРЫВ!', '#ff6600'));
+        if (killCount > 0)
+            particles.push(new Particle(cx - 30, cy - 52, `×${killCount}`, '#ff4400'));
+        playSound('bomb');
+    }
+    render() {
+        if (this.exploded) return;
+        const t = this.animTimer;
+        const pulse = Math.sin(t * 0.14) * 0.12;
+        ctx.save();
+        const bx = this.x, by = this.y, bw = this.w, bh = this.h;
+        // Body gradient
+        const grad = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+        grad.addColorStop(0, '#a0522d');
+        grad.addColorStop(1, '#6b3a1f');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, bw, bh, 5);
+        ctx.fill();
+        // Metal hoops
+        ctx.strokeStyle = '#3a1f00';
+        ctx.lineWidth = 3;
+        [0.2, 0.5, 0.8].forEach(frac => {
+            ctx.beginPath();
+            ctx.moveTo(bx, by + bh * frac);
+            ctx.lineTo(bx + bw, by + bh * frac);
+            ctx.stroke();
+        });
+        // Warning text
+        ctx.font = `${13 + pulse * 8}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('💣', bx + bw / 2, by + bh / 2);
+        // Glow
+        ctx.shadowColor = '#ff4400';
+        ctx.shadowBlur = 10 + pulse * 14;
+        ctx.strokeStyle = `rgba(255,100,0,${0.3 + pulse * 0.3})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(bx - 2, by - 2, bw + 4, bh + 4, 7);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+let explosiveBarrels = [];
+
+function checkBarrelCollisions() {
+    if (!player) return;
+    for (const barrel of explosiveBarrels) {
+        if (barrel.exploded) continue;
+        const playerBottom = player.y + player.h;
+        const overlapX = player.x + player.w > barrel.x + 5 && player.x < barrel.x + barrel.w - 5;
+        const topHit = playerBottom >= barrel.y - 4 && playerBottom <= barrel.y + 14;
+        if (player.vy > 0 && overlapX && topHit) {
+            player.y = barrel.y - player.h;
+            player.vy = STOMP_BOUNCE;
+            player.isGrounded = false;
+            player.scaleX = 0.75; player.scaleY = 1.3;
+            barrel.explode(barrel.x + barrel.w / 2, barrel.y + barrel.h / 2);
+        }
+    }
+    explosiveBarrels = explosiveBarrels.filter(b => !b.exploded);
+}
+
 // === STAR POWER-UP ===
 const STAR_DURATION = 600; // 10 seconds at 60fps
 const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
@@ -4125,6 +4223,17 @@ function checkSporeCollisions() {
         }
     }
     spores = spores.filter(s => s.alive);
+    // Feature 167: spore hits explosive barrel
+    for (const s of spores) {
+        if (!s.alive) continue;
+        for (const barrel of explosiveBarrels) {
+            if (barrel.exploded) continue;
+            if (!aabb(s, barrel)) continue;
+            s.alive = false;
+            barrel.explode(barrel.x + barrel.w / 2, barrel.y + barrel.h / 2);
+            break;
+        }
+    }
 }
 
 // === FEATURE 105: FLASHLIGHT POWER-UP ===
@@ -5669,7 +5778,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность', '🪐 Орбита', '💣 Бомбардировка'];
 
 const LEVELS = [
     {
@@ -6956,7 +7065,85 @@ const LEVELS = [
         flyingMarioSpawns:      [{ x: 130, y: 108 }, { x: 430, y: 95 }, { x: 700, y: 108 }],
         teleporterMarioSpawns:  [{ x: 80,  y: 420 }, { x: 540, y: 420 }],
         parachuteMarioSpawns:   [{ x: 120, y: -60 }, { x: 380, y: -80 }, { x: 660, y: -60 }],
-    }
+    },
+
+    // === LEVEL 23: БОМБАРДИРОВКА (Feature 168) — explosive barrels, multi-platform arena ===
+    {
+        name: 'Бомбардировка',
+        platforms: [
+            // Ground sections
+            { x: 0,   y: 460, w: 120, h: 40 },
+            { x: 200, y: 460, w: 100, h: 40 },
+            { x: 400, y: 460, w: 100, h: 40 },
+            { x: 600, y: 460, w: 200, h: 40 },
+            // Low mid platforms
+            { x: 80,  y: 370, w: 100, h: 16 },
+            { x: 270, y: 360, w: 90,  h: 16, moveAxis: 'x', moveRange: 60, moveSpeed: 1.0 },
+            { x: 450, y: 370, w: 90,  h: 16, crumble: true },
+            { x: 620, y: 360, w: 100, h: 16 },
+            // Mid platforms
+            { x: 20,  y: 275, w: 110, h: 16 },
+            { x: 220, y: 262, w: 90,  h: 16, ice: true },
+            { x: 400, y: 270, w: 90,  h: 16, moveAxis: 'y', moveRange: 40, moveSpeed: 0.9 },
+            { x: 590, y: 265, w: 110, h: 16, crumble: true },
+            // Upper platforms
+            { x: 60,  y: 178, w: 110, h: 16, ice: true },
+            { x: 260, y: 165, w: 100, h: 16, moveAxis: 'x', moveRange: 80, moveSpeed: 1.2 },
+            { x: 460, y: 174, w: 100, h: 16 },
+            { x: 650, y: 178, w: 90,  h: 16, crumble: true },
+            // Top
+            { x: 100, y: 82,  w: 140, h: 16 },
+            { x: 340, y: 68,  w: 120, h: 16 },
+            { x: 570, y: 82,  w: 110, h: 16 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 }, { x: 210, y: 430 },
+            { x: 620, y: 430 }, { x: 680, y: 430 },
+            { x: 290, y: 338 }, { x: 630, y: 338 },
+            { x: 30,  y: 253 }, { x: 605, y: 243 },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'fast', 'ghost_mario', 'teleporter', 'berserker', 'armored'],
+        shooterMarioSpawns: [{ x: 110, y: 158 }, { x: 480, y: 154 }],
+        flyingMarioSpawns:  [{ x: 150, y: 100 }, { x: 500, y: 88 }],
+        parachuteMarioSpawns: [{ x: 200, y: -50 }, { x: 550, y: -70 }],
+        marioSpeed: 3.0,
+        playerSpawn: { x: 10, y: 430 },
+        barrelSpawns: [
+            { x: 50,  y: 424 }, { x: 460, y: 424 }, { x: 650, y: 424 },
+            { x: 90,  y: 334 }, { x: 640, y: 324 },
+            { x: 115, y: 142 }, { x: 473, y: 138 },
+        ],
+        coinSpawns: [
+            { x: 15,  y: 438 }, { x: 215, y: 438 }, { x: 415, y: 438 }, { x: 625, y: 438 },
+            { x: 100, y: 348 }, { x: 310, y: 338 }, { x: 500, y: 348 }, { x: 650, y: 338 },
+            { x: 50,  y: 253 }, { x: 250, y: 240 }, { x: 430, y: 248 }, { x: 620, y: 243 },
+            { x: 100, y: 156 }, { x: 300, y: 143 }, { x: 500, y: 152 }, { x: 680, y: 156 },
+            { x: 160, y: 60  }, { x: 380, y: 46  }, { x: 610, y: 60  },
+        ],
+        doubleCoinSpawns:  [{ x: 280, y: 143 }, { x: 490, y: 60 }],
+        tripleCoinSpawns:  [{ x: 370, y: 46 }],
+        rainbowCoinSpawns: [{ x: 600, y: 60 }],
+        lightningCoinSpawns: [{ x: 140, y: 60 }],
+        warpCoinSpawns:    [{ x: 690, y: 60 }, { x: 220, y: 60 }],
+        starSpawns:        [{ x: 130, y: 60 }, { x: 580, y: 60 }],
+        shieldSpawns:      [{ x: 0,   y: 444 }, { x: 720, y: 444 }],
+        bombSpawns:        [{ x: 265, y: 143 }, { x: 480, y: 152 }],
+        springSpawns:      [{ x: 0,   y: 444 }, { x: 720, y: 444 }],
+        speedBoostSpawns:  [{ x: 380, y: 46 }],
+        magnetSpawns:      [{ x: 440, y: 46 }],
+        freezeSpawns:      [{ x: 100, y: 156 }, { x: 665, y: 156 }],
+        ghostSpawns:       [{ x: 290, y: 143 }],
+        electroSpawns:     [{ x: 410, y: 46 }],
+        slowMoSpawns:      [{ x: 510, y: 46 }],
+        rocketSpawns:      [{ x: 180, y: 46 }, { x: 570, y: 60 }],
+        scoreBoostSpawns:  [{ x: 330, y: 46 }],
+        jetpackSpawns:     [{ x: 450, y: 46 }],
+        bubbleSpawns:      [{ x: 350, y: 68 }],
+        spikeBootsSpawns:  [{ x: 460, y: 46 }],
+        healSpawns:        [{ x: 105, y: 60 }],
+        spikeSpawns:       [{ x: 310, y: 444, count: 3 }, { x: 510, y: 444, count: 2 }],
+        checkpointSpawns:  [{ x: 395, y: 450 }],
+    },
 ];
 
 // === FEATURE 77: DROPPED POWERUP (enemy loot drops) ===
@@ -8021,7 +8208,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; // Feature 161/162/163/165: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; warpCoins = []; explosiveBarrels = []; // Feature 161/162/163/165/167: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -8137,6 +8324,21 @@ function loadLevel(index) {
             dronePowerUps = [new CompanionDronePU(p.x + Math.floor(p.w * 0.4), p.y - 24)];
         }
     }
+    // Feature 167: Explosive barrels — auto-place 1-2 on levels 6+ if not explicitly set
+    explosiveBarrels = (lvl.barrelSpawns || []).map(b => new ExplosiveBarrel(b.x, b.y));
+    if (!lvl.barrelSpawns && index >= 5) {
+        const cands = lvl.platforms.filter(p => p.y >= 380 && p.y <= 460 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
+        if (cands.length >= 2) {
+            const p1 = cands[0];
+            explosiveBarrels = [new ExplosiveBarrel(p1.x + Math.floor(p1.w * 0.5), p1.y - 36)];
+            if (cands.length >= 3) {
+                const p2 = cands[Math.floor(cands.length / 2)];
+                if (Math.abs(p2.x - p1.x) > 100)
+                    explosiveBarrels.push(new ExplosiveBarrel(p2.x + Math.floor(p2.w * 0.4), p2.y - 36));
+            }
+        }
+    }
+
     // Feature 163: Auto-place 1 spike boots power-up on levels 5+
     spikeBoots = (lvl.spikeBootsSpawns || []).map(s => new SpikeBootsPU(s.x, s.y));
     if (!lvl.spikeBootsSpawns && index >= 4) {
@@ -11296,6 +11498,8 @@ function update() {
             checkExplodingCoinCollisions();           // Feature 162
             warpCoins = warpCoins.filter(wc => wc.update()); // Feature 165
             checkWarpCoinCollisions();                         // Feature 165
+            explosiveBarrels = explosiveBarrels.filter(b => b.update()); // Feature 167
+            checkBarrelCollisions();                           // Feature 167
             dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
             checkDronePUCollisions();                 // Feature 161
             updateDroneCompanion();                   // Feature 161
@@ -11878,6 +12082,7 @@ function render() {
             explodingCoins.forEach(ec => ec.render());  // Feature 162
             dronePowerUps.forEach(dp => dp.render());   // Feature 161
             warpCoins.forEach(wc => wc.render());        // Feature 165
+            explosiveBarrels.forEach(b => b.render());   // Feature 167
             renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
