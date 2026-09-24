@@ -823,6 +823,9 @@ class Player extends Entity {
         this.rollTimer = 0;       // active roll frames (0 = not rolling)
         this.rollCooldown = 0;    // cooldown frames until next roll is allowed
         this.rollDir = 1;         // direction of roll
+        // Feature 161: Companion Drone
+        this.droneTimer = 0;
+        this.droneShootCooldown = 0;
     }
 
     update() {
@@ -1322,6 +1325,7 @@ class Player extends Entity {
             coinFrenzyActivated = false; // Feature 73
             this.bubbleTimer = 0; // Feature 145: lose bubble on death
             this.jumpBoostTimer = 0; // Feature 148: lose jump boost on death
+            this.droneTimer = 0; // Feature 161: lose drone on death
             playSound('hurt');
         }
     }
@@ -2487,6 +2491,85 @@ function checkLightningCoinCollisions() {
         playSound('star');
     }
     lightningCoins = lightningCoins.filter(lc => !lc.collected);
+}
+
+// === FEATURE 162: EXPLODING COIN — red-orange coin that kills enemies in radius on pickup ===
+class ExplodingCoin {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 22; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 3;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.88 + Math.sin(t * 0.2) * 0.12;
+        const blink = Math.floor(t / 8) % 2 === 0;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, 17 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = blink ? `rgba(255,90,0,${0.35*pulse})` : `rgba(255,200,0,${0.25*pulse})`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(cx-2, cy-2, 1, cx, cy, 10*pulse);
+        grad.addColorStop(0, blink ? '#ff8844' : '#ffcc44');
+        grad.addColorStop(1, blink ? '#cc2200' : '#ee6600');
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.strokeStyle = blink ? '#ff4400' : '#ffaa00';
+        ctx.lineWidth = 2; ctx.stroke();
+        ctx.font = `bold ${Math.round(12 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('💥', cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let explodingCoins = [];
+
+function checkExplodingCoinCollisions() {
+    if (!player) return;
+    const EXPLODE_RADIUS = 130;
+    for (const ec of explodingCoins) {
+        if (ec.collected) continue;
+        if (!aabb(player, ec)) continue;
+        ec.collected = true;
+        let pts = 300;
+        if (player.scoreBoostTimer > 0) pts *= 2;
+        if (coinFrenzyTimer > 0) pts = Math.floor(pts * 3);
+        player.score += pts;
+        totalScore += pts;
+        particles.push(new Particle(ec.x - 10, ec.y - 18, '💥 +' + pts + '!', '#ff8800'));
+        const cx = ec.x + ec.w / 2, cy = ec.y + ec.h / 2;
+        let killCount = 0;
+        for (const m of marios) {
+            if (!m.isAlive) continue;
+            const mx = m.x + m.w / 2, my = m.y + m.h / 2;
+            if (Math.hypot(mx - cx, my - cy) <= EXPLODE_RADIUS) {
+                m.armor = 0;
+                m.stomp();
+                killCount++;
+            }
+        }
+        if (killCount > 0) {
+            const kpts = killCount * 100;
+            player.score += kpts; totalScore += kpts;
+            particles.push(new Particle(cx - 20, cy - 30, '💥 x' + killCount + ' +' + kpts + '!', '#ff4400'));
+            for (let _k = 0; _k < killCount; _k++) onEnemyKilledStreak(cx, cy);
+            comboCount += killCount;
+            runStats.enemiesKilled += killCount;
+        }
+        spawnExplosionParticles(cx, cy);
+        shakeTimer = 18; shakeIntensity = 5;
+        playSound('bomb');
+    }
+    explodingCoins = explodingCoins.filter(ec => !ec.collected);
 }
 
 // === STAR POWER-UP ===
@@ -4202,6 +4285,121 @@ function checkHealingMushroomCollisions() {
         playSound('star');
     }
     healingMushrooms = healingMushrooms.filter(hm => !hm.collected);
+}
+
+// === FEATURE 161: COMPANION DRONE POWER-UP ===
+const DRONE_DURATION = 600;        // 10 seconds
+const DRONE_SHOOT_INTERVAL = 180;  // shoot every 3 seconds
+const DRONE_STUN_FRAMES = 120;     // 2-second stun
+
+class CompanionDronePU {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 22; this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() { this.animTimer++; return !this.collected; }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.9 + Math.sin(t * 0.14) * 0.1;
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 140, 0, ${0.25 * pulse})`; ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 10 * pulse);
+        ctx.lineTo(cx + 8 * pulse, cy);
+        ctx.lineTo(cx, cy + 10 * pulse);
+        ctx.lineTo(cx - 8 * pulse, cy);
+        ctx.closePath();
+        ctx.fillStyle = '#ff8800'; ctx.fill();
+        ctx.strokeStyle = '#ffcc44'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.font = `bold ${Math.round(11 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('🤖', cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let dronePowerUps = [];
+
+function checkDronePUCollisions() {
+    if (!player) return;
+    for (const dp of dronePowerUps) {
+        if (dp.collected) continue;
+        if (!aabb(player, dp)) continue;
+        dp.collected = true;
+        player.droneTimer = DRONE_DURATION;
+        player.droneShootCooldown = DRONE_SHOOT_INTERVAL;
+        particles.push(new Particle(dp.x - 10, dp.y - 18, '🤖 ДРОН!', '#ffaa44'));
+        playSound('powerup');
+    }
+    dronePowerUps = dronePowerUps.filter(dp => !dp.collected);
+}
+
+function updateDroneCompanion() {
+    if (!player || player.droneTimer <= 0) return;
+    player.droneTimer--;
+    if (player.droneShootCooldown > 0) { player.droneShootCooldown--; return; }
+    let nearest = null, nearestDist = Infinity;
+    const px = player.x + player.w / 2, py = player.y + player.h / 2;
+    for (const m of marios) {
+        if (!m.isAlive) continue;
+        const d = Math.hypot(m.x + m.w / 2 - px, m.y + m.h / 2 - py);
+        if (d < nearestDist) { nearestDist = d; nearest = m; }
+    }
+    if (nearest) {
+        nearest.frozenTimer = DRONE_STUN_FRAMES;
+        player.droneShootCooldown = DRONE_SHOOT_INTERVAL;
+        const ex = nearest.x + nearest.w / 2, ey = nearest.y + nearest.h / 2;
+        for (let i = 0; i < 6; i++) {
+            const t = i / 5;
+            particles.push(new DeathParticle(
+                px + (ex - px) * t + (Math.random() - 0.5) * 20,
+                py + (ey - py) * t + (Math.random() - 0.5) * 20,
+                (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, '#88ccff', 2));
+        }
+        particles.push(new Particle(nearest.x, nearest.y - 12, '⚡ ОГЛУШЁН!', '#88aaff'));
+        playSound('freeze');
+    }
+}
+
+function renderDroneCompanion() {
+    if (!player || player.droneTimer <= 0) return;
+    const t = Date.now() * 0.003;
+    const orbitR = 38;
+    const pcx = player.x + player.w / 2, pcy = player.y + player.h / 2 - 10;
+    const dx = pcx + Math.cos(t) * orbitR;
+    const dy = pcy + Math.sin(t) * orbitR;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, orbitR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,150,50,0.18)';
+    ctx.lineWidth = 1.5; ctx.setLineDash([4, 6]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(dx, dy, 11, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,130,30,${0.3 + Math.sin(t * 4) * 0.1})`; ctx.fill();
+    const ps = 0.9 + Math.sin(t * 5) * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(dx, dy - 8 * ps);
+    ctx.lineTo(dx + 6 * ps, dy);
+    ctx.lineTo(dx, dy + 8 * ps);
+    ctx.lineTo(dx - 6 * ps, dy);
+    ctx.closePath();
+    ctx.fillStyle = '#ff7700'; ctx.fill();
+    ctx.strokeStyle = '#ffcc44'; ctx.lineWidth = 1.2; ctx.stroke();
+    if (player.droneShootCooldown > 0) {
+        const frac = 1 - player.droneShootCooldown / DRONE_SHOOT_INTERVAL;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 10, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.restore();
 }
 
 function renderFlashlightEffect() {
@@ -6861,6 +7059,7 @@ function startSurvivalMode() {
     shields = (lvl.shieldSpawns || []).map(s => new Shield(s.x, s.y));
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
     springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = []; giantPUs = []; giftChests = [];
+    explodingCoins = []; dronePowerUps = []; // Feature 161/162
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -7385,6 +7584,8 @@ function mirrorLevelData(lvl) {
         bubbleSpawns:         (lvl.bubbleSpawns         || []).map(msp), // Feature 145
         jumpBoostSpawns:      (lvl.jumpBoostSpawns      || []).map(msp), // Feature 148
         lightningCoinSpawns:  (lvl.lightningCoinSpawns  || []).map(msp), // Feature 147
+        explodingCoinSpawns:  (lvl.explodingCoinSpawns  || []).map(msp), // Feature 162
+        dronePUSpawns:        (lvl.dronePUSpawns        || []).map(msp), // Feature 161
         portalSpawns: (lvl.portalSpawns || []).map(p => ({
             blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
             orange: { x: mx(p.orange.x, 22), y: p.orange.y },
@@ -7476,6 +7677,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
+    explodingCoins = []; dronePowerUps = []; // Feature 161/162: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -7562,6 +7764,24 @@ function loadLevel(index) {
         if (cands.length >= 3) {
             const p = cands[Math.floor(cands.length * 0.4)];
             giftChests = [new GiftChest(p.x + Math.floor(p.w * 0.7), p.y - 20)];
+        }
+    }
+    // Feature 162: Auto-place 1 exploding coin on levels 3+ if none specified
+    explodingCoins = (lvl.explodingCoinSpawns || []).map(s => new ExplodingCoin(s.x, s.y));
+    if (!lvl.explodingCoinSpawns && index >= 2) {
+        const cands = lvl.platforms.filter(p => p.y < 420 && p.w >= 50 && !p.crumble).sort((a, b) => b.y - a.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.35)];
+            explodingCoins = [new ExplodingCoin(p.x + Math.floor(p.w * 0.5), p.y - 24)];
+        }
+    }
+    // Feature 161: Auto-place 1 companion drone power-up on levels 4+
+    dronePowerUps = (lvl.dronePUSpawns || []).map(s => new CompanionDronePU(s.x, s.y));
+    if (!lvl.dronePUSpawns && index >= 3) {
+        const cands = lvl.platforms.filter(p => p.y < 350 && p.w >= 60 && !p.crumble && !p.ice).sort((a, b) => a.y - b.y);
+        if (cands.length >= 3) {
+            const p = cands[Math.floor(cands.length * 0.7)];
+            dronePowerUps = [new CompanionDronePU(p.x + Math.floor(p.w * 0.4), p.y - 24)];
         }
     }
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
@@ -8999,6 +9219,40 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff099';
         ctx.fillText('↑ ПРЫЖОК x1.6', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 161: Companion Drone timer bar
+    if (player && player.droneTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0);
+        const frac = player.droneTimer / DRONE_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.012) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255, 150, 50, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffcc88';
+        ctx.fillText('🤖 ДРОН', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -10614,6 +10868,11 @@ function update() {
             checkJumpBoostCollisions();               // Feature 148
             lightningCoins = lightningCoins.filter(lc => lc.update()); // Feature 147
             checkLightningCoinCollisions();           // Feature 147
+            explodingCoins = explodingCoins.filter(ec => ec.update()); // Feature 162
+            checkExplodingCoinCollisions();           // Feature 162
+            dronePowerUps = dronePowerUps.filter(dp => dp.update()); // Feature 161
+            checkDronePUCollisions();                 // Feature 161
+            updateDroneCompanion();                   // Feature 161
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -11164,6 +11423,9 @@ function render() {
             bubbleShields.forEach(b => b.render());   // Feature 145
             jumpBoosts.forEach(jb => jb.render());    // Feature 148
             lightningCoins.forEach(lc => lc.render()); // Feature 147
+            explodingCoins.forEach(ec => ec.render());  // Feature 162
+            dronePowerUps.forEach(dp => dp.render());   // Feature 161
+            renderDroneCompanion();                      // Feature 161
             // Feature 149: Magma Floor — animated lava glow strip at bottom on volcano levels
             if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano) {
                 const lavaY = 462;
