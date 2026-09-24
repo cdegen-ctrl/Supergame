@@ -826,6 +826,8 @@ class Player extends Entity {
         // Feature 161: Companion Drone
         this.droneTimer = 0;
         this.droneShootCooldown = 0;
+        this.spikeBootsTimer = 0;   // Feature 163: spike boots chain stomp
+        this.spikeBootsChains = 0;  // Feature 163: chains used this stomp
     }
 
     update() {
@@ -1158,6 +1160,7 @@ class Player extends Entity {
         if (this.bubbleTimer > 0) this.bubbleTimer--;
         // Feature 148: Jump Boost timer
         if (this.jumpBoostTimer > 0) this.jumpBoostTimer--;
+        if (this.spikeBootsTimer > 0) this.spikeBootsTimer--; // Feature 163
         // Feature 149: Magma Floor — damage player when near bottom on volcano levels
         if (this.magmaDmgTimer > 0) this.magmaDmgTimer--;
         if (LEVELS[currentLevel] && LEVELS[currentLevel].isVolcano && this.y + this.h >= 462
@@ -1251,6 +1254,7 @@ class Player extends Entity {
                     this.jumpCount = 0;
                     this.canDoubleJump = false;
                     this.canTripleJump = false; // Feature 131
+                    this.spikeBootsChains = 0;  // Feature 163: reset chain count on landing
                     if (this.groundPounding) { // Feature 132: ground pound impact
                         this.groundPounding = false;
                         groundPoundEffect(this.x + this.w / 2, this.y + this.h);
@@ -1326,6 +1330,7 @@ class Player extends Entity {
             this.bubbleTimer = 0; // Feature 145: lose bubble on death
             this.jumpBoostTimer = 0; // Feature 148: lose jump boost on death
             this.droneTimer = 0; // Feature 161: lose drone on death
+            this.spikeBootsTimer = 0; // Feature 163: lose spike boots on death
             playSound('hurt');
         }
     }
@@ -2585,6 +2590,9 @@ const ELECTRO_RADIUS = 80; // px radius of electric field
 const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
 const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
 const JUMP_BOOST_DURATION = 480; // Feature 148: 8 seconds at 60fps
+const SPIKE_BOOTS_DURATION = 600; // Feature 163: 10 seconds at 60fps
+const SPIKE_BOOTS_RADIUS = 220;   // Feature 163: chain stomp search radius px
+const SPIKE_BOOTS_MAX_CHAIN = 3;  // Feature 163: max chain bounces per stomp
 const SLOW_MO_FACTOR = 0.4;   // enemies move at 40% speed
 
 class Star {
@@ -4205,6 +4213,80 @@ function checkJumpBoostCollisions() {
     jumpBoosts = jumpBoosts.filter(jb => !jb.collected);
 }
 
+// === FEATURE 163: SPIKE BOOTS — chain stomp power-up ===
+class SpikeBootsPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.85 + Math.sin(t * 0.13) * 0.15;
+        ctx.save();
+        // Red-orange glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 60, 0, ${0.22 + Math.abs(Math.sin(t * 0.08)) * 0.18})`;
+        ctx.fill();
+        // Boot body
+        ctx.fillStyle = '#cc2200';
+        ctx.fillRect(cx - 8, cy - 4, 16, 10);
+        // Sole
+        ctx.fillStyle = '#882200';
+        ctx.fillRect(cx - 9, cy + 5, 18, 4);
+        // Spikes on bottom
+        ctx.fillStyle = '#ffcc00';
+        for (let i = 0; i < 4; i++) {
+            const sx = cx - 8 + i * 5;
+            ctx.beginPath();
+            ctx.moveTo(sx, cy + 9);
+            ctx.lineTo(sx + 2.5, cy + 15);
+            ctx.lineTo(sx + 5, cy + 9);
+            ctx.fill();
+        }
+        // Lace detail
+        ctx.strokeStyle = '#ffaa66';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 5, cy - 4);
+        ctx.lineTo(cx + 5, cy - 4);
+        ctx.stroke();
+        // Top trim
+        ctx.fillStyle = '#ff5500';
+        ctx.fillRect(cx - 8, cy - 8, 16, 5);
+        ctx.fillStyle = '#ffaa00';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚡', cx, cy - 1);
+        ctx.restore();
+    }
+}
+let spikeBoots = [];
+
+function checkSpikeBootsCollisions() {
+    if (!player) return;
+    for (const sb of spikeBoots) {
+        if (sb.collected) continue;
+        if (!aabb(player, sb)) continue;
+        sb.collected = true;
+        player.spikeBootsTimer = SPIKE_BOOTS_DURATION;
+        particles.push(new Particle(sb.x - 10, sb.y - 18, '🥾 ЦЕПНОЙ СТОМП!', '#ff6600'));
+        playSound('powerup');
+    }
+    spikeBoots = spikeBoots.filter(sb => !sb.collected);
+}
+
 // === FEATURE 137: HEALING MUSHROOM — green +1 life power-up ===
 class HealingMushroom {
     constructor(x, y) {
@@ -5482,7 +5564,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря', '🔥 Инферно', '♾ Вечность'];
 
 const LEVELS = [
     {
@@ -6615,6 +6697,88 @@ const LEVELS = [
         teleporterMarioSpawns: [{ x: 110, y: 430 }, { x: 590, y: 430 }],
         parachuteMarioSpawns:  [{ x: 90,  y: -60 }, { x: 390, y: -80 }, { x: 670, y: -60 }],
         spikeSpawns: [{ x: 103, y: 444, count: 2 }, { x: 422, y: 444, count: 2 }],
+    },
+    // === LEVEL 21: ВЕЧНОСТЬ (Feature 164) ===
+    {
+        name: 'Вечность',
+        hasWind: true,
+        platforms: [
+            // Broken floor sections with gaps
+            { x: 0,   y: 460, w: 90,  h: 40 },
+            { x: 150, y: 460, w: 90,  h: 40 },
+            { x: 310, y: 460, w: 90,  h: 40, conveyor: 1 },
+            { x: 470, y: 460, w: 90,  h: 40 },
+            { x: 630, y: 460, w: 90,  h: 40, conveyor: -1 },
+            // Low-mid — ice and crumble mix
+            { x: 30,  y: 370, w: 100, h: 18, ice: true },
+            { x: 195, y: 355, w: 100, h: 18, crumble: true },
+            { x: 360, y: 368, w: 100, h: 18 },
+            { x: 520, y: 355, w: 100, h: 18, ice: true },
+            { x: 690, y: 368, w: 80,  h: 18, crumble: true },
+            // Mid — moving + pulse platforms
+            { x: 10,  y: 270, w: 110, h: 18, pulse: true },
+            { x: 190, y: 258, w: 100, h: 18, moveAxis: 'x', moveRange: 80, moveSpeed: 1.4 },
+            { x: 360, y: 270, w: 80,  h: 18, crumble: true },
+            { x: 490, y: 258, w: 100, h: 18, moveAxis: 'x', moveRange: 60, moveSpeed: 1.6 },
+            { x: 680, y: 270, w: 90,  h: 18, pulse: true },
+            // Upper — varied heights
+            { x: 50,  y: 175, w: 120, h: 18 },
+            { x: 245, y: 160, w: 110, h: 18, ice: true },
+            { x: 430, y: 170, w: 110, h: 18, moveAxis: 'y', moveRange: 40, moveSpeed: 1.2 },
+            { x: 620, y: 175, w: 110, h: 18, crumble: true },
+            // Top
+            { x: 110, y: 80,  w: 140, h: 18, pulse: true },
+            { x: 370, y: 65,  w: 140, h: 18 },
+            { x: 590, y: 80,  w: 100, h: 18 },
+        ],
+        marioSpawns: [
+            { x: 5,   y: 430 }, { x: 160, y: 430 }, { x: 480, y: 430 }, { x: 645, y: 430 },
+            { x: 215, y: 330 }, { x: 540, y: 330 },
+            { x: 100, y: 248 }, { x: 520, y: 238 },
+            { x: 270, y: 135 }, { x: 450, y: 42  }, { x: 620, y: 50  },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'ghost_mario', 'teleporter', 'fast', 'berserker', 'armored', 'shooter', 'flying', 'ghost_mario'],
+        marioSpeed: 3.6,
+        playerSpawn: { x: 20, y: 430 },
+        coinSpawns: [
+            { x: 15,  y: 435 }, { x: 175, y: 435 }, { x: 330, y: 435 }, { x: 490, y: 435 }, { x: 650, y: 435 },
+            { x: 55,  y: 345 }, { x: 225, y: 330 }, { x: 400, y: 343 }, { x: 555, y: 330 },
+            { x: 40,  y: 245 }, { x: 220, y: 233 }, { x: 385, y: 245 }, { x: 520, y: 233 }, { x: 710, y: 245 },
+            { x: 90,  y: 150 }, { x: 285, y: 135 }, { x: 475, y: 145 }, { x: 650, y: 150 },
+            { x: 150, y: 55  }, { x: 275, y: 40  }, { x: 420, y: 40  }, { x: 530, y: 40  }, { x: 620, y: 55  },
+        ],
+        doubleCoinSpawns:   [{ x: 265, y: 135 }, { x: 455, y: 40 }],
+        tripleCoinSpawns:   [{ x: 400, y: 40 }],
+        rainbowCoinSpawns:  [{ x: 580, y: 55 }],
+        lightningCoinSpawns:[{ x: 130, y: 55 }],
+        explodingCoinSpawns:[{ x: 700, y: 50 }],
+        starSpawns:         [{ x: 140, y: 55 }, { x: 560, y: 40 }],
+        shieldSpawns:       [{ x: 0,   y: 445 }, { x: 730, y: 445 }],
+        bombSpawns:         [{ x: 260, y: 135 }, { x: 510, y: 145 }],
+        springSpawns:       [{ x: 40, y: 446 }, { x: 645, y: 446 }],
+        speedBoostSpawns:   [{ x: 390, y: 40 }],
+        magnetSpawns:       [{ x: 480, y: 40 }],
+        freezeSpawns:       [{ x: 100, y: 150 }, { x: 650, y: 150 }],
+        ghostSpawns:        [{ x: 280, y: 135 }],
+        electroSpawns:      [{ x: 430, y: 40 }],
+        slowMoSpawns:       [{ x: 530, y: 40 }],
+        rocketSpawns:       [{ x: 200, y: 40 }, { x: 595, y: 55 }],
+        scoreBoostSpawns:   [{ x: 340, y: 40 }],
+        jetpackSpawns:      [{ x: 460, y: 40 }],
+        bubbleSpawns:       [{ x: 370, y: 65 }],
+        spikeBootsSpawns:   [{ x: 490, y: 40 }],
+        healSpawns:         [{ x: 120, y: 55 }],
+        checkpointSpawns:   [{ x: 380, y: 450 }],
+        flyingMarioSpawns:      [{ x: 150, y: 115 }, { x: 450, y: 100 }, { x: 700, y: 115 }],
+        shooterMarioSpawns:     [{ x: 300, y: 135 }, { x: 505, y: 143 }],
+        teleporterMarioSpawns:  [{ x: 90,  y: 430 }, { x: 560, y: 430 }],
+        parachuteMarioSpawns:   [{ x: 100, y: -60 }, { x: 400, y: -80 }, { x: 680, y: -60 }],
+        berserkerMarioSpawns:   [{ x: 200, y: 430 }, { x: 640, y: 430 }],
+        spikeSpawns: [
+            { x: 93,  y: 444, count: 2 },
+            { x: 313, y: 444, count: 2 },
+            { x: 563, y: 444, count: 2 },
+        ],
     }
 ];
 
@@ -7060,6 +7224,7 @@ function startSurvivalMode() {
     bombs = (lvl.bombSpawns || []).map(b => new Bomb(b.x, b.y));
     springPads = []; speedBoosts = []; magnets = []; freezes = []; ghosts = []; scoreBoosts = []; electricos = []; slowMos = []; rockets = []; magBootsList = []; giantPUs = []; giftChests = [];
     explodingCoins = []; dronePowerUps = []; // Feature 161/162
+    spikeBoots = []; // Feature 163
     portalPairs = []; checkpoints = [];
     isBossLevel = false; bossMarco = null;
     initWeather(4); initBirds(); shootingStars = [];
@@ -7586,6 +7751,7 @@ function mirrorLevelData(lvl) {
         lightningCoinSpawns:  (lvl.lightningCoinSpawns  || []).map(msp), // Feature 147
         explodingCoinSpawns:  (lvl.explodingCoinSpawns  || []).map(msp), // Feature 162
         dronePUSpawns:        (lvl.dronePUSpawns        || []).map(msp), // Feature 161
+        spikeBootsSpawns:     (lvl.spikeBootsSpawns    || []).map(msp), // Feature 163
         portalSpawns: (lvl.portalSpawns || []).map(p => ({
             blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
             orange: { x: mx(p.orange.x, 22), y: p.orange.y },
@@ -7677,7 +7843,7 @@ function loadLevel(index) {
     scorePopups = []; // Feature 88
     killFeed = [];    // Feature 160
     droppedPowerups = []; // Feature 77: reset on level load
-    explodingCoins = []; dronePowerUps = []; // Feature 161/162: reset on level load
+    explodingCoins = []; dronePowerUps = []; spikeBoots = []; // Feature 161/162/163: reset on level load
     comboCount = 0;
     comboDisplayTimer = 0;
     levelMaxCombo = 0;
@@ -7782,6 +7948,15 @@ function loadLevel(index) {
         if (cands.length >= 3) {
             const p = cands[Math.floor(cands.length * 0.7)];
             dronePowerUps = [new CompanionDronePU(p.x + Math.floor(p.w * 0.4), p.y - 24)];
+        }
+    }
+    // Feature 163: Auto-place 1 spike boots power-up on levels 5+
+    spikeBoots = (lvl.spikeBootsSpawns || []).map(s => new SpikeBootsPU(s.x, s.y));
+    if (!lvl.spikeBootsSpawns && index >= 4) {
+        const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 50 && !p.crumble).sort((a, b) => b.y - a.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.45)];
+            spikeBoots = [new SpikeBootsPU(p.x + Math.floor(p.w * 0.6), p.y - 26)];
         }
     }
     // Portals: each entry is {blue: {x,y}, orange: {x,y}}
@@ -8064,6 +8239,31 @@ function checkPlayerMarioCollisions() {
                 particles.push(new Particle(mario.x, mario.y - 10, pText, pColor));
                 shakeTimer = Math.min(6 + comboCount, 12);
                 shakeIntensity = Math.min(3 + comboCount * 0.5, 7);
+                // Feature 163: Spike Boots — auto-redirect to nearest enemy (chain stomp)
+                if (player.spikeBootsTimer > 0 && player.spikeBootsChains < SPIKE_BOOTS_MAX_CHAIN) {
+                    const killedCx = mario.x + mario.w / 2;
+                    const killedCy = mario.y + mario.h / 2;
+                    let nearest = null;
+                    let nearestDist = SPIKE_BOOTS_RADIUS;
+                    for (const m2 of marios) {
+                        if (!m2.isAlive || m2 === mario) continue;
+                        const d = Math.hypot(m2.x + m2.w/2 - killedCx, m2.y + m2.h/2 - killedCy);
+                        if (d < nearestDist) { nearestDist = d; nearest = m2; }
+                    }
+                    if (nearest) {
+                        // Launch player toward nearest enemy
+                        const dx = (nearest.x + nearest.w / 2) - (player.x + player.w / 2);
+                        player.vx = Math.sign(dx) * Math.min(Math.abs(dx) * 0.15, 8);
+                        player.vy = -12; // jump arc toward enemy
+                        player.spikeBootsChains++;
+                        // Visual sparks
+                        for (let _si = 0; _si < 6; _si++) {
+                            const ang = Math.random() * Math.PI * 2;
+                            particles.push(new DeathParticle(player.x + player.w/2, player.y + player.h, Math.cos(ang)*3, Math.sin(ang)*2 - 2, '#ff6600', 4));
+                        }
+                        particles.push(new Particle(player.x, player.y - 18, '🥾 ЦЕПЬ!', '#ff4400'));
+                    }
+                }
             } else {
                 // Armor absorbed — no score, just a bounce
                 particles.push(new Particle(mario.x, mario.y - 10, 'БРОНЯ!', '#aaaaaa'));
@@ -9253,6 +9453,41 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffcc88';
         ctx.fillText('🤖 ДРОН', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 163: Spike Boots timer bar
+    if (player && player.spikeBootsTimer > 0) {
+        const barW = 140, barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0)
+            + (player.jumpBoostTimer > 0 ? 18 : 0)
+            + (player.droneTimer > 0 ? 18 : 0);
+        const frac = player.spikeBootsTimer / SPIKE_BOOTS_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.013) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255, 80, 0, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff9966';
+        ctx.fillText('🥾 ЦЕПНОЙ СТОМП', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -10866,6 +11101,8 @@ function update() {
             checkBubbleShieldCollisions();            // Feature 145
             jumpBoosts = jumpBoosts.filter(jb => jb.update()); // Feature 148
             checkJumpBoostCollisions();               // Feature 148
+            spikeBoots = spikeBoots.filter(sb => sb.update()); // Feature 163
+            checkSpikeBootsCollisions();              // Feature 163
             lightningCoins = lightningCoins.filter(lc => lc.update()); // Feature 147
             checkLightningCoinCollisions();           // Feature 147
             explodingCoins = explodingCoins.filter(ec => ec.update()); // Feature 162
@@ -11416,12 +11653,38 @@ function render() {
             renderRocketTrail(); // Feature 80: rocket flame trail
             renderJetpackFlame(); // Feature 99: jetpack thrust flame
             renderMagBootsEffect(); // Feature 85: mag boots aura
+            // Feature 163: Spike Boots — orange spiky aura at player's feet
+            if (player && player.spikeBootsTimer > 0) {
+                const frac = player.spikeBootsTimer / SPIKE_BOOTS_DURATION;
+                const pulse = 0.5 + Math.sin(Date.now() * 0.015) * 0.3;
+                const cx = player.x + player.w / 2;
+                const by = player.y + player.h;
+                ctx.save();
+                ctx.globalAlpha = frac * pulse;
+                ctx.strokeStyle = '#ff6600';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.ellipse(cx, by, player.w * 0.7, 6, 0, 0, Math.PI * 2);
+                ctx.stroke();
+                // Small spikes below feet
+                for (let i = 0; i < 5; i++) {
+                    const sx = cx - player.w * 0.6 + i * (player.w * 0.3);
+                    ctx.beginPath();
+                    ctx.moveTo(sx, by);
+                    ctx.lineTo(sx + 3, by + 7);
+                    ctx.lineTo(sx + 6, by);
+                    ctx.fillStyle = '#ffaa00';
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
             jetpacks.forEach(j => j.render()); // Feature 99: jetpack items
             flashlights.forEach(fl => fl.render()); // Feature 105
             healingMushrooms.forEach(hm => hm.render()); // Feature 137
             giftChests.forEach(gc => gc.render());    // Feature 143
             bubbleShields.forEach(b => b.render());   // Feature 145
             jumpBoosts.forEach(jb => jb.render());    // Feature 148
+            spikeBoots.forEach(sb => sb.render());    // Feature 163
             lightningCoins.forEach(lc => lc.render()); // Feature 147
             explodingCoins.forEach(ec => ec.render());  // Feature 162
             dronePowerUps.forEach(dp => dp.render());   // Feature 161
