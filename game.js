@@ -4585,7 +4585,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица'];
 
 const LEVELS = [
     {
@@ -5511,6 +5511,73 @@ const LEVELS = [
         shooterMarioSpawns:   [{ x: 260, y: 75  }, { x: 520, y: 85  }],
         parachuteMarioSpawns: [{ x: 100, y: -60 }, { x: 500, y: -80 }],
         spikeSpawns: [{ x: 132, y: 444, count: 2 }, { x: 452, y: 444, count: 2 }],
+    },
+    // === FEATURE 133: LEVEL 18 — МАТРИЦА ===
+    {
+        name: 'Матрица',
+        isMatrix: true,
+        platforms: [
+            // Bottom floor with gaps
+            { x: 0,   y: 460, w: 120, h: 40 },
+            { x: 175, y: 460, w: 120, h: 40 },
+            { x: 355, y: 460, w: 110, h: 40 },
+            { x: 520, y: 460, w: 120, h: 40 },
+            { x: 695, y: 460, w: 105, h: 40 },
+            // Mid tier
+            { x: 60,  y: 370, w: 110, h: 18 },
+            { x: 230, y: 355, w: 120, h: 18, crumble: true },
+            { x: 410, y: 370, w: 110, h: 18 },
+            { x: 595, y: 355, w: 110, h: 18, crumble: true },
+            // Upper-mid
+            { x: 20,  y: 275, w: 100, h: 18 },
+            { x: 195, y: 265, w: 115, h: 18 },
+            { x: 370, y: 280, w: 100, h: 18 },
+            { x: 545, y: 265, w: 110, h: 18 },
+            { x: 695, y: 275, w: 85,  h: 18 },
+            // Top tier
+            { x: 80,  y: 170, w: 120, h: 18 },
+            { x: 290, y: 155, w: 200, h: 18 },
+            { x: 560, y: 165, w: 120, h: 18 },
+            // Very top
+            { x: 180, y: 70,  w: 140, h: 18 },
+            { x: 440, y: 70,  w: 140, h: 18 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 }, { x: 380, y: 430 }, { x: 710, y: 430 },
+            { x: 250, y: 335 }, { x: 610, y: 335 },
+            { x: 300, y: 140 }, { x: 480, y: 45  },
+        ],
+        marioTypes: ['fast', 'armored', 'fast', 'berserker', 'armored', 'teleporter', 'ghost_mario'],
+        marioSpeed: 3.0,
+        playerSpawn: { x: 30, y: 430 },
+        coinSpawns: [
+            { x: 40,  y: 435 }, { x: 210, y: 435 }, { x: 390, y: 435 }, { x: 555, y: 435 }, { x: 720, y: 435 },
+            { x: 90,  y: 345 }, { x: 270, y: 330 }, { x: 450, y: 345 }, { x: 630, y: 330 },
+            { x: 40,  y: 250 }, { x: 230, y: 240 }, { x: 400, y: 255 }, { x: 575, y: 240 }, { x: 720, y: 250 },
+            { x: 120, y: 145 }, { x: 350, y: 130 }, { x: 595, y: 140 },
+            { x: 220, y: 45  }, { x: 350, y: 45  }, { x: 480, y: 45  }, { x: 560, y: 45  },
+        ],
+        doubleCoinSpawns: [{ x: 310, y: 130 }, { x: 500, y: 45 }],
+        tripleCoinSpawns: [{ x: 390, y: 45 }],
+        starSpawns:       [{ x: 260, y: 45  }, { x: 520, y: 45  }],
+        shieldSpawns:     [{ x: 0,   y: 445 }, { x: 715, y: 445 }],
+        bombSpawns:       [{ x: 200, y: 240 }, { x: 560, y: 245 }],
+        springSpawns:     [{ x: 60, y: 446 }, { x: 680, y: 446 }],
+        speedBoostSpawns: [{ x: 340, y: 45 }],
+        magnetSpawns:     [{ x: 455, y: 45 }],
+        freezeSpawns:     [{ x: 100, y: 145 }, { x: 610, y: 145 }],
+        ghostSpawns:      [{ x: 260, y: 130 }],
+        electroSpawns:    [{ x: 420, y: 45  }],
+        slowMoSpawns:     [{ x: 590, y: 45  }],
+        rocketSpawns:     [{ x: 190, y: 45  }, { x: 540, y: 45  }],
+        jetpackSpawns:    [{ x: 310, y: 45  }],
+        scoreBoostSpawns: [{ x: 480, y: 45  }],
+        checkpointSpawns: [{ x: 380, y: 450 }],
+        flyingMarioSpawns:     [{ x: 150, y: 120 }, { x: 430, y: 110 }, { x: 680, y: 130 }],
+        shooterMarioSpawns:    [{ x: 280, y: 45  }, { x: 500, y: 45  }],
+        teleporterMarioSpawns: [{ x: 110, y: 430 }, { x: 600, y: 430 }],
+        parachuteMarioSpawns:  [{ x: 100, y: -60 }, { x: 450, y: -80 }, { x: 700, y: -60 }],
+        spikeSpawns: [{ x: 122, y: 444, count: 2 }, { x: 455, y: 444, count: 2 }],
     }
 ];
 
@@ -7008,11 +7075,59 @@ let bgCache = null;
 function getBackgroundTheme() {
     const lvl = gameState === 'PLAYING' ? LEVELS[currentLevel] : null;
     if (lvl && lvl.lowGravity) return 'space';
+    if (lvl && lvl.isMatrix) return 'matrix'; // Feature 133
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
     if (gameState === 'PLAYING' && currentLevel >= 4) return 'dusk';
     return 'day';
+}
+
+// Feature 133: Matrix rain columns
+let matrixCols = [];
+function initMatrixRain() {
+    const spacing = 20;
+    const cols = Math.floor(W / spacing);
+    matrixCols = [];
+    const chars = '0123456789ABCDEF@#$%&アイウエオカキクケコ';
+    for (let i = 0; i < cols; i++) {
+        matrixCols.push({
+            x: i * spacing + 4,
+            y: -Math.random() * H * 1.5,
+            speed: 1.5 + Math.random() * 2.5,
+            trailLen: 6 + Math.floor(Math.random() * 10),
+            chars: Array.from({ length: 20 }, () => chars[Math.floor(Math.random() * chars.length)]),
+            tick: 0,
+        });
+    }
+}
+function updateDrawMatrixRain() {
+    const fontSize = 13;
+    ctx.font = `bold ${fontSize}px monospace`;
+    ctx.textAlign = 'left';
+    for (const col of matrixCols) {
+        col.y += col.speed;
+        col.tick++;
+        if (col.y - col.trailLen * fontSize > H) {
+            col.y = -fontSize;
+            col.speed = 1.5 + Math.random() * 2.5;
+        }
+        // Occasionally randomise one char for glitch effect
+        if (col.tick % 8 === 0) {
+            const idx = Math.floor(Math.random() * col.chars.length);
+            col.chars[idx] = '0123456789ABCDEF@#$%&アイウエオ'[Math.floor(Math.random() * 26)];
+        }
+        for (let i = 0; i < col.trailLen; i++) {
+            const cy = Math.floor(col.y - i * fontSize);
+            if (cy < -fontSize || cy > H) continue;
+            const fade = Math.max(0, (col.trailLen - i) / col.trailLen);
+            ctx.globalAlpha = i === 0 ? 0.95 : fade * 0.55;
+            ctx.fillStyle = i === 0 ? '#bbffbb' : i < 3 ? '#00dd44' : '#006622';
+            const charIdx = ((Math.floor(col.y / (fontSize + 1)) + i) % col.chars.length + col.chars.length) % col.chars.length;
+            ctx.fillText(col.chars[charIdx], col.x, cy);
+        }
+    }
+    ctx.globalAlpha = 1;
 }
 
 function paintSolidBackground(theme) {
@@ -7099,6 +7214,21 @@ function paintSolidBackground(theme) {
             ctx.fill();
         }
         ctx.globalAlpha = 1;
+    } else if (theme === 'matrix') {
+        // Feature 133: Matrix level — dark green gradient base
+        const matGrad = ctx.createLinearGradient(0, 0, 0, H);
+        matGrad.addColorStop(0, '#000800');
+        matGrad.addColorStop(0.6, '#001400');
+        matGrad.addColorStop(1, '#001e00');
+        ctx.fillStyle = matGrad;
+        ctx.fillRect(0, 0, W, H);
+        // subtle scanlines
+        for (let y = 0; y < H; y += 4) {
+            ctx.globalAlpha = 0.04;
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, y, W, 1);
+        }
+        ctx.globalAlpha = 1;
     }
 }
 
@@ -7166,7 +7296,14 @@ function drawBackground() {
     const theme = getBackgroundTheme();
     if (!bgCache || bgCache.key !== theme + '@' + renderScale) bgCache = buildBackgroundCache(theme);
     ctx.drawImage(bgCache.sky, 0, 0, W, H);
-    if (!bgCache.mountains) return;
+    if (!bgCache.mountains) {
+        // Feature 133: Matrix rain — drawn live (not cached)
+        if (theme === 'matrix') {
+            if (matrixCols.length === 0) initMatrixRain();
+            updateDrawMatrixRain();
+        }
+        return;
+    }
 
     // Feature 62: Shooting stars on night levels
     if (theme === 'night') updateAndDrawShootingStars();
@@ -9433,6 +9570,16 @@ function update() {
             if (isEscape() && !escapeWasPressed) {
                 gameState = 'PAUSED';
             }
+
+            // Feature 134: Quick Restart — press R in-game to restart current level
+            if (keys['KeyR'] && !keys['_qrWas']) {
+                const prevLives = player ? player.lives : 3;
+                loadLevel(currentLevel);
+                if (player) player.lives = prevLives; // keep current lives
+                particles.push(new Particle(W / 2 - 60, H / 2 - 60, '↺ РЕСТАРТ', '#ff8800'));
+                playSound('stomp');
+            }
+            keys['_qrWas'] = keys['KeyR'];
             break;
 
         case 'LEVEL_COMPLETE':
