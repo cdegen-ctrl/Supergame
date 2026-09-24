@@ -54,7 +54,7 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // === FEATURE 114: GAMEPAD SUPPORT ===
-const gamepadKeys = { left: false, right: false, jump: false, throw: false, start: false };
+const gamepadKeys = { left: false, right: false, jump: false, throw: false, start: false, down: false };
 let gamepadConnected = false;
 let gamepadConnectedTimer = 0; // frames to show "gamepad connected" banner
 
@@ -89,6 +89,7 @@ function pollGamepad() {
     gamepadKeys.jump  = btnJump || dpadUp;
     gamepadKeys.throw = btnThrow;
     gamepadKeys.start = btnStart || btnSelect;
+    gamepadKeys.down  = (gp.buttons[13] && gp.buttons[13].pressed) || axisY > 0.4; // Feature 132
 }
 
 // === FEATURE 109: KONAMI CODE EASTER EGG ===
@@ -129,7 +130,7 @@ function activateUltraMode() {
 // === TOUCH INPUT ===
 // Feature 121: multi-touch controls. Every active finger is hit-tested against the buttons on each
 // touch event, so sliding a finger from ◀ to ▶ (or holding ▶ + ▲) works like a real gamepad.
-const touchKeys = { left: false, right: false, jump: false, throw: false, dash: false };
+const touchKeys = { left: false, right: false, jump: false, throw: false, dash: false, groundPound: false };
 const ctrlButtons = Array.from(document.querySelectorAll('#mobile-controls .ctrl-btn'));
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 let renderScale = 1; // backing-store pixels per logical canvas pixel
@@ -166,6 +167,28 @@ for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
         e.preventDefault();
         updateTouchKeys(e.touches);
     }, { passive: false });
+}
+
+// Feature 132: Swipe-down on canvas → Ground Pound
+{
+    let _swipeTouchId = null;
+    let _swipeStartY = 0;
+    canvas.addEventListener('touchstart', e => {
+        if (_swipeTouchId === null && e.changedTouches.length) {
+            _swipeTouchId = e.changedTouches[0].identifier;
+            _swipeStartY = e.changedTouches[0].clientY;
+        }
+    }, { passive: true });
+    canvas.addEventListener('touchmove', e => {
+        for (const t of e.changedTouches) {
+            if (t.identifier === _swipeTouchId && t.clientY - _swipeStartY > 45) {
+                touchKeys.groundPound = true;
+                _swipeTouchId = null; // consume
+            }
+        }
+    }, { passive: true });
+    canvas.addEventListener('touchend', () => { _swipeTouchId = null; touchKeys.groundPound = false; }, { passive: true });
+    canvas.addEventListener('touchcancel', () => { _swipeTouchId = null; touchKeys.groundPound = false; }, { passive: true });
 }
 
 // Fit the 800×500 game into the screen. Portrait: controls get the space under the canvas.
@@ -692,6 +715,12 @@ class Player extends Entity {
         this.jumpCount = 0;
         this.canDoubleJump = false;
         this.doubleJumpFlash = 0;
+        // Feature 131: Triple jump
+        this.canTripleJump = false;
+        this.tripleJumpFlash = 0;
+        // Feature 132: Ground Pound
+        this.groundPounding = false;
+        this.downWasFree = true;
         // Star power-up
         this.starTimer = 0;
         // Shield power-up
@@ -864,11 +893,32 @@ class Player extends Entity {
                 this.canDoubleJump = false;
                 this.jumpCount = 2;
                 this.doubleJumpFlash = 12;
+                this.canTripleJump = true; // Feature 131
                 this.scaleX = 0.7;
                 this.scaleY = 1.35;
                 playSound('jump');
                 // Feature 52: bigger smoke puff on double jump
                 spawnJumpSmoke(this.x + this.w / 2, this.y + this.h, true);
+            } else if (this.canTripleJump) {
+                // Feature 131: Triple Jump — rainbow burst, slightly weaker than double
+                this.vy = PLAYER_JUMP * 0.7;
+                this.canTripleJump = false;
+                this.jumpCount = 3;
+                this.tripleJumpFlash = 20;
+                this.scaleX = 0.8;
+                this.scaleY = 1.2;
+                playSound('star');
+                spawnJumpSmoke(this.x + this.w / 2, this.y + this.h, true);
+                const rainbowColors = ['#ff4444','#ff8800','#ffff00','#44ff44','#4488ff','#cc44ff'];
+                for (let _i = 0; _i < 10; _i++) {
+                    const _ang = (_i / 10) * Math.PI * 2;
+                    const _spd = 2.5 + Math.random() * 2;
+                    particles.push(new DeathParticle(
+                        this.x + this.w / 2, this.y + this.h / 2,
+                        Math.cos(_ang) * _spd, Math.sin(_ang) * _spd - 1,
+                        rainbowColors[_i % rainbowColors.length], 4 + Math.floor(Math.random() * 3)
+                    ));
+                }
             } else if (this.wallSlideDir !== 0 && this.wallJumpLockTimer <= 0) {
                 // Wall jump! Launch away from wall
                 this.vy = PLAYER_JUMP * 0.9;
@@ -885,15 +935,34 @@ class Player extends Entity {
         }
         jumpWasPressed = isJump();
 
+        // Feature 132: Ground Pound — press DOWN while in air to slam down fast
+        {
+            const downNow = !!(keys['ArrowDown'] || keys['KeyS'] || gamepadKeys.down || touchKeys.groundPound);
+            if (!this.isGrounded && !this.groundPounding && downNow && this.downWasFree
+                    && this.vy > -3 && this.jetpackTimer <= 0 && !this.ceilingLocked && !this.rocketTimer) {
+                this.groundPounding = true;
+                this.parachuting = false;
+                this.vy = 16;
+                this.vx *= 0.3;
+                this.scaleX = 0.8; this.scaleY = 1.4;
+                spawnJumpSmoke(this.x + this.w / 2, this.y + this.h, false);
+            }
+            this.downWasFree = !downNow;
+            if (this.isGrounded) this.groundPounding = false;
+        }
+
         // gravity (Feature 100: space level uses reduced gravity)
         this.vy += GRAVITY * levelGravityMult;
-        if (this.vy > MAX_FALL * levelGravityMult) this.vy = MAX_FALL * levelGravityMult;
+        // Feature 132: ground pound overrides MAX_FALL cap — falls much faster
+        const effectiveMaxFall = this.groundPounding ? 22 : MAX_FALL * levelGravityMult;
+        if (this.vy > effectiveMaxFall) this.vy = effectiveMaxFall;
+        if (this.groundPounding && this.vy < 16) this.vy = 16; // ensure minimum slam speed
 
         // Feature 104: Parachute Glide — hold DOWN while falling to slow descent
         // Touch/gamepad: keep holding jump after the double jump to glide
         const holdGlide = (touchKeys.jump || gamepadKeys.jump) && this.jumpCount >= 2 && !this.canDoubleJump;
         const downHeld = !!(keys['ArrowDown'] || keys['KeyS'] || holdGlide);
-        if (!this.isGrounded && this.vy > 1.5 && downHeld && this.jetpackTimer <= 0 && !this.ceilingLocked) {
+        if (!this.isGrounded && this.vy > 1.5 && downHeld && this.jetpackTimer <= 0 && !this.ceilingLocked && !this.groundPounding) {
             this.parachuting = true;
             this.vy = Math.min(this.vy, 1.8);
         } else {
@@ -1024,6 +1093,8 @@ class Player extends Entity {
         }
         // Double jump flash timer
         if (this.doubleJumpFlash > 0) this.doubleJumpFlash--;
+        // Feature 131: Triple jump flash timer
+        if (this.tripleJumpFlash > 0) this.tripleJumpFlash--;
     }
 
     resolveCollisionsX() {
@@ -1062,6 +1133,11 @@ class Player extends Entity {
                     this.isGrounded = true;
                     this.jumpCount = 0;
                     this.canDoubleJump = false;
+                    this.canTripleJump = false; // Feature 131
+                    if (this.groundPounding) { // Feature 132: ground pound impact
+                        this.groundPounding = false;
+                        groundPoundEffect(this.x + this.w / 2, this.y + this.h);
+                    }
                     if (comboCount > 0) { comboCount = 0; coinFrenzyActivated = false; } // Feature 73: reset frenzy flag
                     // Feature 66: start crumble timer when player lands
                     if (p.crumble && p.crumbleState === 'normal') {
@@ -1196,6 +1272,39 @@ class Player extends Entity {
             ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // Feature 131: Triple jump rainbow ring flash
+        if (this.tripleJumpFlash > 0) {
+            const alpha = this.tripleJumpFlash / 20;
+            const r = (1 - alpha) * 36 + 14;
+            const rainbowCols = ['#ff4444','#ff8800','#ffee00','#44ff44','#4488ff','#cc44ff'];
+            const col = rainbowCols[Math.floor(levelTimer * 0.3) % rainbowCols.length];
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.85;
+            ctx.strokeStyle = col;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r, 0, Math.PI * 2);
+            ctx.stroke();
+            // Second inner ring
+            ctx.globalAlpha = alpha * 0.5;
+            ctx.beginPath();
+            ctx.arc(this.x + this.w / 2, this.y + this.h / 2, r * 0.6, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // Feature 132: Ground pound visual indicator — red glow while pounding
+        if (this.groundPounding) {
+            ctx.save();
+            ctx.globalAlpha = 0.55 + Math.sin(levelTimer * 0.5) * 0.2;
+            ctx.strokeStyle = '#ff6600';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(this.x + this.w / 2, this.y + this.h / 2, 18, 0, Math.PI * 2);
             ctx.stroke();
             ctx.restore();
         }
@@ -3883,6 +3992,43 @@ function spawnJumpSmoke(cx, cy, isDouble = false) {
         const sz = 3 + Math.floor(Math.random() * (isDouble ? 5 : 3));
         particles.push(new DeathParticle(cx + (Math.random() - 0.5) * 14, cy, vx, vy, i % 2 === 0 ? color1 : color2, sz));
     }
+}
+
+// === FEATURE 132: GROUND POUND EFFECT ===
+function groundPoundEffect(cx, groundY) {
+    shakeTimer = 16; shakeIntensity = 7;
+    // Shockwave ring particles radiating outward
+    for (let i = 0; i < 14; i++) {
+        const angle = (i / 14) * Math.PI * 2;
+        const speed = 3.5 + Math.random() * 2.5;
+        const col = i % 2 === 0 ? '#ff8800' : '#ffdd44';
+        const p = new DeathParticle(cx, groundY, Math.cos(angle) * speed, Math.sin(angle) * speed * 0.6 - 1, col, 4 + Math.floor(Math.random() * 4));
+        particles.push(p);
+    }
+    // Kill/damage enemies in radius
+    let killCount = 0;
+    for (const e of marios) {
+        if (!e.isAlive) continue;
+        const dx = (e.x + e.w / 2) - cx;
+        const dy = (e.y + e.h / 2) - groundY;
+        if (Math.sqrt(dx * dx + dy * dy) <= 110) {
+            const killed = e.stomp();
+            if (killed) { killCount++; }
+        }
+    }
+    if (killCount > 0) {
+        for (let _k = 0; _k < killCount; _k++) onEnemyKilledStreak(cx, groundY);
+        comboCount += killCount;
+        let pts = killCount * 150 * Math.max(1, comboCount);
+        if (player.scoreBoostTimer > 0) pts *= 2;
+        player.score += pts;
+        totalScore += pts;
+        comboDisplayTimer = 120;
+        addScorePopup(cx - 20, groundY - 40, pts);
+        particles.push(new Particle(cx - 40, groundY - 50, `💥 УДАР! +${pts}`, '#ff8800'));
+        runStats.enemiesKilled += killCount;
+    }
+    playSound('bomb');
 }
 
 // === CHECKPOINTS ===
