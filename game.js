@@ -780,6 +780,8 @@ class Player extends Entity {
         this.flashlightTimer = 0;
         // Feature 145: Bubble Shield power-up timer
         this.bubbleTimer = 0;
+        // Feature 148: Jump Boost power-up timer
+        this.jumpBoostTimer = 0;
         // Feature 144: Roll Dodge
         this.rollTimer = 0;       // active roll frames (0 = not rolling)
         this.rollCooldown = 0;    // cooldown frames until next roll is allowed
@@ -916,7 +918,7 @@ class Player extends Entity {
                 this.scaleX = 0.7; this.scaleY = 1.3;
                 playSound('jump');
             } else if (this.isGrounded) {
-                this.vy = PLAYER_JUMP;
+                this.vy = PLAYER_JUMP * (this.jumpBoostTimer > 0 ? 1.6 : 1.0);
                 this.isGrounded = false;
                 this.jumpCount = 1;
                 this.canDoubleJump = true;
@@ -926,7 +928,7 @@ class Player extends Entity {
                 // Feature 52: smoke puff on ground jump
                 spawnJumpSmoke(this.x + this.w / 2, this.y + this.h);
             } else if (this.canDoubleJump) {
-                this.vy = PLAYER_JUMP * 0.85;
+                this.vy = PLAYER_JUMP * 0.85 * (this.jumpBoostTimer > 0 ? 1.6 : 1.0);
                 this.canDoubleJump = false;
                 this.jumpCount = 2;
                 this.doubleJumpFlash = 12;
@@ -938,7 +940,7 @@ class Player extends Entity {
                 spawnJumpSmoke(this.x + this.w / 2, this.y + this.h, true);
             } else if (this.canTripleJump) {
                 // Feature 131: Triple Jump — rainbow burst, slightly weaker than double
-                this.vy = PLAYER_JUMP * 0.7;
+                this.vy = PLAYER_JUMP * 0.7 * (this.jumpBoostTimer > 0 ? 1.6 : 1.0);
                 this.canTripleJump = false;
                 this.jumpCount = 3;
                 this.tripleJumpFlash = 20;
@@ -958,7 +960,7 @@ class Player extends Entity {
                 }
             } else if (this.wallSlideDir !== 0 && this.wallJumpLockTimer <= 0) {
                 // Wall jump! Launch away from wall
-                this.vy = PLAYER_JUMP * 0.9;
+                this.vy = PLAYER_JUMP * 0.9 * (this.jumpBoostTimer > 0 ? 1.6 : 1.0);
                 this.vx = -this.wallSlideDir * currentSpeed * 3.5;
                 this.facingRight = this.wallSlideDir < 0;
                 this.canDoubleJump = true;
@@ -1111,6 +1113,8 @@ class Player extends Entity {
         if (this.shieldBreakTimer > 0) this.shieldBreakTimer--;
         // Feature 145: Bubble Shield timer
         if (this.bubbleTimer > 0) this.bubbleTimer--;
+        // Feature 148: Jump Boost timer
+        if (this.jumpBoostTimer > 0) this.jumpBoostTimer--;
 
         // Wall slide dust particles
         if (this.wallSlideDir !== 0 && !this.isGrounded && this.vy > 0.5) {
@@ -1248,6 +1252,7 @@ class Player extends Entity {
             comboDisplayTimer = 0;
             coinFrenzyActivated = false; // Feature 73
             this.bubbleTimer = 0; // Feature 145: lose bubble on death
+            this.jumpBoostTimer = 0; // Feature 148: lose jump boost on death
             playSound('hurt');
         }
     }
@@ -2289,6 +2294,109 @@ class Coin {
 
 let coins = [];
 
+// === FEATURE 147: LIGHTNING COIN — blue crackling coin +250 pts, stuns enemies in 100px radius ===
+class LightningCoin {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.09) * 3.5;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.88 + Math.sin(t * 0.16) * 0.12;
+        ctx.save();
+        // Electric outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(80, 160, 255, ${0.25 * pulse})`;
+        ctx.fill();
+        // Core circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(cx - 2, cy - 2, 1, cx, cy, 10 * pulse);
+        grad.addColorStop(0, '#88ccff');
+        grad.addColorStop(1, '#2244cc');
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.strokeStyle = '#66aaff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Crackle lines
+        const crackleCount = 4;
+        ctx.strokeStyle = `rgba(200, 230, 255, ${0.6 + Math.sin(t * 0.3) * 0.4})`;
+        ctx.lineWidth = 1;
+        for (let i = 0; i < crackleCount; i++) {
+            const ang = (i / crackleCount) * Math.PI * 2 + t * 0.1;
+            const r1 = 10 * pulse;
+            const r2 = 14 * pulse + Math.sin(t * 0.5 + i) * 2;
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1);
+            ctx.lineTo(cx + Math.cos(ang + 0.3) * (r1 + r2) / 2, cy + Math.sin(ang + 0.3) * (r1 + r2) / 2);
+            ctx.lineTo(cx + Math.cos(ang) * r2, cy + Math.sin(ang) * r2);
+            ctx.stroke();
+        }
+        // Lightning symbol
+        ctx.font = `bold ${Math.round(12 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('⚡', cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let lightningCoins = [];
+
+function checkLightningCoinCollisions() {
+    if (!player) return;
+    for (const lc of lightningCoins) {
+        if (lc.collected) continue;
+        if (!aabb(player, lc)) continue;
+        lc.collected = true;
+        let pts = 250;
+        if (player.scoreBoostTimer > 0) pts *= 2;
+        player.score += pts;
+        totalScore += pts;
+        particles.push(new Particle(lc.x - 10, lc.y - 18, '⚡ +' + pts + '!', '#88aaff'));
+        // Stun nearby enemies (100px radius) for 2 seconds
+        const cx = lc.x + lc.w / 2;
+        const cy = lc.y + lc.h / 2;
+        let stunCount = 0;
+        for (const m of marios) {
+            if (!m.isAlive) continue;
+            const mx = m.x + m.w / 2;
+            const my = m.y + m.h / 2;
+            const dist = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
+            if (dist <= 100) {
+                m.frozenTimer = 120; // 2 seconds at 60fps
+                stunCount++;
+            }
+        }
+        if (stunCount > 0) {
+            particles.push(new Particle(lc.x - 10, lc.y - 32, '⚡ ОГЛУШЕНО ' + stunCount + '!', '#aaccff'));
+        }
+        // Arc discharge particles
+        for (let i = 0; i < 8; i++) {
+            const ang = (i / 8) * Math.PI * 2;
+            particles.push(new DeathParticle(cx, cy, Math.cos(ang) * 3.5, Math.sin(ang) * 3.5, '#88ccff', 3));
+        }
+        playSound('star');
+    }
+    lightningCoins = lightningCoins.filter(lc => !lc.collected);
+}
+
 // === STAR POWER-UP ===
 const STAR_DURATION = 600; // 10 seconds at 60fps
 const SPEED_BOOST_DURATION = 300; // 5 seconds at 60fps
@@ -2301,6 +2409,7 @@ const ELECTRO_DURATION = 360; // Feature 72: 6 seconds at 60fps
 const ELECTRO_RADIUS = 80; // px radius of electric field
 const SLOW_MO_DURATION = 360; // Feature 75: 6 seconds at 60fps
 const BUBBLE_DURATION = 600;  // Feature 145: 10 seconds at 60fps
+const JUMP_BOOST_DURATION = 480; // Feature 148: 8 seconds at 60fps
 const SLOW_MO_FACTOR = 0.4;   // enemies move at 40% speed
 
 class Star {
@@ -3855,6 +3964,70 @@ function checkBubbleShieldCollisions() {
         playSound('shield');
     }
     bubbleShields = bubbleShields.filter(b => !b.collected);
+}
+
+// === FEATURE 148: JUMP BOOST — yellow power-up that boosts jump height 60% for 8s ===
+class JumpBoostPU {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 22;
+        this.h = 22;
+        this.collected = false;
+        this.animTimer = Math.random() * 60;
+    }
+
+    update() {
+        this.animTimer++;
+        return !this.collected;
+    }
+
+    render() {
+        const t = this.animTimer;
+        const bob = Math.sin(t * 0.08) * 4;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2 + bob;
+        const pulse = 0.92 + Math.sin(t * 0.14) * 0.08;
+        ctx.save();
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 230, 60, ${0.22 * pulse})`;
+        ctx.fill();
+        // Core circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(cx - 2, cy - 2, 1, cx, cy, 10 * pulse);
+        grad.addColorStop(0, '#ffe066');
+        grad.addColorStop(1, '#e07b00');
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Arrow symbol ↑
+        ctx.font = `bold ${Math.round(13 * pulse)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('↑', cx, cy + 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+}
+
+let jumpBoosts = [];
+
+function checkJumpBoostCollisions() {
+    if (!player) return;
+    for (const jb of jumpBoosts) {
+        if (jb.collected) continue;
+        if (!aabb(player, jb)) continue;
+        jb.collected = true;
+        player.jumpBoostTimer = JUMP_BOOST_DURATION;
+        particles.push(new Particle(jb.x - 10, jb.y - 18, '↑ ПРЫЖОК x1.6!', '#ffd700'));
+        playSound('powerup');
+    }
+    jumpBoosts = jumpBoosts.filter(jb => !jb.collected);
 }
 
 // === FEATURE 137: HEALING MUSHROOM — green +1 life power-up ===
@@ -7021,6 +7194,8 @@ function mirrorLevelData(lvl) {
         rainbowCoinSpawns:    (lvl.rainbowCoinSpawns    || []).map(s => ({ x: mx(s.x, 16), y: s.y })), // Feature 138
         healSpawns:           (lvl.healSpawns           || []).map(msp), // Feature 137
         bubbleSpawns:         (lvl.bubbleSpawns         || []).map(msp), // Feature 145
+        jumpBoostSpawns:      (lvl.jumpBoostSpawns      || []).map(msp), // Feature 148
+        lightningCoinSpawns:  (lvl.lightningCoinSpawns  || []).map(msp), // Feature 147
         portalSpawns: (lvl.portalSpawns || []).map(p => ({
             blue:   { x: mx(p.blue.x,   22), y: p.blue.y   },
             orange: { x: mx(p.orange.x, 22), y: p.orange.y },
@@ -7169,6 +7344,24 @@ function loadLevel(index) {
         if (cands.length >= 2) {
             const p = cands[1];
             bubbleShields = [new BubbleShieldPU(p.x + Math.floor(p.w * 0.5), p.y - 24)];
+        }
+    }
+    jumpBoosts = (lvl.jumpBoostSpawns || []).map(jb => new JumpBoostPU(jb.x, jb.y)); // Feature 148
+    // Auto-place 1 jump boost on levels 3+ if none specified
+    if (!lvl.jumpBoostSpawns && index >= 2) {
+        const cands = lvl.platforms.filter(p => p.y < 380 && p.w >= 50 && !p.crumble && !p.ice).sort((a, b) => b.y - a.y);
+        if (cands.length >= 3) {
+            const p = cands[Math.floor(cands.length * 0.6)];
+            jumpBoosts = [new JumpBoostPU(p.x + Math.floor(p.w * 0.3), p.y - 24)];
+        }
+    }
+    lightningCoins = (lvl.lightningCoinSpawns || []).map(lc => new LightningCoin(lc.x, lc.y)); // Feature 147
+    // Auto-place 1 lightning coin on levels 4+ if none specified
+    if (!lvl.lightningCoinSpawns && index >= 3) {
+        const cands = lvl.platforms.filter(p => p.y < 350 && p.w >= 60 && !p.crumble).sort((a, b) => a.y - b.y);
+        if (cands.length >= 2) {
+            const p = cands[Math.floor(cands.length * 0.5)];
+            lightningCoins = [new LightningCoin(p.x + Math.floor(p.w * 0.6), p.y - 24)];
         }
     }
     // Auto-place 1 gift chest on levels 5+ if none specified
@@ -8575,6 +8768,40 @@ function drawHUD() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ccf0ff';
         ctx.fillText('🫧 ПУЗЫРЬ', W / 2, barY - 4);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 148: Jump Boost timer bar
+    if (player && player.jumpBoostTimer > 0) {
+        const barW = 140;
+        const barH = 10;
+        const barX = W / 2 - barW / 2;
+        const barY = 68
+            + (player.starTimer > 0 ? 18 : 0)
+            + (player.speedBoostTimer > 0 ? 18 : 0)
+            + (player.magnetTimer > 0 ? 18 : 0)
+            + (player.ghostTimer > 0 ? 18 : 0)
+            + (player.freezeTimer > 0 ? 18 : 0)
+            + (player.scoreBoostTimer > 0 ? 18 : 0)
+            + (player.electroTimer > 0 ? 18 : 0)
+            + (player.slowMoTimer > 0 ? 18 : 0)
+            + (player.rocketTimer > 0 ? 18 : 0)
+            + (player.magBootsTimer > 0 ? 18 : 0)
+            + (player.giantTimer > 0 ? 18 : 0)
+            + (player.jetpackTimer > 0 ? 18 : 0)
+            + (player.bubbleTimer > 0 ? 18 : 0);
+        const frac = player.jumpBoostTimer / JUMP_BOOST_DURATION;
+        const pulse = 0.85 + Math.sin(Date.now() * 0.011) * 0.15;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        ctx.fillStyle = `rgba(255, 220, 50, ${pulse})`;
+        ctx.fillRect(barX, barY, barW * frac, barH);
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff099';
+        ctx.fillText('↑ ПРЫЖОК x1.6', W / 2, barY - 4);
         ctx.textAlign = 'left';
         ctx.restore();
     }
@@ -10148,6 +10375,10 @@ function update() {
             checkGiftChestCollisions();               // Feature 143
             bubbleShields = bubbleShields.filter(b => b.update()); // Feature 145
             checkBubbleShieldCollisions();            // Feature 145
+            jumpBoosts = jumpBoosts.filter(jb => jb.update()); // Feature 148
+            checkJumpBoostCollisions();               // Feature 148
+            lightningCoins = lightningCoins.filter(lc => lc.update()); // Feature 147
+            checkLightningCoinCollisions();           // Feature 147
             for (const [pA, pB] of portalPairs) { pA.update(); pB.update(); }
             checkPortalCollisions();
             checkpoints.forEach(cp => cp.update());
@@ -10678,6 +10909,8 @@ function render() {
             healingMushrooms.forEach(hm => hm.render()); // Feature 137
             giftChests.forEach(gc => gc.render());    // Feature 143
             bubbleShields.forEach(b => b.render());   // Feature 145
+            jumpBoosts.forEach(jb => jb.render());    // Feature 148
+            lightningCoins.forEach(lc => lc.render()); // Feature 147
             spores.forEach(s => s.render());         // Feature 101
             player.render();
             particles.forEach(p => p.render());
