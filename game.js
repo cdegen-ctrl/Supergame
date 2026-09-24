@@ -806,6 +806,7 @@ class Player extends Entity {
                 this.dashTimer = 11; this.dashDir = -1; this.dashCooldown = 90;
                 this.invincibleTimer = Math.max(this.invincibleTimer, 12);
                 this.scaleX = 0.6; this.scaleY = 1.2;
+                dashShadows.push(new DashShadow(this.x, this.y, this.w, this.h, this.facingRight)); // Feature 152
                 playSound('dash');
             }
             this.lastLeftTap = levelTimer;
@@ -815,6 +816,7 @@ class Player extends Entity {
                 this.dashTimer = 11; this.dashDir = 1; this.dashCooldown = 90;
                 this.invincibleTimer = Math.max(this.invincibleTimer, 12);
                 this.scaleX = 0.6; this.scaleY = 1.2;
+                dashShadows.push(new DashShadow(this.x, this.y, this.w, this.h, this.facingRight)); // Feature 152
                 playSound('dash');
             }
             this.lastRightTap = levelTimer;
@@ -824,6 +826,7 @@ class Player extends Entity {
             this.dashCooldown = 90;
             this.invincibleTimer = Math.max(this.invincibleTimer, 12);
             this.scaleX = 0.6; this.scaleY = 1.2;
+            dashShadows.push(new DashShadow(this.x, this.y, this.w, this.h, this.facingRight)); // Feature 152
             playSound('dash');
         }
         this.leftWasDown  = leftDown;
@@ -4341,6 +4344,42 @@ function checkStarCollisions() {
 }
 
 // === DEATH PARTICLES ===
+// === FEATURE 152: DASH SHADOW CLONE — ghost silhouette at dash origin ===
+class DashShadow {
+    constructor(x, y, w, h, facingRight) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.facingRight = facingRight;
+        this.timer = 18;
+        this.maxTimer = 18;
+    }
+
+    update() {
+        this.timer--;
+        return this.timer > 0;
+    }
+
+    render() {
+        const alpha = (this.timer / this.maxTimer) * 0.55;
+        const cx = this.x + this.w / 2;
+        const cy = this.y + this.h / 2;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#88aaff';
+        // Body
+        ctx.fillRect(this.x + 3, this.y + this.h * 0.45, this.w - 6, this.h * 0.55);
+        // Head cap (mushroom shape)
+        ctx.beginPath();
+        ctx.ellipse(cx, this.y + this.h * 0.3, this.w * 0.48, this.h * 0.35, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+let dashShadows = [];
+
 class DeathParticle {
     constructor(x, y, vx, vy, color, size) {
         this.x = x;
@@ -6711,6 +6750,9 @@ function startSurvivalMode() {
 let rageModeActive = false;
 let rageModeWarningTimer = 0; // frames to show "ЯРОСТЬ!" warning
 
+// === FEATURE 151: LAST ENEMY BANNER ===
+let lastEnemyBannerTimer = 0; // Feature 151
+
 // === LEVEL BEST TIMES ===
 let levelBestTimes = [];
 try { levelBestTimes = JSON.parse(localStorage.getItem('mushroomLevelTimes') || '[]'); } catch { levelBestTimes = []; }
@@ -7231,6 +7273,8 @@ function mirrorLevelData(lvl) {
 function loadLevel(index) {
     rageModeActive = false; // Feature 69: reset rage on level change
     rageModeWarningTimer = 0;
+    lastEnemyBannerTimer = 0; // Feature 151
+    dashShadows = []; // Feature 152
     const rawLvl0 = LEVELS[index < LEVELS.length ? index : (index % LEVELS.length)];
     levelGravityMult = rawLvl0.lowGravity ? 0.38 : 1.0; // Feature 100: space level low gravity
     // Feature 141: Wind — reset and initialize based on level flag
@@ -8943,6 +8987,22 @@ function drawHUD() {
         ctx.restore();
     }
 
+    // Feature 151: Last Enemy banner
+    if (lastEnemyBannerTimer > 0) {
+        const alpha = Math.min(1, lastEnemyBannerTimer / 30) * (lastEnemyBannerTimer > 120 ? 1 : lastEnemyBannerTimer / 120);
+        const scale = 1 + Math.sin(lastEnemyBannerTimer * 0.18) * 0.05;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${Math.round(24 * scale)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText('⚔ ПОСЛЕДНИЙ ВРАГ!', W / 2 + 2, H / 2 - 78);
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillText('⚔ ПОСЛЕДНИЙ ВРАГ!', W / 2, H / 2 - 80);
+        ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
     // Feature 73: Coin Frenzy indicator
     if (coinFrenzyTimer > 0) {
         const frenzyAlpha = Math.min(1, coinFrenzyTimer / 30);
@@ -10346,6 +10406,7 @@ function update() {
             player.update();
             marios = marios.filter(m => m.update());
             particles = particles.filter(p => p.update());
+            dashShadows = dashShadows.filter(ds => ds.update()); // Feature 152
             const particleCap = lowQuality ? 80 : 180; // Feature 124/126: bursts can pile up hundreds
             if (particles.length > particleCap) particles.splice(0, particles.length - particleCap);
             scorePopups = scorePopups.filter(p => p.update()); // Feature 88
@@ -10466,6 +10527,11 @@ function update() {
                     playSound('rage');
                 }
                 if (rageModeWarningTimer > 0) rageModeWarningTimer--;
+                // Feature 151: last enemy banner
+                if (aliveNow.length === 1 && lastEnemyBannerTimer === 0 && levelTotalMarios > 1) {
+                    lastEnemyBannerTimer = 150; // show for 2.5s
+                }
+                if (lastEnemyBannerTimer > 0) lastEnemyBannerTimer--;
             }
 
             // Feature 68: Survival Mode — spawn new waves and track time
@@ -10970,6 +11036,7 @@ function render() {
                 ctx.restore();
             }
             spores.forEach(s => s.render());         // Feature 101
+            dashShadows.forEach(ds => ds.render()); // Feature 152 — render behind player
             player.render();
             particles.forEach(p => p.render());
             scorePopups.forEach(p => p.render()); // Feature 88
