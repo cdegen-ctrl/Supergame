@@ -847,6 +847,13 @@ class Player extends Entity {
             }
         }
 
+        // Feature 141: Wind force — push player horizontally (stronger in air)
+        if (windActive && windForce !== 0 && this.dashTimer <= 0) {
+            const windMult = this.isGrounded ? 0.035 : 0.06;
+            const maxWind = currentSpeed * 1.6;
+            this.vx = Math.max(-maxWind, Math.min(maxWind, this.vx + windForce * windMult));
+        }
+
         // Feature 101: Spore Throw ammo regen + throw action
         if (this.sporeAmmoTimer > 0) this.sporeAmmoTimer--;
         if (this.sporeAmmoTimer <= 0 && this.sporeAmmo < 3) {
@@ -4721,7 +4728,7 @@ function renderAchievementToasts() {
 }
 
 // === LEVEL DATA ===
-const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица'];
+const LEVEL_NAMES = ['Начало', 'Равнина', 'Пропасти', 'Лабиринт', 'Финал', 'Небо', 'Хаос', 'Кошмар', 'БОСС', 'Возмездие', 'Апокалипсис', 'Олимп', '🪙 Монетная пещера', '🌑 Тьма', '☁ Небеса', '🚀 Космос', '🕯 Подземелье', '💚 Матрица', '⛈ Буря'];
 
 const LEVELS = [
     {
@@ -5714,6 +5721,75 @@ const LEVELS = [
         teleporterMarioSpawns: [{ x: 110, y: 430 }, { x: 600, y: 430 }],
         parachuteMarioSpawns:  [{ x: 100, y: -60 }, { x: 450, y: -80 }, { x: 700, y: -60 }],
         spikeSpawns: [{ x: 122, y: 444, count: 2 }, { x: 455, y: 444, count: 2 }],
+    },
+    // === FEATURE 142: LEVEL 19 — БУРЯ ===
+    {
+        name: 'Буря',
+        isStorm: true,
+        hasWind: true,
+        platforms: [
+            // Floor with gaps
+            { x: 0,   y: 460, w: 140, h: 40 },
+            { x: 195, y: 460, w: 130, h: 40 },
+            { x: 385, y: 460, w: 110, h: 40 },
+            { x: 555, y: 460, w: 130, h: 40 },
+            { x: 740, y: 460, w: 60,  h: 40 },
+            // Mid-low tier — some ice (wind + ice = chaos)
+            { x: 50,  y: 370, w: 120, h: 18, ice: true },
+            { x: 240, y: 355, w: 110, h: 18 },
+            { x: 420, y: 375, w: 115, h: 18, ice: true },
+            { x: 600, y: 355, w: 110, h: 18, crumble: true },
+            // Mid tier
+            { x: 10,  y: 275, w: 100, h: 18 },
+            { x: 195, y: 265, w: 105, h: 18, crumble: true },
+            { x: 360, y: 278, w: 100, h: 18 },
+            { x: 540, y: 268, w: 105, h: 18, ice: true },
+            { x: 700, y: 278, w: 80,  h: 18 },
+            // Upper tier
+            { x: 75,  y: 175, w: 120, h: 18 },
+            { x: 285, y: 162, w: 115, h: 18 },
+            { x: 470, y: 170, w: 115, h: 18, crumble: true },
+            { x: 655, y: 175, w: 95,  h: 18 },
+            // Top platforms
+            { x: 160, y: 75,  w: 130, h: 18 },
+            { x: 440, y: 68,  w: 130, h: 18 },
+        ],
+        marioSpawns: [
+            { x: 10,  y: 430 }, { x: 400, y: 430 }, { x: 565, y: 430 },
+            { x: 260, y: 335 }, { x: 615, y: 335 },
+            { x: 90,  y: 255 }, { x: 550, y: 248 },
+            { x: 300, y: 140 }, { x: 495, y: 45  },
+        ],
+        marioTypes: ['fast', 'armored', 'berserker', 'armored', 'ghost_mario', 'fast', 'berserker', 'teleporter', 'flying'],
+        marioSpeed: 3.2,
+        playerSpawn: { x: 30, y: 430 },
+        coinSpawns: [
+            { x: 35,  y: 435 }, { x: 220, y: 435 }, { x: 410, y: 435 }, { x: 580, y: 435 }, { x: 755, y: 435 },
+            { x: 80,  y: 345 }, { x: 275, y: 330 }, { x: 455, y: 350 }, { x: 640, y: 330 },
+            { x: 25,  y: 250 }, { x: 225, y: 240 }, { x: 390, y: 253 }, { x: 570, y: 243 }, { x: 720, y: 253 },
+            { x: 115, y: 150 }, { x: 320, y: 138 }, { x: 505, y: 145 }, { x: 685, y: 150 },
+            { x: 195, y: 50  }, { x: 310, y: 50  }, { x: 460, y: 43  }, { x: 550, y: 43  },
+        ],
+        doubleCoinSpawns: [{ x: 295, y: 138 }, { x: 510, y: 43 }],
+        tripleCoinSpawns: [{ x: 460, y: 43 }],
+        starSpawns:       [{ x: 185, y: 50  }, { x: 555, y: 43 }],
+        shieldSpawns:     [{ x: 0,   y: 445 }, { x: 750, y: 445 }],
+        bombSpawns:       [{ x: 210, y: 243 }, { x: 560, y: 248 }],
+        springSpawns:     [{ x: 55, y: 446 }, { x: 690, y: 446 }],
+        speedBoostSpawns: [{ x: 340, y: 43 }],
+        magnetSpawns:     [{ x: 460, y: 43 }],
+        freezeSpawns:     [{ x: 105, y: 150 }, { x: 665, y: 150 }],
+        ghostSpawns:      [{ x: 275, y: 138 }],
+        electroSpawns:    [{ x: 475, y: 43 }],
+        slowMoSpawns:     [{ x: 530, y: 43 }],
+        rocketSpawns:     [{ x: 200, y: 43 }, { x: 565, y: 43 }],
+        scoreBoostSpawns: [{ x: 505, y: 43 }],
+        checkpointSpawns: [{ x: 390, y: 450 }],
+        flyingMarioSpawns:     [{ x: 100, y: 115 }, { x: 360, y: 100 }, { x: 620, y: 110 }],
+        shooterMarioSpawns:    [{ x: 300, y: 138 }, { x: 475, y: 140 }],
+        teleporterMarioSpawns: [{ x: 120, y: 430 }, { x: 610, y: 430 }],
+        parachuteMarioSpawns:  [{ x: 80,  y: -60 }, { x: 380, y: -80 }, { x: 660, y: -60 }],
+        spikeSpawns: [{ x: 142, y: 444, count: 2 }, { x: 498, y: 444, count: 2 }],
     }
 ];
 
@@ -5932,6 +6008,77 @@ let nextMilestoneIdx = 0;
 let milestoneBannerTimer = 0;   // frames remaining (180 = 3 sec)
 let milestoneBannerText  = '';
 let milestoneBannerColor = '#ffffff';
+
+// === FEATURE 141: WIND GUSTS ===
+let windForce = 0;          // current horizontal wind push (negative = left, positive = right)
+let windTarget = 0;         // target wind force we're easing towards
+let windChangeTimer = 0;    // frames until next wind change
+let windActive = false;     // whether current level has wind
+let windStreaks = [];        // visual wind streak particles
+let lightningFlashTimer = 0;// frames of lightning flash overlay
+let lightningNextTimer = 0; // frames until next lightning strike
+let isStormLevel = false;   // whether current level is storm theme
+
+function updateWind() {
+    if (!windActive) return;
+    // Ease current wind toward target
+    windForce += (windTarget - windForce) * 0.03;
+    if (Math.abs(windForce) < 0.01) windForce = 0;
+    // Periodically change wind target
+    windChangeTimer--;
+    if (windChangeTimer <= 0) {
+        const gustMag = 0.8 + Math.random() * 1.4;
+        windTarget = (Math.random() < 0.5 ? -1 : 1) * gustMag;
+        windChangeTimer = 120 + Math.floor(Math.random() * 200);
+    }
+    // Spawn wind streaks when wind is strong
+    if (Math.abs(windForce) > 0.4 && Math.random() < 0.25) {
+        windStreaks.push({
+            x: windForce > 0 ? -30 : W + 30,
+            y: 20 + Math.random() * (H - 80),
+            len: 30 + Math.random() * 60,
+            speed: (2.5 + Math.random() * 3) * (windForce > 0 ? 1 : -1),
+            alpha: 0.12 + Math.random() * 0.2,
+            life: 25 + Math.floor(Math.random() * 20),
+        });
+    }
+    windStreaks = windStreaks.filter(s => {
+        s.x += s.speed * 3;
+        s.life--;
+        return s.life > 0 && s.x > -80 && s.x < W + 80;
+    });
+    // Lightning logic on storm levels
+    if (isStormLevel) {
+        lightningNextTimer--;
+        if (lightningNextTimer <= 0) {
+            lightningFlashTimer = 4 + Math.floor(Math.random() * 4);
+            lightningNextTimer = 180 + Math.floor(Math.random() * 360);
+        }
+        if (lightningFlashTimer > 0) lightningFlashTimer--;
+    }
+}
+
+function renderWindEffect() {
+    if (!windActive || windStreaks.length === 0) return;
+    ctx.save();
+    for (const s of windStreaks) {
+        ctx.globalAlpha = s.alpha * (s.life / 40);
+        ctx.strokeStyle = '#cce8ff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x - s.len * Math.sign(s.speed), s.y + (Math.random() - 0.5) * 4);
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // Lightning flash overlay
+    if (lightningFlashTimer > 0) {
+        const alpha = (lightningFlashTimer / 8) * 0.35;
+        ctx.fillStyle = `rgba(220,230,255,${alpha})`;
+        ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+}
 
 let levelTimer = 0;       // frames elapsed in current level
 const TIME_BONUS_MAX = 3000; // max bonus at 0 seconds
@@ -6616,6 +6763,11 @@ function loadLevel(index) {
     rageModeWarningTimer = 0;
     const rawLvl0 = LEVELS[index < LEVELS.length ? index : (index % LEVELS.length)];
     levelGravityMult = rawLvl0.lowGravity ? 0.38 : 1.0; // Feature 100: space level low gravity
+    // Feature 141: Wind — reset and initialize based on level flag
+    windActive = !!rawLvl0.hasWind;
+    isStormLevel = !!rawLvl0.isStorm;
+    windForce = 0; windTarget = 0; windStreaks = []; lightningFlashTimer = 0;
+    windChangeTimer = 60; lightningNextTimer = 180;
     const lvlIndex = index < LEVELS.length ? index : (index % LEVELS.length);
     const rawLvl = LEVELS[lvlIndex];
     // Feature 81: apply horizontal mirror if mode is active
@@ -7246,6 +7398,7 @@ function getBackgroundTheme() {
     const lvl = gameState === 'PLAYING' ? LEVELS[currentLevel] : null;
     if (lvl && lvl.lowGravity) return 'space';
     if (lvl && lvl.isMatrix) return 'matrix'; // Feature 133
+    if (lvl && lvl.isStorm) return 'night'; // Feature 142: storm level uses dark sky
     if (lvl && lvl.isUnderground) return 'underground';
     if (coinCaveMode && gameState === 'PLAYING') return 'coincave';
     if (gameState === 'PLAYING' && currentLevel >= 6) return 'night';
@@ -8053,6 +8206,20 @@ function drawHUD() {
         ctx.fillStyle = '#aaeeff';
         ctx.fillText('🪞 ЗЕРКАЛО', W / 2, 70);
         ctx.textAlign = 'left';
+        ctx.restore();
+    }
+
+    // Feature 141: Wind indicator in HUD
+    if (windActive && Math.abs(windForce) > 0.3) {
+        const dir = windForce > 0 ? '→' : '←';
+        const strength = Math.abs(windForce) > 1.5 ? '💨💨' : '💨';
+        ctx.save();
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillText(`${strength} ВЕТЕР ${dir}`, W / 2 + 1, 87);
+        ctx.fillStyle = '#aaddff';
+        ctx.fillText(`${strength} ВЕТЕР ${dir}`, W / 2, 86);
         ctx.restore();
     }
 
@@ -9571,6 +9738,7 @@ function update() {
             checkpoints.forEach(cp => cp.update());
             checkSpikeCollisions(); // Feature 91
             updateWeather();
+            updateWind(); // Feature 141
             if (currentLevel < 4) updateBirds(); // Feature 60
             updateAchievementToasts();
 
@@ -10062,6 +10230,7 @@ function render() {
         case 'PLAYING':
             drawBackground();
             renderWeather();
+            renderWindEffect(); // Feature 141
             platforms.forEach(p => p.render());
             spikes.forEach(s => s.render()); // Feature 91
             coins.forEach(c => c.render());
